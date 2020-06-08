@@ -1,0 +1,12 @@
+===============================================================================
+				Changes in 1.0.1
+===============================================================================
+
+# Combines the memory of multiple GPUs into a partitioned global address space 
+that’s accessed through NVSHMEM APIs.
+# Includes a low-overhead, in-kernel communication API for use by GPU threads.
+# Includes stream-based and CPU-initiated communication APIs.  
+# Supports peer-to-peer communication using NVIDIA NVLink and PCI Express and for 
+GPU clusters using NVIDIA Mellanox® InfiniBand. 
+# Supports x86 and POWER9 processors.  
+# Is interoperable with MPI and other OpenSHMEM implementations.
