@@ -116,7 +116,7 @@ void init_wrapper(int *c, char ***v) {
         char size_string[100];
 
         size_t size = 0;
-        size = atoi(value);
+        size = atol(value);
         size += ((NVSHMEM_REDUCE_SYNC_SIZE * sizeof(long)) +
                  ((NVSHMEM_REDUCE_MIN_WRKDATA_SIZE + 2) * sizeof(double)));
         sprintf(size_string, "%lu", size);

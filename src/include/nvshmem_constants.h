@@ -13,6 +13,8 @@
 #ifndef _NVSHMEM_CONSTANTS_H_
 #define _NVSHMEM_CONSTANTS_H_
 
+#include "nvshmemi_constants.h"
+
 #define SYNC_SIZE 27648 /*XXX:Number of GPUs on Summit; currently O(N), need to be O(1)*/
 
 #define NVSHMEM_SYNC_VALUE 0
@@ -63,6 +65,11 @@ enum nvshmemi_predefined_teams {
     NVSHMEM_TEAM_INVALID = 0,
     NVSHMEM_TEAM_WORLD,
     NVSHMEMX_TEAM_NODE
+};
+
+enum nvshmem_signal_ops {
+    NVSHMEM_SIGNAL_SET = NVSHMEMI_AMO_SIGNAL_SET,
+    NVSHMEM_SIGNAL_ADD = NVSHMEMI_AMO_SIGNAL_ADD
 };
 
 #endif

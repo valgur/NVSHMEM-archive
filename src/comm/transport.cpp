@@ -92,7 +92,7 @@ out:
 }
 
 int nvshmemi_setup_connections(nvshmem_state_t *state) {
-    int status;
+    int status = 0;
     nvshmem_transport_t *transports = (nvshmem_transport_t *)state->transports;
     nvshmemt_ep_handle_t *local_ep_handles = NULL, *ep_handles = NULL;
     int tcount;

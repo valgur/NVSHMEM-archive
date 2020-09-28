@@ -15,6 +15,9 @@
 
 #include "nvshmem_coll_common.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 //===============================
 // standard nvshmem collective calls
 //===============================
@@ -61,5 +64,9 @@ NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, sum)
 NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, prod)
 
 #undef NVSHMEMI_DECL_REDUCE
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NVSHMEM_COLL_H */

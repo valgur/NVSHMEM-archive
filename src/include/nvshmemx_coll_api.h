@@ -15,6 +15,9 @@
 
 #include "nvshmem_coll_common.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 //==========================================
 // nvshmem collective calls with stream param
 //==========================================
@@ -156,5 +159,9 @@ NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE_ONBLOCK, sum)
 NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE_ONBLOCK, prod)
 
 #undef NVSHMEMI_DECL_REDUCE_ONBLOCK
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NVSHMEMX_COLL_H */

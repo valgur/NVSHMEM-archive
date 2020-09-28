@@ -323,7 +323,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_P_ON_STREAM)
                                size_t nelems, int pe) {                                       \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iput", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC,        \
-                                      (void *)dest, (void *)source, dst + 1, sst + 1, nelems, \
+                                      (void *)dest, (void *)source, dst, sst, nelems,         \
                                       sizeof(TYPE), pe, NOT_A_CUDA_STREAM);                   \
     }
 
@@ -336,7 +336,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IPUT)
                                           cudaStream_t cstrm) {                               \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iput_on_stream", NVSHMEMI_OP_PUT, NO_NBI, ASYNC, \
-                                      (void *)dest, (void *)source, dst + 1, sst + 1, nelems, \
+                                      (void *)dest, (void *)source, dst, sst, nelems,         \
                                       sizeof(TYPE), pe, cstrm);                               \
     }
 
@@ -348,7 +348,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_IPUT_ON_STREAM)
                             size_t nelems, int pe) {                                          \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_iput" #Name "", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC,         \
-                                      (void *)dest, (void *)source, dst + 1, sst + 1, nelems, \
+                                      (void *)dest, (void *)source, dst, sst, nelems,         \
                                       sizeof(Type), pe, NOT_A_CUDA_STREAM);                   \
     }
 
@@ -361,7 +361,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_IPUTSIZE)
                                          cudaStream_t cstrm) {                                \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_iput" #Name "_on_stream", NVSHMEMI_OP_PUT, NO_NBI, ASYNC,  \
-                                      (void *)dest, (void *)source, dst + 1, sst + 1, nelems, \
+                                      (void *)dest, (void *)source, dst, sst, nelems,         \
                                       sizeof(Type), pe, cstrm);                                       \
     }
 
@@ -539,7 +539,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_G_ON_STREAM)
                                size_t nelems, int pe) {                                       \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iget", NVSHMEMI_OP_GET, NO_NBI, NO_ASYNC,        \
-                                      (void *)dest, (void *)source, dst + 1, sst + 1, nelems, \
+                                      (void *)dest, (void *)source, dst, sst, nelems,         \
                                       sizeof(TYPE), pe, NOT_A_CUDA_STREAM);                   \
     }
 
@@ -552,7 +552,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IGET)
                                           cudaStream_t cstrm) {                               \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iget_on_stream", NVSHMEMI_OP_GET, NO_NBI, ASYNC, \
-                                      (void *)dest, (void *)source, dst + 1, sst + 1, nelems, \
+                                      (void *)dest, (void *)source, dst, sst, nelems,         \
                                       sizeof(TYPE), pe, cstrm);                               \
     }
 
@@ -564,7 +564,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_IGET_ON_STREAM)
                             size_t nelems, int pe) {                                          \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_iget" #Name "", NVSHMEMI_OP_GET, NO_NBI, NO_ASYNC,         \
-                                      (void *)dest, (void *)source, dst + 1, sst + 1, nelems, \
+                                      (void *)dest, (void *)source, dst, sst, nelems,         \
                                       sizeof(Type), pe, NOT_A_CUDA_STREAM);                   \
     }
 
@@ -577,7 +577,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_IGETSIZE)
                                          cudaStream_t cstrm) {                                \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_iget" #Name "_on_stream", NVSHMEMI_OP_GET, NO_NBI, ASYNC,  \
-                                      (void *)dest, (void *)source, dst + 1, sst + 1, nelems, \
+                                      (void *)dest, (void *)source, dst, sst, nelems,         \
                                       sizeof(Type), pe, cstrm);                               \
     }
 

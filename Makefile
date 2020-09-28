@@ -52,17 +52,17 @@ mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
 mkfile_dir := $(dir $(mkfile_path))
 
 ifeq ($(ARCH), x86_64)
-CXXFLAGS   := -fPIC -fpermissive -I$(CUDA_INC) -msse
+CXXFLAGS   := -fPIC -fpermissive -I$(CUDA_INC) -msse 
 CXXFLAGS += -DNVSHMEM_X86_64
 NVCUFLAGS := -DNVSHMEM_X86_64
 else
 ifeq ($(ARCH), ppc64le)
-CXXFLAGS   := -fPIC -fpermissive -I$(CUDA_INC)
+CXXFLAGS   := -fPIC -fpermissive -I$(CUDA_INC) -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS
 CXXFLAGS += -DNVSHMEM_PPC64LE
 NVCUFLAGS += -DNVSHMEM_PPC64LE
 endif
 endif
-NVCUFLAGS  += -Xcompiler -fPIC -Xcompiler -fpermissive -ccbin $(CXX) $(NVCC_GENCODE) 
+NVCUFLAGS  += -Xcompiler -fPIC -Xcompiler -fpermissive -ccbin $(CXX) $(NVCC_GENCODE) -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
 CXXFLAGS  += -I$(MPI_HOME)/include -DNVSHMEM_MPI_SUPPORT

@@ -304,7 +304,7 @@ int nvshmemi_common_init(nvshmem_state_t *state) {
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gpu collective setup failed \n");
 
     // enable proxy only if IB transport is initialized
-    if (state->transports[NVSHMEM_TRANSPORT_ID_IBRC]) {
+    if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST) {
         status = nvshmemi_proxy_init(state);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy initialization failed \n");
     }
@@ -485,7 +485,7 @@ void nvshmem_finalize() {
         cudaDeviceSynchronize();
 
         /*cleaning up proxy*/
-        if (nvshmem_state->transports[NVSHMEM_TRANSPORT_ID_IBRC]) {
+        if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST) {
             status = nvshmemi_proxy_finalize(nvshmem_state);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy cleanup failed \n");
         }

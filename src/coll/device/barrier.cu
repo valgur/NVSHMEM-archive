@@ -50,7 +50,7 @@ __device__ __inline__ void sync_dissem_pow2(int PE_start, int logPE_stride, int 
             if (to_nbr_idx >= PE_size) to_nbr_idx = to_nbr_idx - PE_size;
             to_nbr = PE_start + (to_nbr_idx << logPE_stride);
 
-            nvshmemx_long_signal(((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr);
+            nvshmemi_signal_for_barrier<long>(((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr);
         }
 
         /* wait for neighbors notification */
@@ -112,7 +112,7 @@ __device__ __inline__ void sync_dissem(int PE_start, int logPE_stride, int PE_si
             to_nbr_idx = (my_idx_in_active_set + shift) % PE_size;
             to_nbr = PE_start + to_nbr_idx * stride;
 
-            nvshmemx_long_signal(((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr);
+            nvshmemi_signal_for_barrier<long>(((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr);
         }
 
         /* wait for neighbors notification */

@@ -233,7 +233,25 @@ NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_DECL_SIZE_GET_NBI)
 #undef NVSHMEMI_DECL_SIZE_GET_NBI
 
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_getmem_nbi(void *dest, const void *source, size_t bytes,
+
                                                    int pe);
+/* Signal API */
+#define NVSHMEMI_DECL_PUT_SIGNAL(TYPENAME, TYPE)                                                        \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##TYPENAME##_put_signal(TYPE *dest, const TYPE *source,       \
+                                                                  size_t nelems, uint64_t *sig_addr,    \
+                                                                  uint64_t signal, int sig_op, int pe);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL)
+#undef NVSHMEMI_DECL_PUT_SIGNAL
+
+#define NVSHMEMI_DECL_PUT_SIGNAL_NBI(TYPENAME, TYPE)                                                        \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##TYPENAME##_put_signal_nbi(TYPE *dest, const TYPE *source,       \
+                                                                      size_t nelems, uint64_t *sig_addr,    \
+                                                                      uint64_t signal, int sig_op, int pe);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL_NBI)
+#undef NVSHMEMI_DECL_PUT_SIGNAL_NBI
+
+NVSHMEMI_HOSTDEVICE_PREFIX uint64_t nvshmem_signal_fetch(uint64_t *sig_addr);
+
 
 //////////////////// Point-to-Point Synchronization ////////////////////
 

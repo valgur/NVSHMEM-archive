@@ -16,6 +16,7 @@
 #include "nvshmem_common.cuh"
 #include "nvshmemi_util.h"
 #include "nvshmemi_constants.h"
+#include "nvshmemx_api.h"
 
 template <typename T>
 __device__ void nvshmemi_proxy_rma_p(void *rptr, T value, int pe);
@@ -79,6 +80,23 @@ __device__ inline void put(T *dest, const T *source, size_t nelems, int pe) {
 }
 
 template <typename T>
+__device__ inline void put_signal(T *dest, const T *source, size_t nelems,
+                                  uint64_t *sig_addr, uint64_t signal, int sig_op, int pe, bool is_nbi) {
+    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+    if (peer_base_addr) {
+        put<T>(dest, source, nelems, pe);
+        __threadfence_system();
+        nvshmemx_signal_op(sig_addr, signal, sig_op, pe);
+        
+    } else {
+        nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, nelems * sizeof(T), pe);
+        nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe, (nvshmemi_amo_t)sig_op);
+        if (is_nbi == 0)
+            nvshmemi_proxy_quiet();
+    }
+}
+
+template <typename T>
 __device__ inline void get(T *dest, const T *source, size_t nelems, int pe) {
     void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
     if (peer_base_addr) {
@@ -122,7 +140,12 @@ __device__ inline void get_nbi(T *dest, const T *source, size_t nelems, int pe) 
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, nelems * sizeof(T), pe);
     }
 }
-#endif
+
+__device__ inline uint64_t nvshmem_signal_fetch(uint64_t *sig_addr) {
+    return *((volatile uint64_t*) sig_addr);
+}
+
+#endif /* __CUDA__ARCH__ */
 
 #ifdef __cplusplus
 extern "C" {
@@ -153,6 +176,15 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_G_IMPL)
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_IMPL)
 #undef NVSHMEMI_TYPENAME_PUT_IMPL
+
+/*__device__ nvshmem_<typename>_put_signal*/
+#define NVSHMEMI_TYPENAME_PUT_SIGNAL_IMPL(TYPENAME, TYPE)                                                            \
+    __device__ inline void nvshmem_##TYPENAME##_put_signal(TYPE *dest, const TYPE *source, size_t nelems,            \
+                                                           uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {\
+        put_signal<TYPE>(dest, source, nelems, sig_addr, signal, sig_op, pe, 0);                                     \
+    }
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_SIGNAL_IMPL)
+#undef NVSHMEMI_TYPENAME_PUT_SIGNAL_IMPL
 
 /*__device__ nvshmem_<typename>_get*/
 #define NVSHMEMI_TYPENAME_GET_IMPL(TYPENAME, TYPE)                                                          \
@@ -213,6 +245,15 @@ __device__ inline void nvshmem_getmem(void *dest, const void *source, size_t byt
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_NBI_IMPL)
 #undef NVSHMEMI_TYPENAME_PUT_NBI_IMPL
+
+/*__device__ nvshmem_<typename>_put_signal_nbi*/
+#define NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_IMPL(TYPENAME, TYPE)                                                        \
+    __device__ inline void nvshmem_##TYPENAME##_put_signal_nbi(TYPE *dest, const TYPE *source, size_t nelems,        \
+                                                           uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {\
+        put_signal<TYPE>(dest, source, nelems, sig_addr, signal, sig_op, pe, 1);                                     \
+    }
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_IMPL)
+#undef NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_IMPL
 
 /*__device__ nvshmem_<typename>_get_nbi*/
 #define NVSHMEMI_TYPENAME_GET_NBI_IMPL(TYPENAME, TYPE)                                                          \
@@ -580,7 +621,8 @@ __device__ inline void nvshmem_quiet() {
 }
 
 __device__ inline void nvshmem_fence() {
-    if (nvshmemi_proxy_d && (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_LDST_ATOMICS)) { 
+    if (nvshmemi_proxy_d && (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_LDST_ATOMICS)
+        && !nvshmemi_proxy_ops_are_ordered_d) { 
         nvshmemi_proxy_fence();
     }
     __threadfence_system(); /* Use __threadfence_system instead of __threadfence
@@ -744,9 +786,9 @@ NVSHMEM_TYPE_ATOMIC_INC_EMULATE(size, size_t)
  * int64_t
  */
 #undef NVSHMEM_TYPE_ATOMIC_INC_EMULATE
-#endif
+#endif /* __CUDA_ARCH__ */
 
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif /* _NVSHMEM_DEFINES_H_ */

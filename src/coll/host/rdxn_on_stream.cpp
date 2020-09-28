@@ -178,21 +178,27 @@ fn_fail:
     void nvshmemx_##TYPE##TYPE2##_##OP##_to_all_on_stream(SRC_DST_R(TYPE, TYPE2), NR, PS, PL, PZ, \
                                                           PWRK_R(TYPE, TYPE2), PSYN, CS) {        \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
-        rdxn_opr_t rd_op;                                                                         \
-        rd_op.dest = dest;                                                                        \
-        rd_op.source = source;                                                                    \
-        rd_op.nreduce = nreduce;                                                                  \
-        rd_op.PE_start = PE_start;                                                                \
-        rd_op.logPE_stride = logPE_stride;                                                        \
-        rd_op.PE_size = PE_size;                                                                  \
-        rd_op.pWrk = pWrk;                                                                        \
-        rd_op.pSync = pSync;                                                                      \
-        rd_op.op_size = sizeof(TYPE TYPE2);                                                       \
-        ASSGN_OP_TYPE2(TYPE, TYPE2);                                                              \
-        rd_op.op_type = rd_##OP;                                                                  \
-        rd_op.stream = stream;                                                                    \
-        nvshmemxi_rdxn_op_cpu_slxn_on_stream(&rd_op);                                             \
-    }
+        if (nvshm_use_tg_for_stream_coll) {                                                       \
+            /* XXX: Temporary hack ##TYPE##TYPE2## -> ##TYPE## to fix long long */                \
+            call_rdxn_##TYPE##_##OP##_on_stream_kern((TYPE *)dest, (TYPE *)source, nreduce, PE_start,     \
+                                                     logPE_stride, PE_size, (TYPE *)pWrk, pSync, stream); \
+        } else {                                                                                  \
+            rdxn_opr_t rd_op;                                                                     \
+            rd_op.dest = dest;                                                                    \
+            rd_op.source = source;                                                                \
+            rd_op.nreduce = nreduce;                                                              \
+            rd_op.PE_start = PE_start;                                                            \
+            rd_op.logPE_stride = logPE_stride;                                                    \
+            rd_op.PE_size = PE_size;                                                              \
+            rd_op.pWrk = pWrk;                                                                    \
+            rd_op.pSync = pSync;                                                                  \
+            rd_op.op_size = sizeof(TYPE TYPE2);                                                   \
+            ASSGN_OP_TYPE2(TYPE, TYPE2);                                                          \
+            rd_op.op_type = rd_##OP;                                                              \
+            rd_op.stream = stream;                                                                \
+            nvshmemxi_rdxn_op_cpu_slxn_on_stream(&rd_op);                                         \
+        }                                                                                         \
+     }
 
 #ifdef NVSHMEM_COMPLEX_SUPPORT
 #define DEFN_NVSHMEMX_ALL_ARCH_TYPE_C_REDUCE_OP_ON_STREAM(TYPE, TYPENAME, OP)           \
@@ -229,7 +235,7 @@ DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(float, max);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(int, max);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(long, max);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(short, max);
-DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, double, max);
+// XXX DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, double, max);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, long, max);
 
 // min
@@ -239,7 +245,7 @@ DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(float, min);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(int, min);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(long, min);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(short, min);
-DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, double, min);
+// XXX DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, double, min);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, long, min);
 
 // sum
@@ -253,7 +259,7 @@ DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(float, sum);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(int, sum);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(long, sum);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(short, sum);
-DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, double, sum);
+// XXX DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, double, sum);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, long, sum);
 
 // prod
@@ -267,7 +273,7 @@ DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(float, prod);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(int, prod);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(long, prod);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_REDUCE_OP_ON_STREAM(short, prod);
-DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, double, prod);
+// XXX DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, double, prod);
 DEFN_NVSHMEMX_ALL_ARCH_TYPE_R_REDUCE_OP_ON_STREAM_INNER(long, long, prod);
 
 // or

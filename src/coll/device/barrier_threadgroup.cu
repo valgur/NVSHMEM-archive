@@ -43,7 +43,7 @@ __device__ static inline void sync_dissem_pow2_warp(int PE_start, int logPE_stri
         int phase_num = 0;                  
         while (temp) {                                            
             /* notify neighbors */                                                         
-            for (int j = myIdx; j <= k - 1; j += groupSize) {                              
+            for (int j = myIdx + 1; j <= k - 1; j += groupSize) {                              
                 shift = j << phase_num;                                                         
                 if (shift >= PE_size) break;
                                               
@@ -51,12 +51,12 @@ __device__ static inline void sync_dissem_pow2_warp(int PE_start, int logPE_stri
                 if (to_nbr_idx >= PE_size) to_nbr_idx = to_nbr_idx - PE_size;
                 to_nbr = PE_start + to_nbr_idx << logPE_stride;                                   
                                                                                            
-                nvshmemx_long_signal                                         
+                nvshmemi_signal_for_barrier<long>                                        
                 (((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr); 
             }                                                                              
                                                                                            
             /* wait for neighbors notification */                                          
-            for (int j = myIdx; j <= k - 1; j += groupSize) {                              
+            for (int j = myIdx + 1; j <= k - 1; j += groupSize) {                              
                 shift = j << phase_num;                                                         
                 if (shift >= PE_size) break;                                              
                                                                                           
@@ -108,18 +108,18 @@ __device__ static inline void sync_dissem_warp(int PE_start, int logPE_stride, i
         int pow_k = 1;                                                                     
         for (int i = 0; i < num_phases; i++) {                                             
             /* notify neighbors */                                                         
-            for (int j = myIdx; j <= k - 1; j += groupSize) {                              
+            for (int j = myIdx + 1; j <= k - 1; j += groupSize) {                              
                 shift = j * pow_k;                                                         
                 if (shift >= PE_size) break;                                               
                 to_nbr_idx = (my_idx_in_active_set + shift) % PE_size;                     
                 to_nbr = PE_start + to_nbr_idx * stride;                                   
                                                                                            
-                nvshmemx_long_signal                                         
+                nvshmemi_signal_for_barrier<long>                                         
                 (((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr); 
             }                                                                              
                                                                                            
             /* wait for neighbors notification */                                          
-            for (int j = myIdx; j <= k - 1; j += groupSize) {                              
+            for (int j = myIdx + 1; j <= k - 1; j += groupSize) {                              
                 shift = j * pow_k;                                                         
                 if (shift >= PE_size) break;                                              
                                                                                           
@@ -157,18 +157,18 @@ __device__ static inline void sync_dissem_pow2_block(int PE_start, int logPE_str
     int phase_num = 0;
     while (temp) {
         /* notify neighbors */
-        for (int j = myIdx; j <= k - 1; j += groupSize) {
+        for (int j = myIdx + 1; j <= k - 1; j += groupSize) {
             shift = j << phase_num;
             if (shift >= PE_size) break;
             to_nbr_idx = my_idx_in_active_set + shift;
             if (to_nbr_idx >= PE_size) to_nbr_idx = to_nbr_idx - PE_size;
             to_nbr = PE_start + to_nbr_idx << logPE_stride;
 
-            nvshmemx_long_signal(((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr);
+            nvshmemi_signal_for_barrier<long>(((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr);
         }
 
         /* wait for neighbors notification */
-        for (int j = myIdx; j <= k - 1; j += groupSize) {
+        for (int j = myIdx + 1; j <= k - 1; j += groupSize) {
             shift = j << phase_num;
             if (shift >= PE_size) break;
 
@@ -218,17 +218,17 @@ __device__ static inline void sync_dissem_block(int PE_start, int logPE_stride, 
     int pow_k = 1;
     for (int i = 0; i < num_phases; i++) {
         /* notify neighbors */
-        for (int j = myIdx; j <= k - 1; j += groupSize) {
+        for (int j = myIdx + 1; j <= k - 1; j += groupSize) {
             shift = j * pow_k;
             if (shift >= PE_size) break;
             to_nbr_idx = (my_idx_in_active_set + shift) % PE_size;
             to_nbr = PE_start + to_nbr_idx * stride;
 
-            nvshmemx_long_signal(((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr);
+            nvshmemi_signal_for_barrier<long>(((long *)sync_arr + nvshmemi_mype_d), counter[0], to_nbr);
         }
 
         /* wait for neighbors notification */
-        for (int j = myIdx; j <= k - 1; j += groupSize) {
+        for (int j = myIdx + 1; j <= k - 1; j += groupSize) {
             shift = j * pow_k;
             if (shift >= PE_size) break;
 

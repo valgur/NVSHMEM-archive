@@ -307,8 +307,7 @@ template __device__ void nvshmemi_proxy_rma_p<double>(void *rptr,
                                         const double value, int pe);
 
 template <typename T>
-__forceinline__ __device__ void amo (void *rptr, T swap_add, T compare, int pe, 
-					nvshmemi_amo_t amo_op) {
+__device__ void amo (void *rptr, T swap_add, T compare, int pe, nvshmemi_amo_t amo_op) {
     uint64_t idx, tail_idx, *req;
     int size = sizeof(channel_request_t);
     int group_size = 1;

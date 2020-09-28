@@ -17,15 +17,14 @@
 #include <unistd.h>
 #include "utils.h"
 
-#define THREADS 512
-#define MAX_MSG_SIZE 16 * 1024
+#define MAX_MSG_SIZE 1 * 1024 * 1024
 #define UNROLL 8
 
-__global__ void ping_pong(volatile int *data_d, volatile int *flag_d, int len, int pe, int iter,
-                          int skip) {
+__global__ void ping_pong(volatile int *data_d, uint64_t *flag_d,
+                          int len, int pe, int iter, int skip, int *hflag) {
     long long int start, stop;
     double usec, time;
-    int i, j, tid, peer;
+    int i, tid, peer;
 
     peer = !pe;
     tid = threadIdx.x;
@@ -34,42 +33,16 @@ __global__ void ping_pong(volatile int *data_d, volatile int *flag_d, int len, i
         if (i == skip) start = clock64();
 
         if (pe) {
-            if (!tid) {
-                nvshmem_int_wait_until((int *)flag_d, NVSHMEM_CMP_EQ, (i + 1));
-            }
-            __syncthreads();
-
-            for (j = tid; j < len; j += THREADS) {
-                nvshmem_int_p((int *)data_d + j, *(data_d + j), peer);
-            }
-            __syncthreads();
-
-            if (!tid) {
-                nvshmem_fence();
-                nvshmemx_int_signal((int *)flag_d, (i + 1), peer);
-            }
-            __syncthreads();
+            nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
+            nvshmem_int_put_signal_nbi((int *)data_d, (int *)data_d, len, flag_d, 1, NVSHMEM_SIGNAL_ADD, peer);
         } else {
-            for (j = tid; j < len; j += THREADS) {
-                nvshmem_int_p((int *)data_d + j, *(data_d + j), peer);
-            }
-            __syncthreads();
-
-            if (!tid) {
-                nvshmem_fence();
-                nvshmemx_int_signal((int *)flag_d, (i + 1), peer);
-            }
-            __syncthreads();
-
-            if (!tid) {
-                nvshmem_int_wait_until((int *)flag_d, NVSHMEM_CMP_EQ, (i + 1));
-            }
-            __syncthreads();
+            nvshmem_int_put_signal_nbi((int *)data_d, (int *)data_d, len, flag_d, 1, NVSHMEM_SIGNAL_ADD, peer);
+            nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
         }
     }
     stop = clock64();
-    if(!tid)
-        nvshmem_quiet();
+    nvshmem_quiet();
+    *hflag = 1;
 
     if ((pe == 0) && !tid) {
         time = (stop - start) / iter;
@@ -80,9 +53,9 @@ __global__ void ping_pong(volatile int *data_d, volatile int *flag_d, int len, i
 
 int main(int c, char *v[]) {
     int mype, npes, size;
-    int *flag_d = NULL, *data_d = NULL;
-
-    sleep(10);
+    uint64_t *flag_d = NULL;
+    int *data_d = NULL;
+    cudaStream_t stream;
 
     int iter = 500;
     int skip = 50;
@@ -99,12 +72,21 @@ int main(int c, char *v[]) {
     }
 
     data_d = (int *)nvshmem_malloc(max_msg_size);
-    flag_d = (int *)nvshmem_malloc(sizeof(int));
+    flag_d = (uint64_t *)nvshmem_malloc(sizeof(uint64_t));
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
+
+    int *hflag, *hflag_d;
+    CUDA_CHECK(cudaHostAlloc((void **)&hflag, sizeof(uint64_t), 0));
+    *hflag = 0;
+    CUDA_CHECK(cudaHostGetDevicePointer(&hflag_d, hflag, 0));
+
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     nvshmem_barrier_all();
 
     CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaGetLastError());
 
     if (mype == 0) {
         printf("Note: This test measures full round-trip latency\n");
@@ -115,21 +97,26 @@ int main(int c, char *v[]) {
     for (size = sizeof(int); size <= max_msg_size; size *= 2) {
         int nelems, status = 0;
         nelems = size / sizeof(int);
-        void *args[6] = {&data_d, &flag_d, &nelems, &mype, &iter, &skip};
+        void *args[] = {&data_d, &flag_d, &nelems, &mype, &iter, &skip, &hflag_d};
 
-        CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(int)));
+        CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
         CUDA_CHECK(cudaDeviceSynchronize());
         nvshmem_barrier_all();
 
-        status = nvshmemx_collective_launch((const void *)ping_pong, 1, THREADS, args, 0, 0);
+        *hflag = 0;
+        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, args, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
-            printf("shmemx_collective_launch failed %d \n", status);
+            fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
         }
-        CUDA_CHECK(cudaDeviceSynchronize());
+
+        while (*((volatile int *)hflag) != 1)
+            ;
 
         nvshmem_barrier_all();
     }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
 
 finalize:
 

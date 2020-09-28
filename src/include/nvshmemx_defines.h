@@ -65,7 +65,7 @@ template <typename T>
 __device__ inline void signal(T *dest, const T value, int pe) {
    const void *peer_base_addr =
        (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
-   if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {
+   if (peer_base_addr != NULL) {
        volatile T *dest_actual = (volatile T *)((char *)(peer_base_addr) +
                               ((char *)dest - (char *)(nvshmemi_heap_base_d)));
        *dest_actual = value;
@@ -73,6 +73,7 @@ __device__ inline void signal(T *dest, const T value, int pe) {
        nvshmemi_proxy_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
    }
 }
+
 #endif
 
 #ifdef __cplusplus
@@ -435,35 +436,35 @@ DEFINE_NVSHMEM_PUTMEM_NBI_THREADGROUP(block)
 DEFINE_NVSHMEM_GETMEM_NBI_THREADGROUP(warp)
 DEFINE_NVSHMEM_GETMEM_NBI_THREADGROUP(block)
 
-/*__device__ nvshmem_signal*/
-__device__ inline void nvshmemx_short_signal(short *dest, const short value, int pe) {
-    signal<short>(dest, value, pe);
-}
-__device__ inline void nvshmemx_ushort_signal(unsigned short *dest, const unsigned short value, int pe) {
-    signal<unsigned short>(dest, value, pe);
-}
-__device__ inline void nvshmemx_int_signal(int *dest, const int value, int pe) {
-    signal<int>(dest, value, pe);
-}
-__device__ inline void nvshmemx_uint_signal(unsigned int *dest, const unsigned int value, int pe) {
-    signal<unsigned int>(dest, value, pe);
-}
-__device__ inline void nvshmemx_long_signal(long *dest, const long value, int pe) {
-    signal<long>(dest, value, pe);
-}
-__device__ inline void nvshmemx_ulong_signal(unsigned long *dest, const unsigned long value, int pe) {
-    signal<unsigned long>(dest, value, pe);
+/* __device__ nvshmem_signal */
+#define DEFINE_NVSHMEMX_TYPE_SIGNAL(TYPENAME, TYPE)                                             \
+    __device__ inline void nvshmemx_##TYPENAME##_signal(TYPE *dest, const TYPE value, int pe) { \
+        signal<TYPE>(dest, value, pe);                                                          \
 }
 
-__device__ inline void nvshmemx_longlong_signal(long long *dest, const long long value, int pe) {
-    signal<long long>(dest, value, pe);
-}
-__device__ inline void nvshmemx_ulonglong_signal(unsigned long long *dest, const unsigned long long value,
-                                           int pe) {
-    signal<unsigned long long>(dest, value, pe);
+NVSHMEMX_REPT_FOR_SIGNAL_TYPES(DEFINE_NVSHMEMX_TYPE_SIGNAL)
+#undef DEFINE_NVSHMEMX_TYPE_SIGNAL
+
+__device__ inline void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
+   const void *peer_base_addr =
+       (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+   if (sig_op == NVSHMEM_SIGNAL_SET && peer_base_addr != NULL) {
+       volatile uint64_t *dest_actual = (volatile uint64_t *)((char *)(peer_base_addr) +
+                              ((char *)sig_addr - (char *)(nvshmemi_heap_base_d)));
+       *dest_actual = signal;
+   }
+   else if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {
+       volatile uint64_t *dest_actual = (volatile uint64_t *)((char *)(peer_base_addr) +
+                              ((char *)sig_addr - (char *)(nvshmemi_heap_base_d)));
+        /* sig_op == NVSHMEM_SIGNAL_ADD */
+        atomicAdd((unsigned long long *)dest_actual, signal);
+   } else {
+        nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe, (nvshmemi_amo_t)sig_op);
+   }
 }
 
-#endif
+
+#endif /* __CUDA_ARCH__ */
 
 #ifdef __cplusplus
 }

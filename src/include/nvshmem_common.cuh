@@ -131,22 +131,22 @@ typedef int nvshmem_team_t;
     NVSHMEMI_FN_TEMPLATE(short, short, opname)                          \
     NVSHMEMI_FN_TEMPLATE(int, int, opname)                              \
     NVSHMEMI_FN_TEMPLATE(long, long, opname)                            \
-    NVSHMEMI_FN_TEMPLATE(longlong, long, opname)
+    NVSHMEMI_FN_TEMPLATE(longlong, long long, opname)
 
 /* Note: The "long double" type is not supported */
 #define NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_FN_TEMPLATE, opname) \
     NVSHMEMI_FN_TEMPLATE(short, short, opname)                          \
     NVSHMEMI_FN_TEMPLATE(int, int, opname)                              \
     NVSHMEMI_FN_TEMPLATE(long, long, opname)                            \
-    NVSHMEMI_FN_TEMPLATE(longlong, long, opname)                        \
+    NVSHMEMI_FN_TEMPLATE(longlong, long long, opname)                   \
     NVSHMEMI_FN_TEMPLATE(float, float, opname)                          \
     NVSHMEMI_FN_TEMPLATE(double, double, opname)
 
 #ifdef NVSHMEM_COMPLEX_SUPPORT
 #define NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_FN_TEMPLATE, opname) \
     NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_FN_TEMPLATE, opname)  \
-    NVSHMEMI_FN_TEMPLATE(complexf, double complex, opname)              \
-    NVSHMEMI_FN_TEMPLATE(complexd, float complex, opname)
+    NVSHMEMI_FN_TEMPLATE(complexf, float complex, opname)              \
+    NVSHMEMI_FN_TEMPLATE(complexd, double complex, opname)
 #else
 #define NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_FN_TEMPLATE, opname) \
     NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_FN_TEMPLATE, opname)
@@ -183,18 +183,6 @@ typedef int nvshmem_team_t;
 
 #define NVSHMEMI_SYNC_thread() ;
 
-extern __constant__ int nvshmemi_mype_d;
-extern __constant__ int nvshmemi_npes_d;
-extern __constant__ int nvshmemi_node_mype_d;
-extern __constant__ int nvshmemi_node_npes_d;
-extern __constant__ int *nvshmemi_p2p_attrib_native_atomic_support_d;
-extern __constant__ int nvshmemi_proxy_d;
-extern __constant__ int nvshmemi_atomics_sync_d;
-extern __constant__ int nvshmemi_job_connectivity_d;
-extern __constant__ void *nvshmemi_heap_base_d;
-extern __constant__ size_t nvshmemi_heap_size_d;
-extern __constant__ void **nvshmemi_peer_heap_base_d;
-
 enum nvshmemi_call_site_id {
     NVSHMEMI_CALL_SITE_BARRIER = 0,
     NVSHMEMI_CALL_SITE_BARRIER_WARP,
@@ -220,6 +208,19 @@ typedef struct {
     uint64_t signal_val_found;
     uint64_t signal_val_expected;
 } nvshmemi_timeout_t;
+
+extern __constant__ int nvshmemi_mype_d;
+extern __constant__ int nvshmemi_npes_d;
+extern __constant__ int nvshmemi_node_mype_d;
+extern __constant__ int nvshmemi_node_npes_d;
+extern __constant__ int *nvshmemi_p2p_attrib_native_atomic_support_d;
+extern __constant__ int nvshmemi_proxy_d;
+extern __constant__ int nvshmemi_atomics_sync_d;
+extern __constant__ int nvshmemi_job_connectivity_d;
+extern __constant__ bool nvshmemi_proxy_ops_are_ordered_d;
+extern __constant__ void *nvshmemi_heap_base_d;
+extern __constant__ size_t nvshmemi_heap_size_d;
+extern __constant__ void **nvshmemi_peer_heap_base_d;
 
 extern __device__ nvshmemi_timeout_t *nvshmemi_timeout_d;
 extern __device__ unsigned long long test_wait_any_start_idx_d;

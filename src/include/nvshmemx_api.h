@@ -201,6 +201,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_DECL_WAIT_UNTIL_ON_STREAM)
 
 //////////////////// Put on Thread Group ////////////////////
 
+
 #define NVSHMEMX_DECL_TYPE_PUT_THREADGROUP(NAME, TYPE)                                         \
     __device__ void nvshmemx_##NAME##_put_warp(TYPE *dest, const TYPE *source, size_t nelems,  \
                                                int pe);                                        \
@@ -331,8 +332,12 @@ __device__ void nvshmemx_getmem_nbi_block(void *dest, const void *source, size_t
 NVSHMEMX_REPT_FOR_SIGNAL_TYPES(NVSHMEMX_DECL_TYPE_SIGNAL)
 #undef NVSHMEMX_DECL_TYPE_SIGNAL
 
+NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, \
+                                                   int sig_op, int pe);
+
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif
+#endif /* _NVSHMEMX_API_H_ */

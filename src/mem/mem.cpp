@@ -423,7 +423,10 @@ void *nvshmem_ptr(void *ptr, int pe) {
     ptrdiff_t offset = (char*)ptr - (char*)nvshmem_state->heap_base;
 
     if (ptr >= nvshmem_state->heap_base && offset < nvshmem_state->heap_size) {
-        return (void *)((char *)nvshmem_state->peer_heap_base[pe] + offset);
+        void *peer_addr = nvshmem_state->peer_heap_base[pe];
+        if (peer_addr != NULL)
+            peer_addr = (void *)((char *)peer_addr + offset);
+        return peer_addr;
     }
     else
         return NULL;

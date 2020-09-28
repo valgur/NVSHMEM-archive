@@ -37,6 +37,7 @@ __global__ void test_sync_call_kern(int PE_start, int logPE_stride, int PE_size,
             if (i > skip) stop = clock64();
             time += (stop - start);
         }
+        nvshmem_barrier_all();
         if (!threadIdx.x) {
             *source_r = time;
             nvshmem_double_sum_to_all(dest_r, source_r, 1, PE_start, logPE_stride, PE_size, pWrk,
@@ -63,6 +64,7 @@ __global__ void test_sync_call_kern(int PE_start, int logPE_stride, int PE_size,
             if (i > skip) stop = clock64();
             time += (stop - start);
         }
+        nvshmemx_barrier_all_warp();
         if (!threadIdx.x) {
             *source_r = time;
             nvshmem_double_sum_to_all(dest_r, source_r, 1, PE_start, logPE_stride, PE_size, pWrk,
@@ -89,6 +91,7 @@ __global__ void test_sync_call_kern(int PE_start, int logPE_stride, int PE_size,
             if (i > skip) stop = clock64();
             time += (stop - start);
         }
+        nvshmemx_barrier_all_block();
         if (!threadIdx.x) {
             *source_r = time;
             nvshmem_double_sum_to_all(dest_r, source_r, 1, PE_start, logPE_stride, PE_size, pWrk,
