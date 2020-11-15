@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2017, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmemx_error.h"
 #include "util.h"
@@ -171,6 +171,16 @@ out:
     return status;
 }
 
+static int bootstrap_shmem_finalize(bootstrap_handle_t *handle) {
+    int status = 0;
+
+    status = bootstrap_shmem_free(handle->scratch);
+    NE_ERROR_JMP(status, 0, NVSHMEMX_ERROR_INTERNAL, out, "shmem_free failed \n");
+
+out:
+    return status;
+}
+
 int bootstrap_shmem_init(bootstrap_handle_t *handle) {
     int status = 0;
     long *psync = 0;
@@ -196,16 +206,7 @@ int bootstrap_shmem_init(bootstrap_handle_t *handle) {
     handle->allgather = bootstrap_shmem_allgather;
     handle->alltoall = bootstrap_shmem_alltoall;
     handle->barrier = bootstrap_shmem_barrier;
-
-out:
-    return status;
-}
-
-int bootstrap_shmem_finalize(bootstrap_handle_t *handle) {
-    int status = 0;
-
-    status = bootstrap_shmem_free(handle->scratch);
-    NE_ERROR_JMP(status, 0, NVSHMEMX_ERROR_INTERNAL, out, "shmem_free failed \n");
+    handle->finalize = bootstrap_shmem_finalize;
 
 out:
     return status;

@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmemx.h"
@@ -15,17 +15,17 @@
         /*SHMEM_CHECK_STATE_AND_INIT();*/                                                       \
         int status = 0;                                                                         \
         status = cuda_interface_##type##_wait(ivar, cmp_value);                                 \
-        /*status = cuLaunchKernel (nvshmem_state->cufunction_wait_"#type", 1, 1, 1, 1, 1, 1, 0, \
-         * nvshmem_state->my_stream, kernelParams, NULL);*/                                     \
+        /*status = cuLaunchKernel (nvshmemi_state->cufunction_wait_"#type", 1, 1, 1, 1, 1, 1, 0, \
+         * nvshmemi_state->my_stream, kernelParams, NULL);*/                                     \
         if (status) {                                                                           \
             ERROR_PRINT("[%d] cudaLaunchKernel()/shmem_" #type "_wait() failed",                \
-                        nvshmem_state->mype);                                                   \
+                        nvshmemi_state->mype);                                                   \
             goto out;                                                                           \
         }                                                                                       \
-        status = cuStreamSynchronize(nvshmem_state->my_stream);                                 \
+        status = cuStreamSynchronize(nvshmemi_state->my_stream);                                 \
         if (status) {                                                                           \
             ERROR_PRINT("[%d] cuStreamSynchronize()/shmem_" #type "_wait() failed",             \
-                        nvshmem_state->mype);                                                   \
+                        nvshmemi_state->mype);                                                   \
             goto out;                                                                           \
         }                                                                                       \
     out:                                                                                        \
@@ -42,7 +42,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TYPE_WAIT)
         status = cuda_interface_##type##_wait_on_stream(ivar, cmp_value, cstream);          \
         if (status) {                                                                       \
             ERROR_PRINT("[%d] cudaLaunchKernel()/shmemx_" #type "_wait_on_stream() failed", \
-                        nvshmem_state->mype);                                               \
+                        nvshmemi_state->mype);                                               \
             goto out;                                                                       \
         }                                                                                   \
     out:                                                                                    \
@@ -56,12 +56,12 @@ void nvshmem_wait(long *ivar, long cmp_value) { /*wait until *ivar != cmp_value*
     int status = 0;
     status = cuda_interface_long_wait(ivar, cmp_value);
     if (status) {
-        ERROR_PRINT("[%d] cudaLaunchKernel()/shmem_wait() failed %d", nvshmem_state->mype, status);
+        ERROR_PRINT("[%d] cudaLaunchKernel()/shmem_wait() failed %d", nvshmemi_state->mype, status);
         goto out;
     }
-    status = cuStreamSynchronize(nvshmem_state->my_stream);
+    status = cuStreamSynchronize(nvshmemi_state->my_stream);
     if (status) {
-        ERROR_PRINT("[%d] cuStreamSynchronize()/shmem_wait() failed", nvshmem_state->mype);
+        ERROR_PRINT("[%d] cuStreamSynchronize()/shmem_wait() failed", nvshmemi_state->mype);
         goto out;
     }
 out:
@@ -73,7 +73,7 @@ void nvshmemx_wait_on_stream(long *ivar, long cmp_value,
     int status = 0;
     status = cuda_interface_long_wait_on_stream(ivar, cmp_value, cstream);
     if (status) {
-        ERROR_PRINT("[%d] cudaLaunchKernel()/shmemx_wait_on_stream() failed", nvshmem_state->mype);
+        ERROR_PRINT("[%d] cudaLaunchKernel()/shmemx_wait_on_stream() failed", nvshmemi_state->mype);
         goto out;
     }
 out:
@@ -99,19 +99,19 @@ out:
                 break;                                                                            \
             default:                                                                              \
                 ERROR_PRINT("[%d] Invalid comparator/shmem_" #type "_wait_until()",               \
-                            nvshmem_state->mype);                                                 \
+                            nvshmemi_state->mype);                                                 \
                 goto out;                                                                         \
         }                                                                                         \
         status = cuda_interface_##type##_wait_until(ivar, cmp, cmp_value);                        \
         if (status) {                                                                             \
             ERROR_PRINT("[%d] cudaLaunchKernel()/shmem_" #type "_wait_until() failed",            \
-                        nvshmem_state->mype);                                                     \
+                        nvshmemi_state->mype);                                                     \
             goto out;                                                                             \
         }                                                                                         \
-        status = cuStreamSynchronize(nvshmem_state->my_stream);                                   \
+        status = cuStreamSynchronize(nvshmemi_state->my_stream);                                   \
         if (status) {                                                                             \
             ERROR_PRINT("[%d] cuStreamSynchronize()/shmem_" #type "_wait_until() failed",         \
-                        nvshmem_state->mype);                                                     \
+                        nvshmemi_state->mype);                                                     \
             goto out;                                                                             \
         }                                                                                         \
     out:                                                                                          \
@@ -142,13 +142,13 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TYPE_WAIT_UNTIL)
                 break;                                                                            \
             default:                                                                              \
                 ERROR_PRINT("[%d] Invalid comparator/shmem_" #type "_wait_until()",               \
-                            nvshmem_state->mype);                                                 \
+                            nvshmemi_state->mype);                                                 \
                 goto out;                                                                         \
         }                                                                                         \
         status = cuda_interface_##type##_wait_until_on_stream(ivar, cmp, cmp_value, cstream);     \
         if (status) {                                                                             \
             ERROR_PRINT("[%d] cudaLaunchKernel()/shmemx_" #type "_wait_until_on_stream() failed", \
-                        nvshmem_state->mype);                                                     \
+                        nvshmemi_state->mype);                                                     \
             goto out;                                                                             \
         }                                                                                         \
     out:                                                                                          \
@@ -175,17 +175,17 @@ void nvshmem_wait_until(long *ivar, int cmp,
         case NVSHMEM_CMP_GE:
             break;
         default:
-            ERROR_PRINT("[%d] Invalid comparator/shmem_wait_until()", nvshmem_state->mype);
+            ERROR_PRINT("[%d] Invalid comparator/shmem_wait_until()", nvshmemi_state->mype);
             goto out;
     }
     status = cuda_interface_long_wait_until(ivar, cmp, cmp_value);
     if (status) {
-        ERROR_PRINT("[%d] cudaLaunchKernel()/shmem_wait_until() failed", nvshmem_state->mype);
+        ERROR_PRINT("[%d] cudaLaunchKernel()/shmem_wait_until() failed", nvshmemi_state->mype);
         goto out;
     }
-    status = cuStreamSynchronize(nvshmem_state->my_stream);
+    status = cuStreamSynchronize(nvshmemi_state->my_stream);
     if (status) {
-        ERROR_PRINT("[%d] cuStreamSynchronize()/shmem_wait_until() failed", nvshmem_state->mype);
+        ERROR_PRINT("[%d] cuStreamSynchronize()/shmem_wait_until() failed", nvshmemi_state->mype);
         goto out;
     }
 out:
@@ -210,13 +210,13 @@ void nvshmemx_wait_until_on_stream(
         case NVSHMEM_CMP_GE:
             break;
         default:
-            ERROR_PRINT("[%d] Invalid comparator/shmem_wait_until()", nvshmem_state->mype);
+            ERROR_PRINT("[%d] Invalid comparator/shmem_wait_until()", nvshmemi_state->mype);
             goto out;
     }
     status = cuda_interface_long_wait_until_on_stream(ivar, cmp, cmp_value, cstream);
     if (status) {
         ERROR_PRINT("[%d] cudaLaunchKernel()/shmemx_wait_until_on_stream() failed",
-                    nvshmem_state->mype);
+                    nvshmemi_state->mype);
         goto out;
     }
 out:

@@ -186,7 +186,7 @@ __device__ T nvshmemi_proxy_rma_g(void * source, int pe) {
     uint64_t idx = counter*sizeof(g_elem_t);
     uint64_t idx_in_buf = idx & (proxy_channel_g_buf_size_d - 1);
     g_elem_t *elem = (g_elem_t *)(proxy_channel_g_buf_d + idx_in_buf);
-    uint64_t flag = (counter >> proxy_channel_g_buf_log_size_d)*2;
+    uint64_t flag = (idx >> proxy_channel_g_buf_log_size_d)*2;
 
     /* wait until elemet can be used */
     while(elem->flag < flag);
@@ -392,14 +392,14 @@ __device__ void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T swap_add,
     uint64_t idx = counter*sizeof(g_elem_t);
     uint64_t idx_in_buf = idx & (proxy_channel_g_buf_size_d - 1);
     g_elem_t *elem = (g_elem_t *)(proxy_channel_g_buf_d + idx_in_buf);
-    uint64_t flag = (counter >> proxy_channel_g_buf_log_size_d)*2;
+    uint64_t flag = (idx >> proxy_channel_g_buf_log_size_d)*2;
 
     /* wait until elemet can be used */
-    while(*((volatile uint64_t *)&elem->flag) < flag);
+    nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&elem->flag, flag, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_FLAG);
 
     amo<T>(rptr, swap_add, compare, pe, op);
 
-    while(*((volatile uint64_t *)&elem->flag) < (flag + 1));
+    nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&elem->flag, flag + 1, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_DATA);
     __threadfence();
 
     T return_val = *(T *)(&(elem->data));

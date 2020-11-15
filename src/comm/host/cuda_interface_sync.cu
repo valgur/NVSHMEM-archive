@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
@@ -15,7 +15,7 @@
         dim3 gdim(1), bdim(1);                                                      \
         void (*funcPtr)(TYPE *, TYPE) = WaitKernel<TYPE>;                           \
         return cudaLaunchKernel((const void *)funcPtr, gdim, bdim, kernelParams, 0, \
-                                nvshmem_state->my_stream);                          \
+                                nvshmemi_state->my_stream);                          \
     }
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(CUDA_INTERFACE_TYPE_WAIT)
@@ -59,7 +59,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(CUDA_INTERFACE_TYPE_WAIT_ON_STREAM)
                 break;                                                                             \
         }                                                                                          \
         return cudaLaunchKernel((const void *)funcPtr, gdim, bdim, kernelParams, 0,                \
-                                nvshmem_state->my_stream);                                         \
+                                nvshmemi_state->my_stream);                                         \
     }
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(CUDA_INTERFACE_TYPE_WAIT_UNTIL)

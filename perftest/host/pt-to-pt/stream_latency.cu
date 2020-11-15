@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -86,6 +86,11 @@ int main(int argc, char *argv[]) {
     int status = 0;
     int mype, npes;
     char *data_d = NULL, *data_d_local = NULL;
+    uint64_t *size_array = NULL;
+    double *offs_latency_array = NULL;
+    double *ons_latency_array = NULL;
+    int num_entries;
+    int i;
 
     dir_t dir = PUSH;
     int iter = DEFAULT_ITERS;
@@ -142,6 +147,25 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    num_entries = floor(log2((float)max_msg_size)) - floor(log2((float)min_msg_size)) + 1;
+    size_array = (uint64_t *)calloc(sizeof(uint64_t), num_entries);
+    if (!size_array) {
+        status = -1;
+        goto finalize;
+    }
+
+    offs_latency_array = (double *)calloc(sizeof(double), num_entries);
+    if (!offs_latency_array) {
+        status = -1;
+        goto finalize;
+    }
+
+    ons_latency_array = (double *)calloc(sizeof(double), num_entries);
+    if (!ons_latency_array) {
+        status = -1;
+        goto finalize;
+    }
+
     data_d = (char *)nvshmem_malloc(max_msg_size);
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
 
@@ -154,23 +178,22 @@ int main(int argc, char *argv[]) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     if (mype == 0) {
-        printf(
-            "   size(bytes) \t latency:with _on_stream (us) \t latency:without _on_stream (us)\n");
-        fflush(stdout);
-    }
-
-    if (mype == 0) {
-        float us1_per_iter, us2_per_iter, ms1, ms2;
+        float ms1, ms2;
         cudaEvent_t sev, eev;
         CUDA_CHECK(cudaEventCreate(&sev));
         CUDA_CHECK(cudaEventCreate(&eev));
+        i = 0;
         for (int size = min_msg_size; size <= max_msg_size; size *= 2) {
+            size_array[i] = size;
             lat(data_d, data_d_local, size, mype, iter, dir, strm, sev, eev, &ms1, &ms2, nb, nt,
                 ncycles);
-            us1_per_iter = ms1 / iter * 1000;
-            us2_per_iter = ms2 / iter * 1000;
-            printf("%7d \t %8.2f \t %8.2f \n", size, us1_per_iter, us2_per_iter);
+            ons_latency_array[i] = ms1 / iter * 1000;
+            offs_latency_array[i] = ms2 / iter * 1000;
+            i++;
         }
+
+        print_table("Stream_Latency", "with _on_stream", "size (Bytes)", "latency", "us", '-', size_array, ons_latency_array, i);
+        print_table("Stream_Latency", "without _on_stream", "size (Bytes)", "latency", "us", '-', size_array, offs_latency_array, i);
 
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));
@@ -185,6 +208,10 @@ finalize:
     CUDA_CHECK(cudaStreamDestroy(strm));
 
     if (data_d) nvshmem_free(data_d);
+    if (size_array) free(size_array);
+    if (ons_latency_array) free(ons_latency_array);
+    if (offs_latency_array) free(offs_latency_array);
+
 
     if (data_d_local) nvshmem_free(data_d_local);
 

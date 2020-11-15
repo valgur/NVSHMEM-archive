@@ -1,18 +1,19 @@
 /*
- * * Copyright (c) 2017-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmemx.h"
 #include "gpu_coll.h"
+#include "nvshmemi_coll.h"
 #include <cstdio>
 #include <cassert>
 
 #ifdef __CUDA_ARCH__
 
-#define GPU_HEAD_CHECK_OP_THREADGROUP(TYPE, OP, dest, src, actual_src, nelems, myIdx, groupSize) \
+#define GPU_HEAD_CHECK_OP_THREADGROUP(TYPENAME, TYPE, OP, dest, src, actual_src, nelems, myIdx, groupSize) \
     do {                                                                                         \
         int i, k;                                                                                \
         int subelems = sizeof(TYPE) / sizeof(uint32_t);                                          \
@@ -33,8 +34,8 @@
         }                                                                                        \
     } while (0)
 
-#define GPU_HEAD_CHECKALL_OP_THREADGROUP(TYPE, OP, dest, src, actual_src, nelems, PE_start, \
-                                         stride, PE_size, myIdx, groupSize)                 \
+#define GPU_HEAD_CHECKALL_OP_THREADGROUP(TYPENAME, TYPE, OP, dest, src, actual_src, nelems, start, \
+                                         stride, size, myIdx, groupSize)                    \
     do {                                                                                    \
         int i, j, k;                                                                        \
         int subelems = sizeof(TYPE) / sizeof(uint32_t);                                     \
@@ -42,7 +43,7 @@
         TYPE tmp;                                                                           \
         uint32_t *tmp_ptr = (uint32_t *)&tmp;                                               \
         uint32_t *payload = NULL;                                                           \
-        int my_active_set_pe = ((nvshmemi_mype_d - PE_start) / stride);                      \
+        int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);                        \
         TYPE *src_ptr = (TYPE *)actual_src;                                                 \
                                                                                             \
         for (j = (my_active_set_pe - 1); j >= 0; j--) {                                     \
@@ -60,7 +61,7 @@
             }                                                                               \
             src_ptr = dest;                                                                 \
         }                                                                                   \
-        for (j = PE_size - 1; j > my_active_set_pe; j--) {                                  \
+        for (j = size - 1; j > my_active_set_pe; j--) {                                  \
             for (i = myIdx; i < nelems; i += groupSize) {                                   \
                 for (k = 0; k < subelems; k++) {                                            \
                     payload = (uint32_t *)((uint64_t *)src + (i * subelems) + k +           \
@@ -77,7 +78,7 @@
         }                                                                                   \
     } while (0)
 
-#define GPU_LINEAR_REDUCE_THREADGROUP(TYPE, OP, x, y, z, nelems, myIdx, groupSize)     \
+#define GPU_LINEAR_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP, x, y, z, nelems, myIdx, groupSize)     \
     do {                                                                               \
         int i;                                                                         \
         for (i = myIdx; i < nelems; i += groupSize) {                                  \
@@ -85,98 +86,114 @@
         }                                                                              \
     } while (0)
 
-#define GPU_LINEAR_REDUCE_THREADGROUP_P2P_GET(SC, TYPE, OP, x, y, next_rank, z, nelems, myIdx,   \
-                                              groupSize, PE_start, logPE_stride, PE_size, pSync) \
+#define GPU_LINEAR_REDUCE_THREADGROUP_P2P_GET(SC, TYPENAME, TYPE, OP, x, y, next_rank, z, nelems, myIdx,   \
+                                              groupSize, start, stride, size, pWrk, pSync) \
     do {                                                                                         \
         int i;                                                                                   \
         int group_nelems = ((nelems / groupSize) * groupSize);                                   \
         int excess = nelems - group_nelems;                                                      \
+        long counter = 1;                                                                        \
         for (i = myIdx; i < group_nelems; i += groupSize) {                                      \
-            nvshmem_##TYPE##_get((TYPE *)((TYPE *)gpu_ipwrk_d + myIdx), (TYPE *)((TYPE *)y + i), \
+            nvshmem_##TYPENAME##_get((TYPE *)((TYPE *)pWrk + myIdx), (TYPE *)((TYPE *)y + i), \
                                  1, next_rank);                                                  \
-            nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                       \
+            nvshmemxi_barrier_##SC(start, stride, size, pSync, &counter);                        \
             perform_gpu_rd_##OP(*((TYPE *)z + i), *((TYPE *)x + i),                              \
-                                *((TYPE *)gpu_ipwrk_d + myIdx));                                 \
+                                *((TYPE *)pWrk + myIdx));                                 \
         }                                                                                        \
         if (excess) {                                                                            \
             if (i < nelems) {                                                                    \
-                nvshmem_##TYPE##_get((TYPE *)((TYPE *)gpu_ipwrk_d + myIdx),                      \
+                nvshmem_##TYPENAME##_get((TYPE *)((TYPE *)pWrk + myIdx),                  \
                                      (TYPE *)((TYPE *)y + i), 1, next_rank);                     \
             }                                                                                    \
-            nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                       \
+            nvshmemxi_barrier_##SC(start, stride, size, pSync, &counter);                        \
             if (i < nelems) {                                                                    \
                 perform_gpu_rd_##OP(*((TYPE *)z + i), *((TYPE *)x + i),                          \
-                                    *((TYPE *)gpu_ipwrk_d + myIdx));                             \
+                                    *((TYPE *)pWrk + myIdx));                             \
             }                                                                                    \
         }                                                                                        \
+        NVSHMEMI_SYNC_##SC();                                                                     \
+        int end = start + stride * size;                                                         \
+        for (i = myIdx; i < end; i += groupSize)                                                 \
+            pSync[i] = NVSHMEMI_SYNC_VALUE;                                                       \
+        NVSHMEMI_SYNC_##SC();                                                                     \
     } while (0)
 
-#define GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT(SC, TYPE, OP, x, y, next_rank, z, offset, nelems,  \
-                                              myIdx, groupSize, PE_start, logPE_stride, PE_size, \
-                                              pSync)                                             \
+#define GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT(SC, TYPENAME, TYPE, OP, x, y, next_rank, z, offset, nelems,  \
+                                              myIdx, groupSize, start, stride, size, pWrk, pSync) \
     do {                                                                                         \
         int i;                                                                                   \
         int group_nelems = ((nelems / groupSize) * groupSize);                                   \
         int excess = nelems - group_nelems;                                                      \
+        long counter = 1;                                                                        \
         for (i = myIdx; i < group_nelems; i += groupSize) {                                      \
-            nvshmem_##TYPE##_put_nbi(                                                            \
-                (TYPE *)((TYPE *)gpu_ipwrk_d + (myIdx + ((offset & 1) * groupSize))),            \
-                (TYPE *)((TYPE *)y + i), 1, next_rank);                                          \
-            nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                       \
+            nvshmem_##TYPENAME##_put_nbi(                                                        \
+                (TYPE *)((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize))),                   \
+                (const TYPE *)((TYPE *)y + i), 1, next_rank);                                    \
+            nvshmemxi_barrier_##SC(start, stride, size, pSync, &counter);                        \
             perform_gpu_rd_##OP(*((TYPE *)z + i), *((TYPE *)x + i),                              \
-                                *((TYPE *)gpu_ipwrk_d + (myIdx + ((offset & 1) * groupSize))));  \
+                                *((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize))));         \
         }                                                                                        \
         offset++;                                                                                \
         if (excess) {                                                                            \
             if (i < nelems) {                                                                    \
-                nvshmem_##TYPE##_put_nbi(                                                        \
-                    (TYPE *)((TYPE *)gpu_ipwrk_d + (myIdx + ((offset & 1) * groupSize))),        \
-                    (TYPE *)((TYPE *)y + i), 1, next_rank);                                      \
+                nvshmem_##TYPENAME##_put_nbi(                                                    \
+                    (TYPE *)((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize))),               \
+                    (const TYPE *)((TYPE *)y + i), 1, next_rank);                                \
             }                                                                                    \
-            nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                       \
+            nvshmemxi_barrier_##SC(start, stride, size, pSync, &counter);                        \
             if (i < nelems) {                                                                    \
                 perform_gpu_rd_##OP(                                                             \
                     *((TYPE *)z + i), *((TYPE *)x + i),                                          \
-                    *((TYPE *)gpu_ipwrk_d + (myIdx + ((offset & 1) * groupSize))));              \
+                    *((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize))));                     \
             }                                                                                    \
         }                                                                                        \
         offset++;                                                                                \
+        int end = start + stride * size;                                                         \
+        NVSHMEMI_SYNC_##SC();                                                                     \
+        for (i = myIdx; i < end; i += groupSize)                                                 \
+            pSync[i] = NVSHMEMI_SYNC_VALUE;                                                      \
+        NVSHMEMI_SYNC_##SC();                                                                     \
     } while (0)
 
-#define GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT_DIRECT(SC, TYPE, OP, x, y, next_rank, z, offset,  \
-                                                     nelems, myIdx, groupSize, PE_start,        \
-                                                     logPE_stride, PE_size, pSync)              \
+#define GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT_DIRECT(SC, TYPENAME, TYPE, OP, x, y, next_rank, z, offset,  \
+                                                     nelems, myIdx, groupSize, start,           \
+                                                     stride, size, pWrk, pSync)                 \
     do {                                                                                        \
         int i;                                                                                  \
         int group_nelems = ((nelems / groupSize) * groupSize);                                  \
         int excess = nelems - group_nelems;                                                     \
+        long counter = 1;                                                                       \
         for (i = myIdx; i < group_nelems; i += groupSize) {                                     \
-            *((TYPE *)((TYPE *)gpu_ipwrk_d + (myIdx + ((offset & 1) * groupSize)))) =           \
+            *((TYPE *)((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize)))) =                  \
                 *((TYPE *)((TYPE *)y + i));                                                     \
-            nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                      \
+            nvshmemxi_barrier_##SC(start, stride, size, pSync, &counter);                       \
             perform_gpu_rd_##OP(*((TYPE *)z + i), *((TYPE *)x + i),                             \
-                                *((TYPE *)gpu_ipwrk_d + (myIdx + ((offset & 1) * groupSize)))); \
+                                *((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize))));        \
         }                                                                                       \
         offset++;                                                                               \
         if (excess) {                                                                           \
             if (i < nelems) {                                                                   \
-                *((TYPE *)((TYPE *)gpu_ipwrk_d + (myIdx + ((offset & 1) * groupSize)))) =       \
+                *((TYPE *)((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize)))) =              \
                     *((TYPE *)((TYPE *)y + i));                                                 \
             }                                                                                   \
-            nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                      \
+            nvshmemxi_barrier_##SC(start, stride, size, pSync, &counter);                       \
             if (i < nelems) {                                                                   \
                 perform_gpu_rd_##OP(                                                            \
                     *((TYPE *)z + i), *((TYPE *)x + i),                                         \
-                    *((TYPE *)gpu_ipwrk_d + (myIdx + ((offset & 1) * groupSize))));             \
+                    *((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize))));                    \
             }                                                                                   \
         }                                                                                       \
         offset++;                                                                               \
+        int end = start + stride * size;                                                        \
+        NVSHMEMI_SYNC_##SC();                                                                     \
+        for (i = myIdx; i < end; i += groupSize)                                                \
+            pSync[i] = NVSHMEMI_SYNC_VALUE;                                                     \
+        NVSHMEMI_SYNC_##SC();                                                                     \
     } while (0)
 
 #define NVSHMEMXI_GPU_RDXN_THREADGROUP_ZCOPY_GET_BAR_DIRECT(                                       \
-    SC, TYPE, OP, dest, source, nreduce, PE_start, logPE_stride, PE_size, pWrk, pSync)             \
+    SC, TYPENAME, TYPE, OP, dest, source, nreduce, start, stride, size, pWrk, pSync)             \
     do {                                                                                           \
-        int stride = 1 << logPE_stride;                                                            \
         int next_rank = -1;                                                                        \
         int src_offset = -1;                                                                       \
         int next_offset = -1;                                                                      \
@@ -186,112 +203,86 @@
         NVSHMEMI_DECL_THREAD_IDX_##SC();                                                           \
         NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                     \
         int i;                                                                                     \
+        int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);                               \
                                                                                                    \
-        base = (char *)((void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d +       \
-                                      nvshmemi_mype_d));                                            \
+        base = (char *)((void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d +      \
+                                      nvshmemi_mype_d));                                           \
         src_offset = ((char *)source - base);                                                      \
                                                                                                    \
-        next_rank = (nvshmemi_mype_d + (stride)) % (stride * PE_size);                              \
+        next_rank = start + ((my_active_set_pe + 1) % size) * stride;                              \
         next_offset = src_offset;                                                                  \
         peer_base = (char *)((void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d +  \
-                                           next_rank));                                            \
-        peer_source = peer_base + next_offset;                                                     \
-        GPU_LINEAR_REDUCE_THREADGROUP(TYPE, OP, (void *)source, peer_source, dest, nreduce, myIdx, \
-                                      groupSize);                                                  \
-                                                                                                   \
-        for (i = 2; i < PE_size; i++) {                                                            \
-            next_rank = (nvshmemi_mype_d + (i * stride)) % (stride * PE_size);                      \
-            next_offset = src_offset;                                                              \
-            peer_base = (char *)((void *)__ldg(                                                    \
+                                           next_rank));                                             \
+        peer_source = peer_base + next_offset;                                                      \
+        GPU_LINEAR_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP, (void *)source, peer_source, dest, nreduce, myIdx, \
+                                      groupSize);                                                   \
+                                                                                                    \
+        for (i = 2; i < size; i++) {                                                                \
+            next_rank = start + ((my_active_set_pe + i) % size) * stride;                           \
+            next_offset = src_offset;                                                               \
+            peer_base = (char *)((void *)__ldg(                                                     \
                 (const long long unsigned *)nvshmemi_peer_heap_base_d + next_rank));                \
-            peer_source = peer_base + next_offset;                                                 \
-            GPU_LINEAR_REDUCE_THREADGROUP(TYPE, OP, dest, peer_source, dest, nreduce, myIdx,       \
+            peer_source = peer_base + next_offset;                                                  \
+            GPU_LINEAR_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP, dest, peer_source, dest, nreduce, myIdx,       \
                                           groupSize);                                              \
         }                                                                                          \
-        nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                             \
+        nvshmemxi_barrier_##SC(start, stride, size, pSync, NULL);                                  \
     } while (0)
 
 // barrier limited
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP_GET_BAR(SC, TYPE, OP, dest, source, nreduce, PE_start,    \
-                                               logPE_stride, PE_size, pWrk, pSync)               \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP_GET_BAR(SC, TYPENAME, TYPE, OP, dest, source, nreduce, start,    \
+                                               stride, size, pWrk, pSync)                        \
     do {                                                                                         \
-        int stride = 1 << logPE_stride;                                                          \
         int next_rank = -1;                                                                      \
         NVSHMEMI_DECL_THREAD_IDX_##SC();                                                         \
         NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                   \
         int i;                                                                                   \
+        int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);                             \
                                                                                                  \
-        next_rank = (nvshmemi_mype_d + (stride)) % (stride * PE_size);                            \
-        GPU_LINEAR_REDUCE_THREADGROUP_P2P_GET(SC, TYPE, OP, source, source, next_rank, dest,     \
-                                              nreduce, myIdx, groupSize, PE_start, logPE_stride, \
-                                              PE_size, pSync);                                   \
-                                                                                                 \
-        for (i = 2; i < PE_size; i++) {                                                          \
-            next_rank = (nvshmemi_mype_d + (i * stride)) % (stride * PE_size);                    \
-            GPU_LINEAR_REDUCE_THREADGROUP_P2P_GET(SC, TYPE, OP, dest, source, next_rank, dest,   \
-                                                  nreduce, myIdx, groupSize, PE_start,           \
-                                                  logPE_stride, PE_size, pSync);                 \
+        next_rank = start + ((my_active_set_pe + 1) % size) * stride;                            \
+        GPU_LINEAR_REDUCE_THREADGROUP_P2P_GET(SC, TYPENAME, TYPE, OP, source, source, next_rank, dest,     \
+                                              nreduce, myIdx, groupSize, start, stride,        \
+                                              size, pWrk, pSync);                              \
+                                                                                               \
+        for (i = 2; i < size; i++) {                                                           \
+            next_rank = start + ((my_active_set_pe + i) % size) * stride;                      \
+            GPU_LINEAR_REDUCE_THREADGROUP_P2P_GET(SC, TYPENAME, TYPE, OP, dest, source, next_rank, dest,   \
+                                                  nreduce, myIdx, groupSize, start,              \
+                                                  stride, size, pWrk, pSync);                    \
         }                                                                                        \
         NVSHMEMI_SYNC_##SC();                                                                    \
     } while (0)
 
 // barrier limited
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUT_BAR(SC, TYPE, OP, dest, source, nreduce, PE_start,   \
-                                               logPE_stride, PE_size, pWrk, pSync)              \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUT_BAR(SC, TYPENAME, TYPE, OP, dest, source, nreduce, start,   \
+                                               stride, size, pWrk, pSync)              \
     do {                                                                                        \
-        int stride = 1 << logPE_stride;                                                         \
         int next_rank = -1;                                                                     \
         int counter = 0;                                                                        \
         NVSHMEMI_DECL_THREAD_IDX_##SC();                                                        \
         NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                  \
         int i;                                                                                  \
+        int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);                            \
                                                                                                 \
-        next_rank = (nvshmemi_mype_d + (stride)) % (stride * PE_size);                           \
+        next_rank = start + ((my_active_set_pe + 1) % size) * stride;                           \
         GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT(SC, TYPE, OP, source, source, next_rank, dest,    \
-                                              counter, nreduce, myIdx, groupSize, PE_start,     \
-                                              logPE_stride, PE_size, pSync);                    \
+                                              counter, nreduce, myIdx, groupSize, start,        \
+                                              stride, size, pSync);                             \
                                                                                                 \
-        for (i = 2; i < PE_size; i++) {                                                         \
-            next_rank = (nvshmemi_mype_d + (i * stride)) % (stride * PE_size);                   \
-            GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT(SC, TYPE, OP, dest, source, next_rank, dest,  \
-                                                  counter, nreduce, myIdx, groupSize, PE_start, \
-                                                  logPE_stride, PE_size, pSync);                \
+        for (i = 2; i < size; i++) {                                                            \
+            next_rank = start + ((my_active_set_pe + i) % size) * stride;                       \
+            GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT(SC, TYPENAME, TYPE, OP, dest, source, next_rank, dest,  \
+                                                  counter, nreduce, myIdx, groupSize, start,    \
+                                                  stride, size, pSync);                         \
         }                                                                                       \
         NVSHMEMI_SYNC_##SC();                                                                   \
     } while (0)
 
-#define GPU_RDXN_ON_DEMAND_THREADGROUP(SC, TYPE, OP, dest, source, nelems, PE_start, logPE_stride, \
-                                       PE_size, pWrk, pSync)                                       \
-    do {                                                                                           \
-        int stride = 1 << logPE_stride;                                                            \
-        int next_rank = -1;                                                                        \
-        TYPE *op1 = NULL, *op2 = NULL;                                                             \
-        int i;                                                                                     \
-        volatile TYPE *tmp_operand;                                                                \
-        NVSHMEMI_DECL_THREAD_IDX_##SC();                                                           \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                     \
-                                                                                                   \
-        tmp_operand = (TYPE *)gpu_own_intm_rdxn_addr_d;                                            \
-                                                                                                   \
-        nvshmemx_##TYPE##_put_##SC((TYPE *)dest, (TYPE *)source, nelems, nvshmemi_mype_d);          \
-        for (i = 1; i < PE_size; i++) {                                                            \
-            next_rank = (nvshmemi_mype_d + (i * stride)) % (stride * PE_size);                      \
-            nvshmemx_##TYPE##_put_##SC((TYPE *)tmp_operand, (TYPE *)source, nelems, next_rank);    \
-            nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                         \
-            op1 = (TYPE *)dest;                                                                    \
-            op2 = (TYPE *)tmp_operand;                                                             \
-            GPU_LINEAR_REDUCE_THREADGROUP(TYPE, OP, op1, op2, op1, nelems, myIdx, groupSize);      \
-            nvshmemx_sync_##SC(PE_start, logPE_stride, PE_size, pSync);                            \
-        }                                                                                          \
-        NVSHMEMI_SYNC_##SC();                                                                      \
-    } while (0)
-
-#define GPU_RDXN_SEGMENT_THREADGROUP(SC, TYPE, OP, dest, source, nelems, PE_start, logPE_stride,  \
-                                     PE_size, pWrk, pSync)                                        \
+#define GPU_RDXN_SEGMENT_THREADGROUP(SC, TYPENAME, TYPE, OP, dest, source, nelems, start, stride,  \
+                                     size, pWrk, pSync)                                        \
     do {                                                                                          \
         int type_size = sizeof(TYPE);                                                             \
         int msg_len = nelems * type_size;                                                         \
-        int stride = 1 << logPE_stride;                                                           \
         int next_rank = -1;                                                                       \
         NVSHMEMI_DECL_THREAD_IDX_##SC();                                                          \
         NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                    \
@@ -305,63 +296,67 @@
         int pes_per_round = 0;                                                                    \
         int round = 0;                                                                            \
         int exchange_size = 0;                                                                    \
-        int nvshm_gpu_rdxn_seg_size = gpu_coll_env_params_var_d.gpu_intm_rdxn_size;               \
+        int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);                              \
+        int nvshm_gpu_rdxn_seg_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE;                           \
                                                                                                   \
-        tmp_operand = (TYPE *)gpu_own_intm_rdxn_addr_d;                                           \
-        nvshmemx_##TYPE##_put_nbi_##SC((TYPE *)dest, (TYPE *)source, nelems, nvshmemi_mype_d);     \
+        tmp_operand = (TYPE *)pWrk;                                                               \
+        nvshmemx_##TYPENAME##_put_nbi_##SC((TYPE *)dest, (const TYPE *)source, nelems, nvshmemi_mype_d);     \
                                                                                                   \
         rnds_floor = msg_len / nvshm_gpu_rdxn_seg_size;                                           \
         remainder = msg_len % nvshm_gpu_rdxn_seg_size;                                            \
                                                                                                   \
+        long sync_counter = NVSHMEMI_SYNC_VALUE + 1;                                              \
         for (j = 0; j < rnds_floor; j++) {                                                        \
             exchange_size = nvshm_gpu_rdxn_seg_size;                                              \
-            for (i = 1; i < PE_size; i++) {                                                       \
-                next_rank = (nvshmemi_mype_d + (i * stride)) % (stride * PE_size);                 \
-                nvshmemx_##TYPE##_put_nbi_##SC((TYPE *)tmp_operand, (TYPE *)source + offset,      \
+            for (i = 1; i < size; i++) {                                                          \
+                next_rank = start + ((my_active_set_pe + i) % size) * stride;                     \
+                nvshmemx_##TYPENAME##_put_nbi_##SC((TYPE *)tmp_operand, (const TYPE *)source + offset,      \
                                                (exchange_size / sizeof(TYPE)), next_rank);        \
-                nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                    \
+                nvshmemxi_barrier_##SC(start, stride, size, pSync, &sync_counter);                \
                 op1 = (TYPE *)dest + offset;                                                      \
                 op2 = (TYPE *)tmp_operand;                                                        \
-                GPU_LINEAR_REDUCE_THREADGROUP(TYPE, OP, op1, op2, op1,                            \
+                GPU_LINEAR_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP, op1, op2, op1,              \
                                               (exchange_size / sizeof(TYPE)), myIdx, groupSize);  \
-                nvshmemx_sync_##SC(PE_start, logPE_stride, PE_size, pSync);                       \
+                nvshmemxi_sync_##SC(start, stride, size, pSync, &sync_counter);                   \
             }                                                                                     \
             offset += (exchange_size / sizeof(TYPE));                                             \
         }                                                                                         \
-                                                                                                  \
         if (remainder != 0) {                                                                     \
             exchange_size = remainder;                                                            \
             pes_per_round = nvshm_gpu_rdxn_seg_size / remainder;                                  \
             pe_offset = 1;                                                                        \
             do {                                                                                  \
                 round = 0;                                                                        \
-                for (i = pe_offset; ((round < pes_per_round) && (i < PE_size)); i++) {            \
-                    next_rank = (nvshmemi_mype_d + (i * stride)) % (stride * PE_size);             \
-                    nvshmemx_##TYPE##_put_nbi_##SC(                                               \
+                for (i = pe_offset; ((round < pes_per_round) && (i < size)); i++) {            \
+                    next_rank = start + ((my_active_set_pe + i) % size) * stride;                 \
+                    nvshmemx_##TYPENAME##_put_nbi_##SC(                                           \
                         (TYPE *)((TYPE *)tmp_operand + (round * (exchange_size / sizeof(TYPE)))), \
                         (TYPE *)source + offset, (exchange_size / sizeof(TYPE)), next_rank);      \
                     round++;                                                                      \
                     pe_offset++;                                                                  \
                 }                                                                                 \
-                nvshmemx_barrier_##SC(PE_start, logPE_stride, PE_size, pSync);                    \
+                nvshmemxi_barrier_##SC(start, stride, size, pSync, &sync_counter);                \
                 for (i = 0; i < round; i++) {                                                     \
                     op1 = (TYPE *)dest + offset;                                                  \
                     op2 = (TYPE *)((TYPE *)tmp_operand + (i * (exchange_size / sizeof(TYPE))));   \
-                    GPU_LINEAR_REDUCE_THREADGROUP(TYPE, OP, op1, op2, op1,                        \
+                    GPU_LINEAR_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP, op1, op2, op1,          \
                                                   (exchange_size / sizeof(TYPE)), myIdx,          \
                                                   groupSize);                                     \
                 }                                                                                 \
-                nvshmemx_sync_##SC(PE_start, logPE_stride, PE_size, pSync);                       \
-            } while (pe_offset < PE_size);                                                        \
+                nvshmemxi_sync_##SC(start, stride, size, pSync, &sync_counter);                   \
+            } while (pe_offset < size);                                                           \
+        }                                                                                         \
+        NVSHMEMI_SYNC_##SC();                                                                     \
+        for (i = myIdx; i < size; i += groupSize) {                                               \
+            pSync[start + i * stride] = NVSHMEMI_SYNC_VALUE;                                      \
         }                                                                                         \
         NVSHMEMI_SYNC_##SC();                                                                     \
     } while (0)
 
 // barrier limited
 #define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUT_BAR_DIRECT(                                             \
-    SC, TYPE, OP, dest, source, nreduce, PE_start, logPE_stride, PE_size, pWrk, pSync)             \
+    SC, TYPENAME, TYPE, OP, dest, source, nreduce, start, stride, size, pWrk, pSync)             \
     do {                                                                                           \
-        int stride = 1 << logPE_stride;                                                            \
         int next_rank = -1;                                                                        \
         int src_offset = -1;                                                                       \
         int next_offset = -1;                                                                      \
@@ -369,6 +364,7 @@
         char *peer_base = NULL;                                                                    \
         char *peer_source = NULL;                                                                  \
         int counter = 0;                                                                           \
+        int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);                              \
         NVSHMEMI_DECL_THREAD_IDX_##SC();                                                           \
         NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                     \
         int i;                                                                                     \
@@ -377,38 +373,37 @@
                                       nvshmemi_mype_d));                                            \
         src_offset = ((char *)source - base);                                                      \
                                                                                                    \
-        next_rank = (nvshmemi_mype_d + (stride)) % (stride * PE_size);                              \
+        next_rank = start + ((my_active_set_pe + 1) % size) * stride;                              \
         next_offset = src_offset;                                                                  \
         peer_base = (char *)((void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d +  \
                                            next_rank));                                            \
         peer_source = peer_base + next_offset;                                                     \
-        GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT_DIRECT(SC, TYPE, OP, source, peer_source, next_rank, \
+        GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT_DIRECT(SC, TYPENAME, TYPE, OP, source, peer_source, next_rank, \
                                                      dest, counter, nreduce, myIdx, groupSize,     \
-                                                     PE_start, logPE_stride, PE_size, pSync);      \
+                                                     start, stride, size, pWrk, pSync);              \
                                                                                                    \
-        for (i = 2; i < PE_size; i++) {                                                            \
-            next_rank = (nvshmemi_mype_d + (i * stride)) % (stride * PE_size);                      \
+        for (i = 2; i < size; i++) {                                                            \
+            next_rank = start + ((my_active_set_pe + i) % size) * stride;                         \
             next_offset = src_offset;                                                              \
             peer_base = (char *)((void *)__ldg(                                                    \
                 (const long long unsigned *)nvshmemi_peer_heap_base_d + next_rank));                \
             peer_source = peer_base + next_offset;                                                 \
             GPU_LINEAR_REDUCE_THREADGROUP_P2P_PUT_DIRECT(                                          \
-                SC, TYPE, OP, dest, peer_source, next_rank, dest, counter, nreduce, myIdx,         \
-                groupSize, PE_start, logPE_stride, PE_size, pSync);                                \
+                SC, TYPENAME, TYPE, OP, dest, peer_source, next_rank, dest, counter, nreduce, myIdx,         \
+                groupSize, start, stride, size, pWrk, pSync);                                      \
         }                                                                                          \
         NVSHMEMI_SYNC_##SC();                                                                      \
     } while (0)
 
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTRING(SC, TYPE, OP, dest, source, nelems, PE_start,       \
-                                               logPE_stride, PE_size, pWrk, pSync)                 \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTRING(SC, TYPENAME, TYPE, OP, dest, source, nelems, start,       \
+                                               stride, size, pWrk, pSync)                 \
     do {                                                                                           \
         int next_rank = -1;                                                                        \
         int prev_rank = -1;                                                                        \
         int i, j;                                                                                  \
-        int stride = 1 << logPE_stride;                                                            \
-        int PE_end = PE_start + (stride * PE_size);                                                \
+        int PE_end = start + (stride * size);                                                      \
         uint32_t tmp[2];                                                                           \
-        long *tmp_rdxn = (long *)gpu_own_intm_rdxn_addr_d;                                         \
+        long *tmp_rdxn = (long *)pWrk;                                                             \
         int *tmp_int_rdxn = (int *)((long *)&tmp_rdxn[1]);                                         \
         uint32_t payld;                                                                            \
         NVSHMEMI_DECL_THREAD_IDX_##SC();                                                           \
@@ -416,8 +411,8 @@
         volatile uint32_t *my_notif_ptr = NULL;                                                    \
         int subelems = sizeof(TYPE) / sizeof(uint32_t);                                            \
         tmp[1] = 1;                                                                                \
-        next_rank = (nvshmemi_mype_d != (PE_end - stride)) ? (nvshmemi_mype_d + stride) : PE_start;  \
-        prev_rank = (nvshmemi_mype_d != PE_start) ? (nvshmemi_mype_d - stride) : (PE_end - stride);  \
+        next_rank = (nvshmemi_mype_d != (PE_end - stride)) ? (nvshmemi_mype_d + stride) : start;  \
+        prev_rank = (nvshmemi_mype_d != start) ? (nvshmemi_mype_d - stride) : (PE_end - stride);  \
         my_notif_ptr = (uint32_t *)((uint32_t *)((uint64_t *)pWrk + (nelems * subelems)) + myIdx); \
                                                                                                    \
         for (j = myIdx; j < nelems * subelems; j += groupSize) {                                   \
@@ -426,11 +421,11 @@
             *tmp_rdxn = *((long *)tmp);                                                            \
             nvshmemx_long_signal(((long *)pWrk + j), *tmp_rdxn, next_rank);                      \
         }                                                                                          \
-        GPU_HEAD_CHECK_OP_THREADGROUP(TYPE, OP, dest, pWrk, source, nelems, myIdx, groupSize);     \
+        GPU_HEAD_CHECK_OP_THREADGROUP(TYPENAME, TYPE, OP, dest, pWrk, source, nelems, myIdx, groupSize);     \
         /* sync needed on volta (intermittent hangs seen otherwise) */                             \
         NVSHMEMI_SYNC_##SC();                                                                      \
                                                                                                    \
-        for (i = 1; i < (PE_size - 1); i++) {                                                      \
+        for (i = 1; i < (size - 1); i++) {                                                      \
             __threadfence_system();                                                                \
             /* Don't want notification to overtake data transfer */                                \
             *tmp_int_rdxn = 1;                                                                     \
@@ -445,13 +440,13 @@
                 *tmp_rdxn = *((long *)tmp);                                                        \
                 nvshmemx_long_signal(((long *)pWrk + j), *tmp_rdxn, next_rank);                    \
             }                                                                                      \
-            GPU_HEAD_CHECK_OP_THREADGROUP(TYPE, OP, dest, pWrk, source, nelems, myIdx, groupSize); \
+            GPU_HEAD_CHECK_OP_THREADGROUP(TYPENAME, TYPE, OP, dest, pWrk, source, nelems, myIdx, groupSize); \
             NVSHMEMI_SYNC_##SC();                                                                  \
         }                                                                                          \
     } while (0)
 
 #define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTRING_DIRECT(                                             \
-    SC, TYPE, OP, dest, source, nelems, PE_start, logPE_stride, PE_size, pWrk, pSync)              \
+    SC, TYPENAME, TYPE, OP, dest, source, nelems, start, stride, size, pWrk, pSync)              \
     do {                                                                                           \
         int offset;                                                                                \
         char *notif_pwrk_dest;                                                                     \
@@ -459,8 +454,7 @@
         int next_rank = -1;                                                                        \
         int prev_rank = -1;                                                                        \
         int i, j;                                                                                  \
-        int stride = 1 << logPE_stride;                                                            \
-        int PE_end = PE_start + (stride * PE_size);                                                \
+        int PE_end = start + (stride * size);                                                \
         uint32_t tmp[2];                                                                           \
         uint32_t payld;                                                                            \
         uint32_t *notif_ptr = NULL;                                                                \
@@ -473,11 +467,11 @@
             (char *)pWrk - (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d +   \
                                           nvshmemi_mype_d));                                        \
         my_notif_ptr = (uint32_t *)((uint32_t *)((uint64_t *)pWrk + (nelems * subelems)) + myIdx); \
-        next_rank = (nvshmemi_mype_d != (PE_end - stride)) ? (nvshmemi_mype_d + stride) : PE_start;  \
+        next_rank = (nvshmemi_mype_d != (PE_end - stride)) ? (nvshmemi_mype_d + stride) : start;  \
         round_pwrk_dest =                                                                          \
             (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + next_rank)) +    \
             offset;                                                                                \
-        prev_rank = (nvshmemi_mype_d != PE_start) ? (nvshmemi_mype_d - stride) : (PE_end - stride);  \
+        prev_rank = (nvshmemi_mype_d != start) ? (nvshmemi_mype_d - stride) : (PE_end - stride);  \
         notif_pwrk_dest =                                                                          \
             (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + prev_rank)) +    \
             offset;                                                                                \
@@ -489,11 +483,11 @@
             tmp[0] = payld;                                                                        \
             *((uint64_t *)round_pwrk_dest + j) = *((uint64_t *)tmp);                               \
         }                                                                                          \
-        GPU_HEAD_CHECK_OP_THREADGROUP(TYPE, OP, dest, pWrk, source, nelems, myIdx, groupSize);     \
+        GPU_HEAD_CHECK_OP_THREADGROUP(TYPENAME, TYPE, OP, dest, pWrk, source, nelems, myIdx, groupSize);     \
         /* sync needed on volta (intermittent hangs seen otherwise) */                             \
         NVSHMEMI_SYNC_##SC();                                                                      \
                                                                                                    \
-        for (i = 1; i < (PE_size - 1); i++) {                                                      \
+        for (i = 1; i < (size - 1); i++) {                                                      \
             __threadfence_system();                                                                \
             /* Don't want notification to overtake data transfer */                                \
             *notif_ptr = 1;                                                                        \
@@ -505,31 +499,30 @@
                 tmp[0] = payld;                                                                    \
                 *((uint64_t *)round_pwrk_dest + j) = *((uint64_t *)tmp);                           \
             }                                                                                      \
-            GPU_HEAD_CHECK_OP_THREADGROUP(TYPE, OP, dest, pWrk, source, nelems, myIdx, groupSize); \
+            GPU_HEAD_CHECK_OP_THREADGROUP(TYPENAME, TYPE, OP, dest, pWrk, source, nelems, myIdx, groupSize); \
             NVSHMEMI_SYNC_##SC();                                                                  \
         }                                                                                          \
     } while (0)
 
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTALL(SC, TYPE, OP, dest, source, nelems, PE_start,       \
-                                              logPE_stride, PE_size, pWrk, pSync)                 \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTALL(SC, TYPENAME, TYPE, OP, dest, source, nelems, start,       \
+                                              stride, size, pWrk, pSync)                          \
     do {                                                                                          \
         int i, j;                                                                                 \
-        int stride = 1 << logPE_stride;                                                           \
-        int PE_end = PE_start + (stride * PE_size);                                               \
+        int PE_end = start + (stride * size);                                                     \
         NVSHMEMI_DECL_THREAD_IDX_##SC();                                                          \
         NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                    \
-        long *tmp_rdxn = (long *)gpu_own_intm_rdxn_addr_d;                                        \
+        long *tmp_rdxn = (long *)pWrk;                                                            \
         uint32_t tmp[2];                                                                          \
         uint32_t payld;                                                                           \
         int subelems = sizeof(TYPE) / sizeof(uint32_t);                                           \
-        int my_active_set_pe = ((nvshmemi_mype_d - PE_start) / stride);                            \
+        int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);                              \
         tmp[1] = 1;                                                                               \
                                                                                                   \
         for (j = myIdx; j < nelems * subelems; j += groupSize) {                                  \
             payld = *((uint32_t *)source + j);                                                    \
             tmp[0] = payld;                                                                       \
             *tmp_rdxn = *((long *)tmp);                                                           \
-            for (i = PE_start; i < nvshmemi_mype_d; i += stride) {                                 \
+            for (i = start; i < nvshmemi_mype_d; i += stride) {                                 \
                 nvshmemx_long_signal(((long *)pWrk + j + (nelems * subelems * my_active_set_pe)), \
                                      *tmp_rdxn, i);                                               \
             }                                                                                     \
@@ -538,28 +531,27 @@
                                      *tmp_rdxn, i);                                               \
             }                                                                                     \
         }                                                                                         \
-        GPU_HEAD_CHECKALL_OP_THREADGROUP(TYPE, OP, dest, pWrk, source, nelems, PE_start, stride,  \
-                                         PE_size, myIdx, groupSize);                              \
+        GPU_HEAD_CHECKALL_OP_THREADGROUP(TYPENAME, TYPE, OP, dest, pWrk, source, nelems, start, stride,  \
+                                         size, myIdx, groupSize);                              \
         __threadfence();                                                                          \
         NVSHMEMI_SYNC_##SC();                                                                     \
     } while (0)
 
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTALL_DIRECT(SC, TYPE, OP, dest, source, nelems, PE_start, \
-                                                     logPE_stride, PE_size, pWrk, pSync)           \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTALL_DIRECT(SC, TYPENAME, TYPE, OP, dest, source, nelems, start, \
+                                                     stride, size, pWrk, pSync)                     \
     do {                                                                                           \
         int offset;                                                                                \
         char *round_pwrk_dest;                                                                     \
         int i, j;                                                                                  \
-        int stride = 1 << logPE_stride;                                                            \
-        int PE_end = PE_start + (stride * PE_size);                                                \
+        int PE_end = start + (stride * size);                                                       \
         NVSHMEMI_DECL_THREAD_IDX_##SC();                                                           \
         NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                     \
         uint32_t tmp[2];                                                                           \
         uint32_t payld;                                                                            \
         int subelems = sizeof(TYPE) / sizeof(uint32_t);                                            \
-        int my_active_set_pe = ((nvshmemi_mype_d - PE_start) / stride);                             \
-        tmp[1] = 1;                                                                                \
-        offset =                                                                                   \
+        int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);                                \
+        tmp[1] = 1;                                                                                 \
+        offset =                                                                                    \
             (char *)pWrk - (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d +   \
                                           nvshmemi_mype_d));                                        \
                                                                                                    \
@@ -567,204 +559,161 @@
             payld = *((uint32_t *)source + j);                                                     \
             tmp[0] = payld;                                                                        \
             for (i = nvshmemi_mype_d + stride; i < PE_end; i += stride) {                           \
-                round_pwrk_dest =                                                                  \
+                round_pwrk_dest =                                                                   \
                     (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + i)) +    \
                     offset;                                                                        \
                 *((uint64_t *)round_pwrk_dest + j + (nelems * subelems * my_active_set_pe)) =      \
                     *((uint64_t *)tmp);                                                            \
             }                                                                                      \
-            for (i = PE_start; i < nvshmemi_mype_d; i += stride) {                                  \
-                round_pwrk_dest =                                                                  \
+            for (i = start; i < nvshmemi_mype_d; i += stride) {                                     \
+                round_pwrk_dest =                                                                   \
                     (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + i)) +    \
                     offset;                                                                        \
                 *((uint64_t *)round_pwrk_dest + j + (nelems * subelems * my_active_set_pe)) =      \
                     *((uint64_t *)tmp);                                                            \
             }                                                                                      \
         }                                                                                          \
-        GPU_HEAD_CHECKALL_OP_THREADGROUP(TYPE, OP, dest, pWrk, source, nelems, PE_start, stride,   \
-                                         PE_size, myIdx, groupSize);                               \
-        __threadfence();                                                                           \
-        NVSHMEMI_SYNC_##SC();                                                                      \
+        GPU_HEAD_CHECKALL_OP_THREADGROUP(TYPENAME, TYPE, OP, dest, pWrk, source, nelems, start, stride,   \
+                                         size, myIdx, groupSize);                                   \
+        __threadfence();                                                                            \
+        NVSHMEMI_SYNC_##SC();                                                                       \
     } while (0)
 
 #ifdef NVSHMEM_GPU_COLL_USE_LDST
 #ifdef NVSHMEM_DISABLE_COLL_POLL
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPE, OP, dest, source, nelems, PE_start, logPE_stride, \
-                                       PE_size, pWrk, pSync)                                       \
-    do {                                                                                           \
-        NVSHMEMXI_GPU_RDXN_THREADGROUP_ZCOPY_GET_BAR_DIRECT(                                       \
-            SC, TYPE, OP, dest, source, nreduce, PE_start, logPE_stride, PE_size, pWrk, pSync);    \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPENAME, TYPE, OP, dest, source, nelems, start, stride, \
+                                       size, pWrk, pSync)                                           \
+    do {                                                                                            \
+        NVSHMEMXI_GPU_RDXN_THREADGROUP_ZCOPY_GET_BAR_DIRECT(                                        \
+            SC, TYPENAME, TYPE, OP, dest, source, nreduce, start, stride, size, pWrk, pSync);       \
     } while (0)
 #else
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPE, OP, dest, source, nelems, PE_start, logPE_stride, \
-                                       PE_size, pWrk, pSync)                                       \
-    do {                                                                                           \
-        int subelems = sizeof(TYPE) / sizeof(uint32_t);                                            \
-        int pwrk_req_sz_allgather = ((subelems * nelems) * sizeof(uint64_t)) * PE_size;            \
-        int wrk_size = NVSHMEM_REDUCE_MIN_WRKDATA_SIZE * sizeof(TYPE);                             \
-        if (subelems && (pwrk_req_sz_allgather <= wrk_size)) {                                     \
-            NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTALL_DIRECT(SC, TYPE, OP, dest, source, nreduce,      \
-                                                         PE_start, logPE_stride, PE_size, pWrk,    \
-                                                         pSync);                                   \
-        } else {                                                                                   \
-            NVSHMEMXI_GPU_RDXN_THREADGROUP_ZCOPY_GET_BAR_DIRECT(SC, TYPE, OP, dest, source,        \
-                                                                nreduce, PE_start, logPE_stride,   \
-                                                                PE_size, pWrk, pSync);             \
-        }                                                                                          \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPENAME, TYPE, OP, dest, source, nelems, start, stride, \
+                                       size, pWrk, pSync)                                           \
+    do {                                                                                            \
+        int subelems = sizeof(TYPE) / sizeof(uint32_t);                                             \
+        int pwrk_req_sz_allgather = ((subelems * nelems) * sizeof(uint64_t)) * size;                \
+        int wrk_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * sizeof(TYPE);                             \
+        if (subelems && (pwrk_req_sz_allgather <= wrk_size)) {                                      \
+            NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTALL_DIRECT(SC, TYPENAME, TYPE, OP, dest, source, nreduce,      \
+                                                         start, stride, size, pWrk,                 \
+                                                         pSync);                                    \
+        } else {                                                                                    \
+            NVSHMEMXI_GPU_RDXN_THREADGROUP_ZCOPY_GET_BAR_DIRECT(SC, TYPENAME, TYPE, OP, dest, source,        \
+                                                                nreduce, start, stride,             \
+                                                                size, pWrk, pSync);                 \
+        }                                                                                           \
     } while (0)
 #endif
 #else
 #ifdef NVSHMEM_DISABLE_COLL_POLL
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPE, OP, dest, source, nelems, PE_start, logPE_stride, \
-                                       PE_size, pWrk, pSync)                                       \
-    do {                                                                                           \
-        GPU_RDXN_SEGMENT_THREADGROUP(SC, TYPE, OP, dest, source, nelems, PE_start, logPE_stride,   \
-                                     PE_size, pWrk, pSync);                                        \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPENAME, TYPE, OP, dest, source, nelems, start, stride, \
+                                       size, pWrk, pSync)                                           \
+    do {                                                                                            \
+        GPU_RDXN_SEGMENT_THREADGROUP(SC, TYPENAME, TYPE, OP, dest, source, nelems, start, stride,   \
+                                     size, pWrk, pSync);                                            \
     } while (0)
 #else
-#define NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPE, OP, dest, source, nelems, PE_start, logPE_stride, \
-                                       PE_size, pWrk, pSync)                                       \
+#define NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPENAME, TYPE, OP, dest, source, nelems, start, stride, \
+                                       size, pWrk, pSync)                                           \
     do {                                                                                           \
         int subelems = sizeof(TYPE) / sizeof(uint32_t);                                            \
-        int pwrk_req_sz_allgather = ((subelems * nelems) * sizeof(uint64_t)) * PE_size;            \
+        int pwrk_req_sz_allgather = ((subelems * nelems) * sizeof(uint64_t)) * size;                \
         NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                     \
         int pwrk_req_sz_ring =                                                                     \
             ((subelems * nelems) * sizeof(uint64_t)) + (groupSize * sizeof(uint32_t));             \
-        int wrk_size = NVSHMEM_REDUCE_MIN_WRKDATA_SIZE * sizeof(TYPE);                             \
+        int wrk_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * sizeof(TYPE);                            \
         if (subelems && pwrk_req_sz_allgather <= wrk_size) {                                       \
-            NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTALL(SC, TYPE, OP, dest, source, nreduce, PE_start,   \
-                                                  logPE_stride, PE_size, pWrk, pSync);             \
+            NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTALL(SC, TYPENAME, TYPE, OP, dest, source, nreduce, start,   \
+                                                  stride, size, pWrk, pSync);             \
         } else if (subelems && pwrk_req_sz_ring <= wrk_size) {                                     \
-            NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTRING(SC, TYPE, OP, dest, source, nreduce, PE_start,  \
-                                                   logPE_stride, PE_size, pWrk, pSync);            \
+            NVSHMEMXI_GPU_RDXN_THREADGROUP_PUTRING(SC, TYPENAME, TYPE, OP, dest, source, nreduce, start,  \
+                                                   stride, size, pWrk, pSync);            \
         } else {                                                                                   \
-            NVSHMEMXI_GPU_RDXN_THREADGROUP_PUT_BAR(SC, TYPE, OP, dest, source, nreduce, PE_start,  \
-                                                   logPE_stride, PE_size, pWrk, pSync);            \
+            NVSHMEMXI_GPU_RDXN_THREADGROUP_PUT_BAR(SC, TYPENAME, TYPE, OP, dest, source, nreduce, start,  \
+                                                   stride, size, pWrk, pSync);            \
         }                                                                                          \
     } while (0)
 #endif
 #endif
 
-#define DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, TYPE, OP)                      \
-    __device__ void nvshmemx_##TYPE##_##OP##_to_all_##SC(SRC_DST(TYPE), NR, PS, PL, PZ, \
-                                                         PWRK(TYPE), PSYN) {            \
-        NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPE, OP, dest, source, nreduce, PE_start,   \
-                                       logPE_stride, PE_size, pWrk, pSync);             \
+
+#define DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP)                     \
+    __device__ void nvshmemxi_##TYPENAME##_##OP##_reduce_##SC(TYPE * dest, const TYPE *source,    \
+          int nreduce, int start, int stride, int size, TYPE *pWrk, long *pSync) {                \
+        NVSHMEMXI_GPU_RDXN_THREADGROUP(SC, TYPENAME, TYPE, OP, dest, source, nreduce, start,      \
+                                       stride, size, pWrk, pSync);                                \
     }
 
-#define DEFN_REDUCE_THREADGROUP(SC)                                 \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, int, and);     \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, long, and);    \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, short, and);   \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, double, max);  \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, float, max);   \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, int, max);     \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, long, max);    \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, short, max);   \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, double, min);  \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, float, min);   \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, int, min);     \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, long, min);    \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, short, min);   \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, double, sum);  \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, float, sum);   \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, int, sum);     \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, long, sum);    \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, short, sum);   \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, double, prod); \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, float, prod);  \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, int, prod);    \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, long, prod);   \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, short, prod);  \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, int, or);      \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, long, or);     \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, short, or);    \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, int, xor);     \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, long, xor);    \
-    DEFN_NVSHMEMX_GPU_TYPE_REDUCE_THREADGROUP_OP(SC, short, xor);
+#define DEFN_NVSHMEMI_REDUCE_THREADGROUP(SC)                                                                 \
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, and)    \
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, or)     \
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, xor)    \
+                                                                                                             \
+NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, max)   \
+NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, min)   \
+                                                                                                             \
+NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, sum)      \
+NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, prod)
 
-DEFN_REDUCE_THREADGROUP(warp);
-DEFN_REDUCE_THREADGROUP(block);
+DEFN_NVSHMEMI_REDUCE_THREADGROUP(warp);
+DEFN_NVSHMEMI_REDUCE_THREADGROUP(block);
+#undef DEFN_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP
+#undef DEFN_NVSHMEMI_REDUCE_THREADGROUP
+
+#define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP)                      \
+    __device__ int nvshmemx_##TYPENAME##_##OP##_reduce_##SC(nvshmem_team_t team, TYPE *dest,      \
+                                                           const TYPE *source, int nreduce) {       \
+        nvshmemi_team_t *teami = nvshmemi_team_pool_d[team];                                      \
+        TYPE *pWrk = (TYPE *) nvshmemi_team_get_psync(teami, REDUCE);                             \
+        long *pSync = (long *) ((long *)pWrk + NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE);                 \
+        nvshmemx_barrier_##SC(team);                                                              \
+        nvshmemxi_##TYPENAME##_##OP##_reduce_##SC(dest, source, nreduce, teami->start,            \
+                                       teami->stride, teami->size, pWrk, pSync);                  \
+        return 0;                                                                                 \
+    }
+
+#define DEFN_NVSHMEM_REDUCE_THREADGROUP(SC)                                                                 \
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, and)    \
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, or)     \
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, xor)    \
+                                                                                                            \
+NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, max)   \
+NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, min)   \
+                                                                                                            \
+NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, sum)      \
+NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, prod)
+
+DEFN_NVSHMEM_REDUCE_THREADGROUP(warp);
+DEFN_NVSHMEM_REDUCE_THREADGROUP(block);
+#undef DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP
+#undef DEFN_NVSHMEM_REDUCE_THREADGROUP
 
 #endif
 
-#define RDXN_ON_STREAM_KERNEL(TYPE, OP)                                                           \
-    __global__ void rdxn_##TYPE##_##OP##_on_stream_kernel(                                        \
-        TYPE *dest, const TYPE *source, int nreduce, int PE_start, int logPE_stride, int PE_size, \
-        TYPE *pWrk, long *pSync) {                                                                \
-        if (!blockIdx.x)                                                                          \
-            nvshmemx_##TYPE##_##OP##_to_all_block(dest, source, nreduce, PE_start, logPE_stride,  \
-                                                  PE_size, pWrk, pSync);                          \
+#define RDXN_ON_STREAM_KERNEL(TYPENAME, TYPE, OP)                                                \
+    __global__ void rdxn_##TYPENAME##_##OP##_on_stream_kernel(                                   \
+        TYPE *dest, const TYPE *source, int nreduce, int start, int stride, int size,            \
+        TYPE *pWrk, long *pSync) {                                                               \
+        if (!blockIdx.x)                                                                         \
+            nvshmemxi_##TYPENAME##_##OP##_reduce_block(dest, source, nreduce, start, stride,     \
+                                                  size, pWrk, pSync);                            \
     }
 
-RDXN_ON_STREAM_KERNEL(int, and);
-RDXN_ON_STREAM_KERNEL(long, and);
-RDXN_ON_STREAM_KERNEL(short, and);
-RDXN_ON_STREAM_KERNEL(double, max);
-RDXN_ON_STREAM_KERNEL(float, max);
-RDXN_ON_STREAM_KERNEL(int, max);
-RDXN_ON_STREAM_KERNEL(long, max);
-RDXN_ON_STREAM_KERNEL(short, max);
-RDXN_ON_STREAM_KERNEL(double, min);
-RDXN_ON_STREAM_KERNEL(float, min);
-RDXN_ON_STREAM_KERNEL(int, min);
-RDXN_ON_STREAM_KERNEL(long, min);
-RDXN_ON_STREAM_KERNEL(short, min);
-RDXN_ON_STREAM_KERNEL(double, sum);
-RDXN_ON_STREAM_KERNEL(float, sum);
-RDXN_ON_STREAM_KERNEL(int, sum);
-RDXN_ON_STREAM_KERNEL(long, sum);
-RDXN_ON_STREAM_KERNEL(short, sum);
-RDXN_ON_STREAM_KERNEL(double, prod);
-RDXN_ON_STREAM_KERNEL(float, prod);
-RDXN_ON_STREAM_KERNEL(int, prod);
-RDXN_ON_STREAM_KERNEL(long, prod);
-RDXN_ON_STREAM_KERNEL(short, prod);
-RDXN_ON_STREAM_KERNEL(int, or);
-RDXN_ON_STREAM_KERNEL(long, or);
-RDXN_ON_STREAM_KERNEL(short, or);
-RDXN_ON_STREAM_KERNEL(int, xor);
-RDXN_ON_STREAM_KERNEL(long, xor);
-RDXN_ON_STREAM_KERNEL(short, xor);
+NVSHMEMI_REPT_TYPES_AND_OPS_FOR_REDUCE(RDXN_ON_STREAM_KERNEL)
+#undef RDXN_ON_STREAM_KERNEL
 
-#define CALL_RDXN_ON_STREAM(TYPE, OP)                                                             \
-    extern "C" void call_rdxn_##TYPE##_##OP##_on_stream_kern(                                     \
-        TYPE *dest, const TYPE *source, int nreduce, int PE_start, int logPE_stride, int PE_size, \
+#define CALL_RDXN_ON_STREAM(TYPENAME, TYPE, OP)                                                   \
+    extern "C" void call_rdxn_##TYPENAME##_##OP##_on_stream_kern(                                 \
+        TYPE *dest, const TYPE *source, int nreduce, int start, int stride, int size,             \
         TYPE *pWrk, long *pSync, cudaStream_t stream) {                                           \
         int num_threads_per_block =                                                               \
             (MAX_THREADS_PER_CTA > nreduce) ? nreduce : MAX_THREADS_PER_CTA;                      \
         int num_blocks = 1;                                                                       \
-        rdxn_##TYPE##_##OP##_on_stream_kernel<<<num_blocks, num_threads_per_block, 0, stream>>>(  \
-            dest, source, nreduce, PE_start, logPE_stride, PE_size, pWrk, pSync);                 \
+        rdxn_##TYPENAME##_##OP##_on_stream_kernel<<<num_blocks, num_threads_per_block, 0, stream>>>(  \
+            dest, source, nreduce, start, stride, size, pWrk, pSync);                             \
         CUDA_RUNTIME_CHECK(cudaGetLastError());                                                   \
     }
 
-CALL_RDXN_ON_STREAM(int, and);
-CALL_RDXN_ON_STREAM(long, and);
-CALL_RDXN_ON_STREAM(short, and);
-CALL_RDXN_ON_STREAM(double, max);
-CALL_RDXN_ON_STREAM(float, max);
-CALL_RDXN_ON_STREAM(int, max);
-CALL_RDXN_ON_STREAM(long, max);
-CALL_RDXN_ON_STREAM(short, max);
-CALL_RDXN_ON_STREAM(double, min);
-CALL_RDXN_ON_STREAM(float, min);
-CALL_RDXN_ON_STREAM(int, min);
-CALL_RDXN_ON_STREAM(long, min);
-CALL_RDXN_ON_STREAM(short, min);
-CALL_RDXN_ON_STREAM(double, sum);
-CALL_RDXN_ON_STREAM(float, sum);
-CALL_RDXN_ON_STREAM(int, sum);
-CALL_RDXN_ON_STREAM(long, sum);
-CALL_RDXN_ON_STREAM(short, sum);
-CALL_RDXN_ON_STREAM(double, prod);
-CALL_RDXN_ON_STREAM(float, prod);
-CALL_RDXN_ON_STREAM(int, prod);
-CALL_RDXN_ON_STREAM(long, prod);
-CALL_RDXN_ON_STREAM(short, prod);
-CALL_RDXN_ON_STREAM(int, or);
-CALL_RDXN_ON_STREAM(long, or);
-CALL_RDXN_ON_STREAM(short, or);
-CALL_RDXN_ON_STREAM(int, xor);
-CALL_RDXN_ON_STREAM(long, xor);
-CALL_RDXN_ON_STREAM(short, xor);
+NVSHMEMI_REPT_TYPES_AND_OPS_FOR_REDUCE(CALL_RDXN_ON_STREAM)
+#undef CALL_RDXN_ON_STREAM

@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2017, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #define NVSHMEMI_HOST_ONLY
 #include "nvshmem_api.h"
@@ -87,7 +87,7 @@ static int nvshmemi_p2p_amo_bitwise(amo_verb_t verb, CUstream custrm, void *targ
             break;
         default:
             status = NVSHMEMX_ERROR_INTERNAL;
-            fprintf(stderr, "[%d] Invalid AMO type %d\n", nvshmem_state->mype, bytesdesc.name_type);
+            fprintf(stderr, "[%d] Invalid AMO type %d\n", nvshmemi_state->mype, bytesdesc.name_type);
     }
     return status;
 }
@@ -518,41 +518,41 @@ static void nvshmemi_prepare_and_post_amo(nvshmemi_amo_t desc, void *targetptr, 
     bytesdesc.elembytes = elembytes;
     bytesdesc.name_type = nameoftype;
     volatile void *targetptr_actual =
-        (volatile void *)((char *)(nvshmem_state->peer_heap_base[pe]) +
-                          ((char *)targetptr - (char *)(nvshmem_state->heap_base)));
+        (volatile void *)((char *)(nvshmemi_state->peer_heap_base[pe]) +
+                          ((char *)targetptr - (char *)(nvshmemi_state->heap_base)));
     target.ptr = (void *)targetptr_actual;
     target.retptr = retptr;
     target.valptr = valptr;
     target.cmpptr = cmpptr;
-    void *curetptr = (void *)nvshmem_state->curets[pe];
+    void *curetptr = (void *)nvshmemi_state->curets[pe];
     if (targetptr_actual) {
-        CUstream custrm = nvshmem_state->custreams[pe % MAX_PEER_STREAMS];
-        CUevent cuev = nvshmem_state->cuevents[pe % MAX_PEER_STREAMS];
-        if (nvshmem_state
+        CUstream custrm = nvshmemi_state->custreams[pe % MAX_PEER_STREAMS];
+        CUevent cuev = nvshmemi_state->cuevents[pe % MAX_PEER_STREAMS];
+        if (nvshmemi_state
                 ->p2p_attrib_native_atomic_support[pe]) { /*AMO not supported for P2P over PCIE*/
             status = nvshmemi_p2p_amo(custrm, cuev, curetptr, verb, target,
                                       bytesdesc); /*bypass transport for P2P*/
         } else {
-            ERROR_PRINT("[%d] %s to PE %d does not have P2P path\n", nvshmem_state->mype, apiname,
+            ERROR_PRINT("[%d] %s to PE %d does not have P2P path\n", nvshmemi_state->mype, apiname,
                         pe);
         }
     } else {
-        int t = nvshmem_state->selected_transport_for_amo[pe];
+        int t = nvshmemi_state->selected_transport_for_amo[pe];
         if (t < 0) {
-            ERROR_EXIT("[%d] amo not supported on transport to pe: %d \n", nvshmem_state->mype, pe);
+            ERROR_EXIT("[%d] amo not supported on transport to pe: %d \n", nvshmemi_state->mype, pe);
         }
 
         nvshmemt_ep_t ep;
-        int tcount = nvshmem_state->transport_count;
-        struct nvshmem_transport *tcurr = nvshmem_state->transports[t];
+        int tcount = nvshmemi_state->transport_count;
+        struct nvshmem_transport *tcurr = nvshmemi_state->transports[t];
         int ep_offset = pe * tcurr->ep_count;
         ep = tcurr->ep[ep_offset];
-        nvshmem_mem_handle_t *handles = nvshmem_state->handles;
+        nvshmem_mem_handle_t *handles = nvshmemi_state->handles;
         target.handle = handles[pe * tcount + t];
-        status = nvshmem_state->amo[pe](ep, curetptr, verb, target, bytesdesc);
+        status = nvshmemi_state->amo[pe](ep, curetptr, verb, target, bytesdesc);
     }
     if (status) {
-        ERROR_EXIT("[%d] aborting due to error in %s \n", nvshmem_state->mype, apiname);
+        ERROR_EXIT("[%d] aborting due to error in %s \n", nvshmemi_state->mype, apiname);
     }
 }
 
@@ -565,7 +565,7 @@ static void nvshmemi_prepare_and_post_amo(nvshmemi_amo_t desc, void *targetptr, 
 
 #define NVSHMEM_TYPE_INC_NOT_IMPLEMENTED(Name, NameIdx, TYPE)                             \
     void nvshmem_##Name##_atomic_inc(TYPE *target, int pe) {                                     \
-        ERROR_PRINT("[%d] nvshmem_" #Name "_atomic_inc() not implemented", nvshmem_state->mype); \
+        ERROR_PRINT("[%d] nvshmem_" #Name "_atomic_inc() not implemented", nvshmemi_state->mype); \
     }
 
 NVSHMEM_TYPE_INC(uint, UINT, unsigned int)
@@ -590,7 +590,7 @@ NVSHMEM_TYPE_INC_NOT_IMPLEMENTED(ptrdiff, PTRDIFF, ptrdiff_t) /*XXX:not implemen
 
 #define NVSHMEM_TYPE_ADD_NOT_IMPLEMENTED(Name, NameIdx, TYPE)                             \
     void nvshmem_##Name##_atomic_add(TYPE *target, TYPE value, int pe) {                         \
-        ERROR_PRINT("[%d] nvshmem_" #Name "_atomic_add() not implemented", nvshmem_state->mype); \
+        ERROR_PRINT("[%d] nvshmem_" #Name "_atomic_add() not implemented", nvshmemi_state->mype); \
     }
 
 NVSHMEM_TYPE_ADD(uint, UINT, unsigned int)
@@ -703,7 +703,7 @@ NVSHMEM_TYPE_FETCH(double, DOUBLE, double)
 
 #define NVSHMEM_TYPE_FETCH_INC_NOT_IMPLEMENTED(Name, NameIdx, TYPE)                             \
     TYPE nvshmem_##Name##_atomic_fetch_inc(TYPE *target, int pe) {                                     \
-        ERROR_PRINT("[%d] nvshmem_" #Name "_atomic_fetch_inc() not implemented", nvshmem_state->mype); \
+        ERROR_PRINT("[%d] nvshmem_" #Name "_atomic_fetch_inc() not implemented", nvshmemi_state->mype); \
         return 0;                                                                          \
     }
 
@@ -731,7 +731,7 @@ NVSHMEM_TYPE_FETCH_INC_NOT_IMPLEMENTED(ptrdiff, PTRDIFF, ptrdiff_t) /*XXX:not im
 
 #define NVSHMEM_TYPE_FETCH_ADD_NOT_IMPLEMENTED(Name, NameIdx, TYPE)                             \
     TYPE nvshmem_##Name##_atomic_fetch_add(TYPE *target, TYPE value, int pe) {                         \
-        ERROR_PRINT("[%d] nvshmem_" #Name "_atomic_fadd() not implemented", nvshmem_state->mype); \
+        ERROR_PRINT("[%d] nvshmem_" #Name "_atomic_fadd() not implemented", nvshmemi_state->mype); \
         return 0;                                                                          \
     }
 

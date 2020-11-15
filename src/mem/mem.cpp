@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 
@@ -14,6 +14,7 @@
 #include "nvshmemx_error.h"
 #include "dlmalloc.h"
 #include "util.h"
+#include "nvshmemi_team.h"
 
 #define CUMEM_ALIGNMENT (1 << 29) // 512 MB
 static int is_mem_handle_null(nvshmem_mem_handle_t handle) {
@@ -26,7 +27,7 @@ static int is_mem_handle_null(nvshmem_mem_handle_t handle) {
     return 1;
 }
 
-static int cleanup_local_handles(nvshmem_mem_handle_t *handles, nvshmem_state_t *state) {
+static int cleanup_local_handles(nvshmem_mem_handle_t *handles, nvshmemi_state_t *state) {
     int status = 0;
     int tcount = 0;
 
@@ -48,7 +49,7 @@ out:
 template <typename T>
 int check_for_symmetry(T value) {
     int status = 0;
-    nvshmem_state_t *state = nvshmem_state;
+    nvshmemi_state_t *state = nvshmemi_state;
 
     /*TODO: need to handle multi-threaded scenarios*/
 
@@ -79,7 +80,7 @@ out:
 int mspace_track_large_chunks(mspace msp, int enable);
 size_t destroy_mspace(mspace msp);
 
-int nvshmemi_setup_memory_space(nvshmem_state_t *state) {
+int nvshmemi_setup_memory_space(nvshmemi_state_t *state) {
     int status = 0;
     mspace heap_mspace = 0;
 
@@ -98,7 +99,7 @@ out:
     return status;
 }
 
-int nvshmemi_cleanup_memory_space(nvshmem_state_t *state) {
+int nvshmemi_cleanup_memory_space(nvshmemi_state_t *state) {
     int status = 0;
     size_t size;
 
@@ -110,7 +111,7 @@ out:
     return status;
 }
 
-int nvshmemi_cleanup_symmetric_heap(nvshmem_state_t *state) {
+int nvshmemi_cleanup_symmetric_heap(nvshmemi_state_t *state) {
     int status = 0;
 
     if (!state->peer_heap_base) goto out;
@@ -150,7 +151,7 @@ out:
     return status;
 }
 
-int nvshmemi_setup_local_heap(nvshmem_state_t *state) {
+int nvshmemi_setup_local_heap(nvshmemi_state_t *state) {
     int status;
     char *value;
     bool data =
@@ -158,7 +159,7 @@ int nvshmemi_setup_local_heap(nvshmem_state_t *state) {
                  initiated on the region of memory that ptr points to will always synchronize.*/
 
     state->heap_size = nvshmemi_options.SYMMETRIC_SIZE;
-    size_t heapextra = COLL_CONSTANT_FACTOR + (COLL_NPES_FACTOR * (state->npes)) + NUM_G_BUF_ELEMENTS * sizeof(g_elem_t);
+    size_t heapextra = NUM_G_BUF_ELEMENTS * sizeof(g_elem_t) + nvshmemi_get_teams_mem_requirement();
     size_t alignbytes = MALLOC_ALIGNMENT;
     if (heapextra % alignbytes) {
         heapextra = ((heapextra + alignbytes - 1) / alignbytes) * alignbytes;
@@ -191,7 +192,7 @@ out:
     return status;
 }
 
-int nvshmemi_setup_symmetric_heap(nvshmem_state_t *state) {
+int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
     int status;
     char *value;
     nvshmem_transport_t *transports = (nvshmem_transport_t *)state->transports;
@@ -301,15 +302,15 @@ void *nvshmemi_malloc(size_t size) {
     status = check_for_symmetry(size);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "symmetry check for size failed\n");
 
-    ptr = mspace_malloc(nvshmem_state->heap_mspace, size);
+    ptr = mspace_malloc(nvshmemi_state->heap_mspace, size);
     if ((size > 0) && (ptr == NULL)) {
         ERROR_EXIT("nvshmem malloc failed (hint: check if total allocation has exceeded NVSHMEM "
                    "symmetric size = %zu, NVSHMEM symmetric size can be increased using "
                    "NVSHMEM_SYMMETRIC_SIZE environment variable) \n", nvshmemi_options.SYMMETRIC_SIZE);
     }
 
-    INFO(NVSHMEM_INIT, "[%d] allocated %d bytes from mspace: %p ptr: %p", nvshmem_state->mype,
-         size, nvshmem_state->heap_mspace, ptr);
+    INFO(NVSHMEM_INIT, "[%d] allocated %d bytes from mspace: %p ptr: %p", nvshmemi_state->mype,
+         size, nvshmemi_state->heap_mspace, ptr);
 out:
     return ptr;
 }
@@ -321,13 +322,13 @@ void *nvshmemi_calloc(size_t count, size_t size) {
     status = check_for_symmetry(size);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "symmetry check for size failed\n");
 
-    ptr = mspace_calloc(nvshmem_state->heap_mspace, count, size);
+    ptr = mspace_calloc(nvshmemi_state->heap_mspace, count, size);
     if (size > 0 && count > 0 && ptr == NULL) {
         ERROR_EXIT("nvshmem calloc failed \n");
     }
 
     INFO(NVSHMEM_INIT, "[%d] calloc allocated %d bytes from mspace: %p ptr: %p \n",
-            nvshmem_state->mype, size, nvshmem_state->heap_mspace, ptr);
+            nvshmemi_state->mype, size, nvshmemi_state->heap_mspace, ptr);
 out:
     return ptr;
 }
@@ -373,7 +374,7 @@ void *nvshmemi_align(size_t alignment, size_t size) {
     status = check_for_symmetry(size);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "symmetry check for size failed\n");
 
-    ptr = mspace_memalign(nvshmem_state->heap_mspace, alignment, size);
+    ptr = mspace_memalign(nvshmemi_state->heap_mspace, alignment, size);
     if ((size > 0) && (ptr == NULL)) {
         ERROR_EXIT("nvshmem align failed \n");
     }
@@ -402,9 +403,9 @@ void *nvshmem_align(size_t alignment, size_t size) {
 void nvshmemi_free(void *ptr) {
     if (ptr == NULL) return;
 
-    INFO(NVSHMEM_INIT, "[%d] freeing buf: %p", nvshmem_state->mype, ptr);
+    INFO(NVSHMEM_INIT, "[%d] freeing buf: %p", nvshmemi_state->mype, ptr);
 
-    mspace_free(nvshmem_state->heap_mspace, ptr);
+    mspace_free(nvshmemi_state->heap_mspace, ptr);
 }
 
 void nvshmem_free(void *ptr) {
@@ -419,11 +420,11 @@ void nvshmem_free(void *ptr) {
     NVSHMEMU_THREAD_CS_EXIT();
 }
 
-void *nvshmem_ptr(void *ptr, int pe) {
-    ptrdiff_t offset = (char*)ptr - (char*)nvshmem_state->heap_base;
+void *nvshmem_ptr(const void *ptr, int pe) {
+    ptrdiff_t offset = (char*)ptr - (char*)nvshmemi_state->heap_base;
 
-    if (ptr >= nvshmem_state->heap_base && offset < nvshmem_state->heap_size) {
-        void *peer_addr = nvshmem_state->peer_heap_base[pe];
+    if (ptr >= nvshmemi_state->heap_base && offset < nvshmemi_state->heap_size) {
+        void *peer_addr = nvshmemi_state->peer_heap_base[pe];
         if (peer_addr != NULL)
             peer_addr = (void *)((char *)peer_addr + offset);
         return peer_addr;

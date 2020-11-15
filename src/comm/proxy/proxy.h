@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
@@ -157,7 +157,7 @@ typedef struct proxy_state {
     int channel_in_progress;
     pthread_t progress_thread;
     proxy_progress_params_t progress_params;
-    nvshmem_state_t *nvshmem_state;
+    nvshmemi_state_t *nvshmemi_state;
     int *quiet_incoming_in_progress_pe;
     CUstream stream;
     CUstream queue_stream_out;

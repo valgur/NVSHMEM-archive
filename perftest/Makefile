@@ -1,4 +1,4 @@
-# Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2019-2020, NVIDIA CORPORATION.  All rights reserved.
 
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -26,6 +26,10 @@ SHMEM_HOME ?= $(MPI_HOME)
 NVSHMEM_DEBUG ?= 0
 NVSHMEM_VERBOSE ?= 0
 #NVSHMEM_LMPICXX ?= -lmpi_cxx
+
+# Define this on the command line to change the format of perftest readouts to
+# machine readable format.
+NVSHMEM_MACHINE_READABLE_OUTPUT ?= 0
 
 MPI_LIBS := $(NVSHMEM_LMPI) $(NVSHMEM_LMPICXX)
 SHMEM_LIBS := -loshmem
@@ -57,13 +61,16 @@ else
 TESTCUFLAGS  += -O0 -g -G -lineinfo -D_NVSHMEM_DEBUG
 endif
 
+ifeq ($(NVSHMEM_MACHINE_READABLE_OUTPUT), 1)
+TESTCUFLAGS  += -DNVSHMEM_MACHINE_READABLE_OUTPUT
+endif
+
 ifneq ($(NVSHMEM_VERBOSE), 0)
 TESTCUFLAGS  += -lineinfo -Xptxas -v -Xcompiler -Wall,-Wextra
 endif
 
 
-TESTLDFLAGS += -lcuda -L$(CUDA_HOME)/lib64 -lcudart -libverbs
-
+TESTLDFLAGS += -lcuda -L$(CUDA_HOME)/lib64 -lcudart
 TESTLDFLAGS += $(NVSHMEM_HOME)/lib/libnvshmem.a
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)

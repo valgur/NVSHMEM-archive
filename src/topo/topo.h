@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2017, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #ifndef __TOPO_H
 #define __TOPO_H
@@ -26,8 +26,8 @@ static int getNumaId(char *path) {
     return numaId;
 }
 
-int nvshmemi_detect_same_device(nvshmem_state_t *state);
-int nvshmemi_build_transport_map(nvshmem_state_t *state);
-int get_device_by_distance(int *device, nvshmem_state_t *state, struct nvshmem_transport *tcurr);
+int nvshmemi_detect_same_device(nvshmemi_state_t *state);
+int nvshmemi_build_transport_map(nvshmemi_state_t *state);
+int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_transport *tcurr);
 
 #endif

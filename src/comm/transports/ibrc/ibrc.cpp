@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
@@ -93,6 +93,7 @@ struct ibrc_device {
     struct ibv_pd *pd;
     struct ibv_device_attr device_attr;
     struct ibv_port_attr port_attr[MAX_NUM_PORTS];
+    union ibv_gid gid[MAX_NUM_PORTS];
     // bpool information
     struct ibv_srq *srq;
     int srq_posted;
@@ -116,6 +117,9 @@ struct ibrc_ep {
 struct ibrc_ep_handle {
     uint32_t qpn;
     uint16_t lid;
+    //ROCE
+    uint64_t spn;
+    uint64_t iid;
 };
 
 struct ibrc_mem_handle {
@@ -190,6 +194,8 @@ struct ibrc_hca_info {
 
 int nvshmemt_ibrc_init(nvshmem_transport_t *transport);
 int check_poll_avail(struct ibrc_ep *ep, int wait_predicate);
+int progress_send(transport_ibrc_state_t *ibrc_state);
+int poll_recv(transport_ibrc_state_t *ibrc_state);
 
 ibrc_mem_handle_info_t get_mem_handle_info(void *gpu_ptr) {
     assert(!mem_handle_cache.empty());
@@ -454,18 +460,28 @@ static int ep_connect(struct ibrc_ep *ep, struct ibrc_ep_handle *ep_handle) {
     int portid = ep->portid;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
     struct ibrc_device *device = ((struct ibrc_device *)ibrc_state->devices + devid);
-    struct ibv_port_attr port_attr = device->port_attr[portid - 1];
+    struct ibv_port_attr *port_attr = device->port_attr + (portid - 1);
 
     memset(&attr, 0, sizeof(struct ibv_qp_attr));
     attr.qp_state = IBV_QPS_RTR;
-    attr.path_mtu = port_attr.active_mtu;
+    attr.path_mtu = port_attr->active_mtu;
     attr.dest_qp_num = ep_handle->qpn;
     attr.rq_psn = 0;
-    attr.ah_attr.dlid = ep_handle->lid;
+    if (port_attr->lid == 0) {
+        attr.ah_attr.is_global = 1;
+        attr.ah_attr.grh.dgid.global.subnet_prefix = ep_handle->spn;
+        attr.ah_attr.grh.dgid.global.interface_id = ep_handle->iid;
+        attr.ah_attr.grh.flow_label = 0;
+        attr.ah_attr.grh.sgid_index = nvshmemi_options.IB_GID_INDEX;
+        attr.ah_attr.grh.hop_limit = 255;
+        attr.ah_attr.grh.traffic_class = nvshmemi_options.IB_TRAFFIC_CLASS;
+    } else { 
+       attr.ah_attr.dlid = ep_handle->lid;
+       attr.ah_attr.is_global = 0;
+    }
     attr.max_dest_rd_atomic = MAX_RD_ATOMIC;
     attr.min_rnr_timer = 12;
-    attr.ah_attr.is_global = 0;
-    attr.ah_attr.sl = 0;
+    attr.ah_attr.sl = nvshmemi_options.IB_SL;
     attr.ah_attr.src_path_bits = 0;
     attr.ah_attr.port_num = portid;
     flags = IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
@@ -515,6 +531,10 @@ int ep_get_handle(struct ibrc_ep_handle *ep_handle, struct ibrc_ep *ep) {
 
     ep_handle->lid = device->port_attr[ep->portid - 1].lid;
     ep_handle->qpn = ep->qp->qp_num;
+    if (ep_handle->lid == 0) { 
+        ep_handle->spn = device->gid[ep->portid - 1].global.subnet_prefix;
+        ep_handle->iid = device->gid[ep->portid - 1].global.interface_id;
+    }
 
 out:
     return status;
@@ -1368,6 +1388,7 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     LOAD_SYM(ibv_handle, "ibv_create_qp", ftable.create_qp);
     LOAD_SYM(ibv_handle, "ibv_create_srq", ftable.create_srq);
     LOAD_SYM(ibv_handle, "ibv_modify_qp", ftable.modify_qp);
+    LOAD_SYM(ibv_handle, "ibv_query_gid", ftable.query_gid);
 
     if (nvshmemi_options.DISABLE_IB_NATIVE_ATOMICS) {
         use_ib_native_atomics = 0;
@@ -1517,8 +1538,10 @@ skip_gdrcopy_dlsym:
                 status = ftable.query_port(device->context, p, &device->port_attr[p - 1]);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_port_query failed \n");
 
-                if ((device->port_attr[p - 1].state != IBV_PORT_ACTIVE) ||
-                    (device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_INFINIBAND)) {
+                if ((device->port_attr[p - 1].state != IBV_PORT_ACTIVE) 
+                    || (device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_INFINIBAND
+                    && device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_ETHERNET)) { 
+
                     if (user_selection) {
                         WARN_PRINT(
                             "found inactive port or port with non-IB link layer protocol, "
@@ -1526,6 +1549,9 @@ skip_gdrcopy_dlsym:
                     }
                     continue;
                 }
+
+                status = ftable.query_gid(device->context, p, nvshmemi_options.IB_GID_INDEX, &device->gid[p - 1]);
+                NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out, "query_gid failed \n");
 
                 device->pd = ftable.alloc_pd(device->context);
                 NULL_ERROR_JMP(device->pd, status, NVSHMEMX_ERROR_INTERNAL, out,

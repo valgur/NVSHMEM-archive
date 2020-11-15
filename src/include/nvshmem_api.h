@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -15,6 +15,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "nvshmem_types.h"
 #include "nvshmem_common.cuh"
 #include "nvshmem_constants.h"
 #include "nvshmem_coll_api.h"
@@ -42,7 +43,7 @@ void *nvshmem_calloc(size_t count, size_t size);
 void nvshmem_free(void *ptr);
 void *nvshmem_realloc(void *ptr, size_t size);
 void *nvshmem_align(size_t alignment, size_t size);
-NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmem_ptr(void *ptr, int pe);
+NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmem_ptr(const void *ptr, int pe);
 
 //////////////////// OpenSHMEM 1.3 Atomics ////////////////////
 
@@ -233,7 +234,6 @@ NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_DECL_SIZE_GET_NBI)
 #undef NVSHMEMI_DECL_SIZE_GET_NBI
 
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_getmem_nbi(void *dest, const void *source, size_t bytes,
-
                                                    int pe);
 /* Signal API */
 #define NVSHMEMI_DECL_PUT_SIGNAL(TYPENAME, TYPE)                                                        \
@@ -250,6 +250,19 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL_NBI)
 #undef NVSHMEMI_DECL_PUT_SIGNAL_NBI
 
+#ifdef __CUDACC__
+#define NVSHMEMI_DECL_SIZE_PUT_SIGNAL(BITS)                                                     \
+    __device__ void nvshmem_put##BITS##_signal(void *dest, const void *source, size_t nelems,   \
+                                               uint64_t *sig_addr, uint64_t signal, int sig_op, \
+                                               int pe);
+NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_DECL_SIZE_PUT_SIGNAL)
+#undef NVSHMEMI_DECL_SIZE_PUT_SIGNAL
+
+__device__ void nvshmem_putmem_signal(void *dest, const void *source, size_t bytes,
+                                      uint64_t *sig_addr, uint64_t signal, int sig_op,
+                                      int pe);
+#endif
+
 NVSHMEMI_HOSTDEVICE_PREFIX uint64_t nvshmem_signal_fetch(uint64_t *sig_addr);
 
 
@@ -259,6 +272,9 @@ NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_quiet();
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_fence();
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_wait(long *ivar, long cmp_value);
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_wait_until(long *ivar, int cmp, long cmp_value);
+#ifdef __CUDACC__
+__device__ uint64_t nvshmem_signal_wait_until(uint64_t *sig_addr, int cmp, uint64_t cmp_val);
+#endif
 
 #define NVSHMEMI_DECL_WAIT(NAME, TYPE) \
     NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_wait(TYPE *ivar, TYPE cmp_value);
@@ -365,8 +381,27 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_SOME_VECTOR)
 
 //////////////////// Teams API ////////////////////
 
+#define NVSHMEM_TEAM_WORLD  0
+#define NVSHMEM_TEAM_SHARED 1
+#define NVSHMEMX_TEAM_NODE  2
+#define NVSHMEM_TEAM_INVALID -1
+
+
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_my_pe(nvshmem_team_t team);
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_n_pes(nvshmem_team_t team);
+
+
+void nvshmem_team_get_config(nvshmem_team_t team, nvshmem_team_config_t *config);
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_translate_pe(nvshmem_team_t src_team, int src_pe, nvshmem_team_t dest_team);
+int nvshmem_team_split_strided(nvshmem_team_t parent_team, int PE_start, int PE_stride,
+                                int PE_size, const nvshmem_team_config_t *config,
+                                long config_mask, nvshmem_team_t *new_team);
+int nvshmem_team_split_2d(nvshmem_team_t parent_team, int xrange,
+                          const nvshmem_team_config_t *xaxis_config,
+                          long xaxis_mask, nvshmem_team_t *xaxis_team,
+                          const nvshmem_team_config_t *yaxis_config,
+                          long yaxis_mask, nvshmem_team_t *yaxis_team);
+void nvshmem_team_destroy(nvshmem_team_t team);
 
 //////////////////// Deprecated API ////////////////////
 

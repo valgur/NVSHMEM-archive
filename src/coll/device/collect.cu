@@ -1,83 +1,124 @@
 /*
- * * Copyright (c) 2017-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
+#include "nvshmemx.h"
 #include "gpu_coll.h"
+#include "nvshmemi_coll.h"
+#include <cstdio>
+#include <cassert>
 
 #ifdef __CUDA_ARCH__
 
-#define NVSHMEMI_GPU_COLLECT_P2P_ALL_PUSH(SUFFIX, dest, source, nelems, PE_start, logPE_stride, \
-                                          PE_size, pSync)                                       \
-    do {                                                                                        \
-        int stride = 1 << logPE_stride;                                                         \
-        int next_rank;                                                                          \
-        int next_offset;                                                                        \
-        int mype = nvshmemi_mype_d;                                                              \
-                                                                                                \
-        for (int ii = 0; ii < PE_size; ii++) {                                                  \
-            next_rank = (mype + (ii * stride)) % (stride * PE_size);                            \
-            next_offset = nelems * ((mype - PE_start) / stride);                                \
-            /*XXX:typecast dest to suppress warning "arithmetic on pointer to void or function  \
-             * typ"*/                                                                           \
-            nvshmem_put##SUFFIX##_nbi((uint##SUFFIX##_t *)dest + next_offset, source, nelems,   \
-                                      next_rank);                                               \
-        }                                                                                       \
-        nvshmem_barrier(PE_start, logPE_stride, PE_size, pSync);                                \
+#define NVSHMEMI_GPU_COLLECT_THREADGROUP_ALLPUSH(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE, dest, source, \
+                                                 nelems, PE_start, PE_stride, PE_size, pSync)     \
+    do {                                                                                          \
+        int stride = PE_stride;                                                                   \
+        int next_rank;                                                                            \
+        int next_offset;                                                                          \
+        const int mype = nvshmemi_mype_d;                                                         \
+        int my_idx_in_active_set = (mype - PE_start) / PE_stride;                                 \
+                                                                                                  \
+        for (int ii = 0; ii < PE_size; ii++) {                                                    \
+            next_rank = PE_start + ((my_idx_in_active_set + ii) % PE_size) * stride;              \
+            next_offset = nelems * ((mype - PE_start) / stride);                                  \
+            nvshmem##SC_PREFIX##_##TYPENAME##_put_nbi##SC_SUFFIX(dest + next_offset,              \
+                                                                 source, nelems, next_rank);      \
+        }                                                                                         \
+        nvshmem##SC_PREFIX##i_barrier##SC_SUFFIX(PE_start, PE_stride, PE_size, pSync, NULL);      \
     } while (0)
 
-#define NVSHMEMI_GPU_COLLECT_ALL_PUSH(SUFFIX, dest, source, nelems, PE_start, logPE_stride,      \
-                                      PE_size, pSync)                                            \
+#define NVSHMEMI_GPU_COLLECT_THREADGROUP_P2P_ALLPUSH(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE, dest, source, \
+                                                    nelems, PE_start, PE_stride, PE_size, pSync) \
     do {                                                                                         \
-        int stride = 1 << logPE_stride;                                                          \
+        int stride = PE_stride;                                                                  \
         int next_rank;                                                                           \
         int next_offset;                                                                         \
-        int mype = nvshmemi_mype_d;                                                               \
-        int offset;                                                                              \
-        char *round_dest;                                                                        \
-        offset =                                                                                 \
-            (char *)dest - (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + \
-                                          nvshmemi_mype_d));                                      \
-                                                                                                 \
+        const int mype = nvshmemi_mype_d;                                                        \
+        int my_idx_in_active_set = (mype - PE_start) / PE_stride;                                \
+        TYPE *dst_ptr;                                                                           \
+        NVSHMEMI_DECL_THREAD_IDX_##SC();                                                         \
+        NVSHMEMI_DECL_THREADGROUP_SIZE_##SC();                                                   \
         for (int ii = 0; ii < PE_size; ii++) {                                                   \
-            next_rank = (mype + (ii * stride)) % (stride * PE_size);                             \
+            next_rank = PE_start + ((my_idx_in_active_set + ii) % PE_size) * stride;             \
             next_offset = nelems * ((mype - PE_start) / stride);                                 \
-            round_dest = (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d +   \
-                                        next_rank)) +                                            \
-                         offset + sizeof(uint##SUFFIX##_t) * next_offset;                        \
-            GPU_BITS_COPY_DIRECT(SUFFIX, (uint##SUFFIX##_t *)round_dest, source, nelems);        \
+            dst_ptr = (TYPE *)nvshmem_ptr((void *)(dest + next_offset), next_rank);              \
+            GPU_BITS_COPY_THREADGROUP_DIRECT(TYPENAME, TYPE, dst_ptr, source,                    \
+                                             nelems, myIdx, groupSize);                          \
         }                                                                                        \
-        nvshmem_barrier(PE_start, logPE_stride, PE_size, pSync);                                 \
+        nvshmem##SC_PREFIX##i_barrier##SC_SUFFIX(PE_start, PE_stride, PE_size, pSync, NULL);     \
     } while (0)
 
-#ifdef NVSHMEM_GPU_COLL_USE_LDST
-#define NVSHMEMI_GPU_COLLECT(SUFFIX, dest, source, nelems, PE_start, logPE_stride, PE_size, pSync) \
-    do {                                                                                           \
-        NVSHMEMI_GPU_COLLECT_ALL_PUSH(SUFFIX, dest, source, nelems, PE_start, logPE_stride,        \
-                                      PE_size, pSync);                                             \
-    } while (0)
-#else
-#define NVSHMEMI_GPU_COLLECT(SUFFIX, dest, source, nelems, PE_start, logPE_stride, PE_size, pSync) \
-    do {                                                                                           \
-        NVSHMEMI_GPU_COLLECT_P2P_ALL_PUSH(SUFFIX, dest, source, nelems, PE_start, logPE_stride,    \
-                                          PE_size, pSync);                                         \
-    } while (0)
-#endif
 
-#define DEFN_NVSHMEM_GPU_COLLECT(SUFFIX)                                                    \
-    __device__ void nvshmem_collect##SUFFIX(void *dest, const void *source, size_t nelems,  \
-                                            int PE_start, int logPE_stride, int PE_size,    \
-                                            long *pSync) {                                  \
-        NVSHMEMI_GPU_COLLECT(SUFFIX, dest, source, nelems, PE_start, logPE_stride, PE_size, \
-                             pSync);                                                        \
+#define NVSHMEMI_GPU_COLLECT_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE, dest, source, \
+                                         nelems, PE_start, PE_stride, PE_size, pSync)            \
+    do {                                                                                         \
+        if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST)                                \
+            NVSHMEMI_GPU_COLLECT_THREADGROUP_P2P_ALLPUSH(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE,  \
+                                                         dest, source, nelems, PE_start, PE_stride, \
+                                                         PE_size, pSync);                        \
+        else                                                                                     \
+            NVSHMEMI_GPU_COLLECT_THREADGROUP_ALLPUSH(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE,   \
+                                                     dest, source, nelems, PE_start, PE_stride,  \
+                                                     PE_size, pSync);                            \
+    } while (0)
+
+
+#define DEFN_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE)                      \
+    __device__ void nvshmem##SC_PREFIX##i_##TYPENAME##_collect##SC_SUFFIX(TYPE *dest, const TYPE *source, size_t nelems, \
+                                                        int PE_start, int PE_stride, int PE_size, long *pSync) {   \
+        NVSHMEMI_GPU_COLLECT_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE, dest, source,                   \
+                                         nelems, PE_start, PE_stride, PE_size, pSync);                             \
     }
 
-#define DEFN_NVSHMEM_GPU_COLLECT_TYPES() \
-    DEFN_NVSHMEM_GPU_COLLECT(32);        \
-    DEFN_NVSHMEM_GPU_COLLECT(64);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP, thread, , )
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP, warp, _warp, x)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP, block, _block, x)
+#undef DEFN_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP
 
-DEFN_NVSHMEM_GPU_COLLECT_TYPES();
+
+#define DEFN_NVSHMEMX_TYPENAME_COLLECT_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE)               \
+    __device__ int nvshmem##SC_PREFIX##_##TYPENAME##_collect##SC_SUFFIX(nvshmem_team_t team, TYPE *dest,   \
+                                                                  const TYPE *source, size_t nelems) {     \
+        nvshmemi_team_t *teami = nvshmemi_team_pool_d[team];                                               \
+        nvshmem##SC_PREFIX##_barrier##SC_SUFFIX(team);                                                     \
+        nvshmem##SC_PREFIX##i_##TYPENAME##_collect##SC_SUFFIX(dest, source, nelems, teami->start, teami->stride,\
+                                            teami->size, nvshmemi_team_get_psync(teami, COLLECT));         \
+        return 0;                                                                                          \
+    }
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_COLLECT_THREADGROUP, thread, , )
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_COLLECT_THREADGROUP, warp, _warp, x)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_COLLECT_THREADGROUP, block, _block, x)
+#undef DEFN_NVSHMEMX_TYPENAME_COLLECT_THREADGROUP
 
 #endif
+
+#define COLLECT_ON_STREAM_KERNEL(TYPENAME, TYPE)                                                   \
+    __global__ void collect_##TYPENAME##_on_stream_kernel(TYPE *dest, const TYPE *source,          \
+                                                          size_t nelems, int PE_start,             \
+                                                          int PE_stride, int PE_size, long *pSync) {    \
+        if (!blockIdx.x)                                                                           \
+            nvshmemxi_##TYPENAME##_collect_block(dest, source, nelems, PE_start, PE_stride, PE_size,\
+                                           pSync);                                                 \
+    }
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(COLLECT_ON_STREAM_KERNEL)
+#undef COLLECT_ON_STREAM_KERNEL
+
+#define CALL_COLLECT_ON_STREAM(TYPENAME, TYPE)                                                     \
+    extern "C" void call_##TYPENAME##_collect_on_stream_kern(                                      \
+        TYPE *dest, const TYPE *source, size_t nelems, int PE_start, int PE_stride,                \
+        int PE_size, long *pSync, cudaStream_t stream) {                                           \
+        int num_threads_per_block = (MAX_THREADS_PER_CTA > nelems) ? nelems : MAX_THREADS_PER_CTA; \
+        int num_blocks = 1;                                                                        \
+        collect_##TYPENAME##_on_stream_kernel<<<num_blocks, num_threads_per_block, 0, stream>>>(   \
+            dest, source, nelems, PE_start, PE_stride, PE_size, pSync);                            \
+        CUDA_RUNTIME_CHECK(cudaGetLastError());                                                    \
+    }
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(CALL_COLLECT_ON_STREAM)
+#undef CALL_COLLECT_ON_STREAM

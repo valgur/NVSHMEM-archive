@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -14,12 +14,8 @@
 
 double *d_latency = NULL;
 double *d_avg_time = NULL;
-double *d_r_pWrk, *h_r_pWrk;
-long *d_r_pSync, *h_r_pSync;
 double *latency = NULL;
 double *avg_time = NULL;
-double *r_pWrk;
-long *r_pSync;
 int mype = 0;
 int npes = 0;
 int use_mpi = 0;
@@ -87,20 +83,6 @@ void init_wrapper(int *c, char ***v) {
         avg_time = (double *)shmem_malloc(sizeof(double));
         if (!avg_time) ERROR_EXIT("(shmem_malloc) failed \n");
 
-        r_pWrk = (double *)shmem_malloc(sizeof(long) * NVSHMEM_REDUCE_MIN_WRKDATA_SIZE);
-        if (!r_pWrk) ERROR_EXIT("(shmem_malloc) failed \n");
-
-        r_pSync = (long *)shmem_malloc(sizeof(long) * NVSHMEM_REDUCE_SYNC_SIZE);
-        if (!r_pSync) ERROR_EXIT("(shmem_malloc) failed \n");
-
-        for (int i = 0; i < SHMEM_REDUCE_SYNC_SIZE; i++) {
-            r_pSync[i] = SHMEM_SYNC_VALUE;
-        }
-
-        for (int i = 0; i < SHMEM_REDUCE_MIN_WRKDATA_SIZE; i++) {
-            r_pWrk[i] = SHMEM_WRK_VALUE;
-        }
-
         nvshmemx_init_attr_t attr;
         nvshmemx_init_attr(NVSHMEMX_INIT_WITH_SHMEM, &attr);
 
@@ -109,21 +91,6 @@ void init_wrapper(int *c, char ***v) {
         return;
     }
 #endif
-
-    value = getenv("NVSHMEM_SYMMETRIC_SIZE");
-    // if test set value, extend it for reduction
-    if (value) {
-        char size_string[100];
-
-        size_t size = 0;
-        size = atol(value);
-        size += ((NVSHMEM_REDUCE_SYNC_SIZE * sizeof(long)) +
-                 ((NVSHMEM_REDUCE_MIN_WRKDATA_SIZE + 2) * sizeof(double)));
-        sprintf(size_string, "%lu", size);
-
-        int status = setenv("NVSHMEM_SYMMETRIC_SIZE", size_string, 1);
-        if (status) ERROR_EXIT("setenv failed \n");
-    }
 
     nvshmem_init();
 
@@ -137,26 +104,6 @@ void init_wrapper(int *c, char ***v) {
     d_avg_time = (double *)nvshmem_malloc(sizeof(double));
     if (!d_avg_time) ERROR_EXIT("nvshmem_malloc failed \n");
 
-    d_r_pWrk = (double *)nvshmem_malloc(sizeof(long) * NVSHMEM_REDUCE_MIN_WRKDATA_SIZE);
-    if (!d_r_pWrk) ERROR_EXIT("nvshmem_malloc failed \n");
-
-    d_r_pSync = (long *)nvshmem_malloc(sizeof(long) * NVSHMEM_REDUCE_SYNC_SIZE);
-    if (!d_r_pSync) ERROR_EXIT("nvshmem_malloc failed \n");
-
-    CUDA_CHECK(cudaHostAlloc(&h_r_pWrk, sizeof(double) * NVSHMEM_REDUCE_MIN_WRKDATA_SIZE,
-                             cudaHostAllocDefault));
-
-    CUDA_CHECK(
-        cudaHostAlloc(&h_r_pSync, sizeof(long) * NVSHMEM_REDUCE_SYNC_SIZE, cudaHostAllocDefault));
-
-    for (int i = 0; i < NVSHMEM_REDUCE_SYNC_SIZE; i++) {
-        h_r_pSync[i] = NVSHMEM_SYNC_VALUE;
-    }
-
-    for (int i = 0; i < NVSHMEM_REDUCE_MIN_WRKDATA_SIZE; i++) {
-        h_r_pWrk[i] = SHMEM_WRK_VALUE;
-    }
-
     DEBUG_PRINT("end of init \n");
     return;
 }
@@ -164,8 +111,6 @@ void init_wrapper(int *c, char ***v) {
 void finalize_wrapper() {
 #ifdef NVSHMEM_SHMEM_SUPPORT
     if (use_shmem) {
-        shmem_free(r_pWrk);
-        shmem_free(r_pSync);
         shmem_free(latency);
         shmem_free(avg_time);
     }
@@ -173,10 +118,6 @@ void finalize_wrapper() {
 
 #if !defined(NVSHMEM_SHMEM_SUPPORT) && !defined(NVSHMEM_MPI_SUPPORT)
     if (!use_mpi && !use_shmem) {
-        CUDA_CHECK(cudaFreeHost(h_r_pWrk));
-        CUDA_CHECK(cudaFreeHost(h_r_pSync));
-        nvshmem_free(d_r_pWrk);
-        nvshmem_free(d_r_pSync);
         nvshmem_free(d_latency);
         nvshmem_free(d_avg_time);
     }
@@ -191,27 +132,62 @@ void finalize_wrapper() {
 #endif
 }
 
-void reduce_double_wrapper(double *source, double *target) {
-#ifdef NVSHMEM_MPI_SUPPORT
-    if (use_mpi) {
-        MPI_Barrier(MPI_COMM_WORLD);
-        MPI_Reduce(source, target, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+void
+alloc_tables(void ***table_mem, int num_tables, int num_entries_per_table)
+{
+    void **tables;
+    int i, dev_property;
 
-        return;
+    CUDA_CHECK(cudaDeviceGetAttribute(&dev_property, cudaDevAttrUnifiedAddressing, nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE)));
+    assert(dev_property == 1);
+
+    assert(num_tables >= 1);
+    assert(num_entries_per_table >= 1);
+    CUDA_CHECK(cudaHostAlloc(table_mem, num_tables * sizeof(void *), cudaHostAllocMapped));
+    tables = *table_mem;
+
+    /* Just allocate an array of 8 byte values. The user can decide if they want to use double or uint64_t */
+    for (i = 0; i < num_tables; i++) {
+        CUDA_CHECK(cudaHostAlloc(&tables[i], num_entries_per_table * sizeof(double), cudaHostAllocMapped));
     }
-#endif
-#ifdef NVSHMEM_SHMEM_SUPPORT
-    if (use_shmem) {
-        shmem_barrier_all();
-        shmem_double_sum_to_all(avg_time, latency, 1, 0, 0, npes, r_pWrk, r_pSync);
+}
 
-        return;
+void
+free_tables(void **tables, int num_tables)
+{
+    int i;
+    for (i = 0; i < num_tables; i++) {
+        CUDA_CHECK(cudaFreeHost(tables[i]));
     }
-#endif
+    CUDA_CHECK(cudaFreeHost(tables));
+}
 
-    CUDA_CHECK(cudaMemcpy(d_latency, source, sizeof(double), cudaMemcpyHostToDevice));
-    nvshmem_barrier_all();
-    nvshmem_double_sum_to_all(d_avg_time, d_latency, 1, 0 /*PE_start*/, 0 /*logPE_stride*/, npes,
-                              d_r_pWrk, d_r_pSync);
-    CUDA_CHECK(cudaMemcpy(target, d_avg_time, sizeof(double), cudaMemcpyDeviceToHost));
+void
+print_table(const char *job_name, const char *subjob_name, const char *var_name,
+            const char *output_var, const char *units, const char plus_minus,
+            uint64_t *size, double *value, int num_entries)
+{
+	int i;
+
+/* Used for automated test output. It outputs the data in a non human-friendly format. */
+#ifdef NVSHMEM_MACHINE_READABLE_OUTPUT
+
+    printf("%s\n", job_name);
+    for (i = 0; i < num_entries; i++) {
+        if (size[i] != 0 && value[i] != 0.00) {
+            printf("&&&& PERF %s___%s___size__%lu___%s %lf %c%s\n", job_name, subjob_name, size[i], output_var, value[i], plus_minus, units);
+        }
+    }
+#else
+	printf("+------------------------+----------------------+\n");
+	printf("| %-22s | %-20s |\n", job_name, subjob_name);
+	printf("+------------------------+----------------------+\n");
+	printf("| %-22s | %10s %-9s |\n", var_name, output_var, units);
+	printf("+------------------------+----------------------+\n");
+	for (i = 0; i < num_entries; i++) {
+		printf("| %-22.0lu | %-20.6lf |\n", size[i], value[i]);
+		printf("+------------------------+----------------------+\n");
+	}
+#endif
+	printf("\n\n");
 }

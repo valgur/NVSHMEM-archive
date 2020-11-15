@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
+
 #include <pthread.h>
 #include "util.h"
 

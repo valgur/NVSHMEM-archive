@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -31,21 +31,19 @@
         }                                                                         \
     } while (0)
 
-__global__ void distributed_vector_sum(int *x, int *y, int *partial_sum, int *sum, long *pSync,
+__global__ void distributed_vector_sum(int *x, int *y, int *partial_sum, int *sum,
                                        int use_threadgroup, int mype, int npes) {
     int index = threadIdx.x;
     int nelems = blockDim.x;
-    int PE_start = 0;
-    int logPE_stride = 0;
     partial_sum[index] = x[index] + y[index];
 
     if (use_threadgroup) {
         /* all threads realize the entire collect operation */
-        nvshmemx_collect32_block(sum, partial_sum, nelems, PE_start, logPE_stride, npes, pSync);
+        nvshmemx_int_collect_block(NVSHMEM_TEAM_WORLD, sum, partial_sum, nelems);
     } else {
         /* thread 0 realizes the entire collect operation */
         if (0 == index) {
-            nvshmem_collect32(sum, partial_sum, nelems, PE_start, logPE_stride, npes, pSync);
+            nvshmem_int_collect(NVSHMEM_TEAM_WORLD, sum, partial_sum, nelems);
         }
     }
 }
@@ -57,7 +55,6 @@ int main(int c, char *v[]) {
     int *partial_sum;
     int *sum;
     int use_threadgroup = 1;
-    long *pSync;
     int nthreads = NTHREADS;
 
 #ifdef ENABLE_MPI_SUPPORT
@@ -92,9 +89,8 @@ int main(int c, char *v[]) {
     y = (int *)nvshmem_malloc(sizeof(int) * nthreads);
     partial_sum = (int *)nvshmem_malloc(sizeof(int) * nthreads);
     sum = (int *)nvshmem_malloc(sizeof(int) * nthreads * npes);
-    pSync = (long *)nvshmem_malloc(sizeof(long) * NVSHMEM_COLLECT_SYNC_SIZE);
 
-    void *args[] = {&x, &y, &partial_sum, &sum, &pSync, &use_threadgroup, &mype, &npes};
+    void *args[] = {&x, &y, &partial_sum, &sum, &use_threadgroup, &mype, &npes};
     dim3 dimBlock(nthreads);
     dim3 dimGrid(1);
     nvshmemx_collective_launch((const void *)distributed_vector_sum, dimGrid, dimBlock, args, 0, 0);
@@ -106,7 +102,6 @@ int main(int c, char *v[]) {
     nvshmem_free(y);
     nvshmem_free(partial_sum);
     nvshmem_free(sum);
-    nvshmem_free(pSync);
 
     nvshmem_finalize();
 #ifdef ENABLE_MPI_SUPPORT

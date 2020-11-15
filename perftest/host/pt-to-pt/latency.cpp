@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -78,6 +78,10 @@ int main(int argc, char *argv[]) {
     int mype, npes;
     char *data_d = NULL, *data_d_local = NULL;
     void *data_h_local = NULL;
+    uint64_t *size_array = NULL;
+    double *latency_array = NULL;
+    int num_entries;
+    int i;
 
     putget_issue_t iss = N_ISSUE_TYPES;
     dir_t dir = PUSH;
@@ -131,6 +135,19 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    num_entries = floor(log2((float)max_msg_size)) - floor(log2((float)min_msg_size)) + 1;
+    size_array = (uint64_t *)calloc(sizeof(uint64_t), num_entries);
+    if (!size_array) {
+        status = -1;
+        goto finalize;
+    }
+
+    latency_array = (double *)calloc(sizeof(double), num_entries);
+    if (!latency_array) {
+        status = -1;
+        goto finalize;
+    }
+
     data_d = (char *)nvshmem_malloc(max_msg_size);
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
 
@@ -156,24 +173,23 @@ int main(int argc, char *argv[]) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     if (mype == 0) {
-        printf("   size(bytes) \t latency(us)\n");
-        fflush(stdout);
-    }
-
-    if (mype == 0) {
         float ms, us;
         cudaEvent_t sev, eev;
         CUDA_CHECK(cudaEventCreate(&sev));
         CUDA_CHECK(cudaEventCreate(&eev));
+        i = 0;
         for (int size = min_msg_size; size <= max_msg_size; size *= 2) {
             lat(data_d, data_d_local, size, mype, iter, skip, iss, dir, strm, sev, eev, &ms, &us);
+            size_array[i] = size;
             if (iss == ON_STREAM) {
-                printf("%7d \t %8.2f \n", size, ms * 1000 / iter);
+                latency_array[i] = ms * 1000 / iter;
             } else {
-                printf("%7d \t %8.2f \n", size, us / iter);
+                latency_array[i] = us / iter;
             }
+            i++;
         }
 
+        print_table("Latency", "None", "size (Bytes)", "latency", "us", '-', size_array, latency_array, i);
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));
 
@@ -187,6 +203,8 @@ finalize:
     CUDA_CHECK(cudaStreamDestroy(strm));
 
     if (data_d) nvshmem_free(data_d);
+    if (size_array) free(size_array);
+    if (latency_array) free(latency_array);
 
 #ifdef _NVSHMEM_REGISTRATION_CACHE_ENABLED
     if (data_d_local) cudaFree(data_d_local);

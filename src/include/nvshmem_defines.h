@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -211,6 +211,15 @@ __device__ inline void nvshmem_put128(void *dest, const void *source, size_t nel
     put<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
 }
 
+/*__device__ nvshmem_put<bits>_signal*/
+#define NVSHMEMI_SIZE_PUT_SIGNAL_IMPL(BITS)                                                            \
+    __device__ inline void nvshmem_put##BITS##_signal(void *dest, const void *source, size_t nelems,   \
+                                                      uint64_t *sig_addr, uint64_t signal, int sig_op, \
+                                                      int pe) {                                        \
+        nvshmem_putmem_signal(dest, source, nelems*(BITS/8), sig_addr, signal, sig_op, pe);            \
+    }
+NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_SIZE_PUT_SIGNAL_IMPL)
+
 /*__device__ nvshmem_get<bits>*/
 __device__ inline void nvshmem_get8(void *dest, const void *source, size_t nelems, int pe) {
     get<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
@@ -231,6 +240,13 @@ __device__ inline void nvshmem_get128(void *dest, const void *source, size_t nel
 /*__device__ nvshmem_putmem*/
 __device__ inline void nvshmem_putmem(void *dest, const void *source, size_t bytes, int pe) {
     put<char>((char *)dest, (const char *)source, bytes, pe);
+}
+
+/*__device__ nvshmem_putmem_signal*/
+__device__ inline void nvshmem_putmem_signal(void *dest, const void *source, size_t bytes,
+                                             uint64_t *sig_addr, uint64_t signal, int sig_op,
+                                             int pe) {
+    put_signal<char>((char *)dest, (const char *)source, bytes, sig_addr, signal, sig_op, pe, 0);
 }
 
 /*__device__ nvshmem_getmem*/
@@ -450,6 +466,10 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL)
 
 __device__ inline void nvshmem_wait_until(long *ivar, int cmp, long cmp_value) {
     nvshmem_long_wait_until(ivar, cmp, cmp_value);
+}
+
+__device__ inline uint64_t nvshmem_signal_wait_until(uint64_t *sig_addr, int cmp, uint64_t cmp_val) {
+    return nvshmemi_signal_wait_until(sig_addr, cmp, cmp_val);
 }
 
 #define NVSHMEM_WAIT(Name, Type)                                                \

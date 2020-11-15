@@ -30,6 +30,7 @@
 #include <stddef.h>
 #include <sstream>
 #include <vector>
+#include <inttypes.h>
 #include "error_codes_internal.h"
 #include "debug.h"
 #include "nvshmem_internal.h"
@@ -195,6 +196,15 @@
         assert(cudaSuccess == result);                                            \
     } while (0)
 
+#define NCCL_CHECK(cmd) do {                         \
+  ncclResult_t r = cmd;                             \
+  if (r!= ncclSuccess) {                            \
+    printf("Failed, NCCL error %s:%d '%s'\n",             \
+        __FILE__,__LINE__,nccl_ftable.GetErrorString(r));   \
+    exit(EXIT_FAILURE);                             \
+  }                                                 \
+} while(0)
+
 #define CUDA_RUNTIME_ERROR_STRING(result)                                         \
     do {                                                                          \
         if (unlikely(cudaSuccess != result)) {                                              \
@@ -217,12 +227,12 @@
 #define NVSHMEMU_THREAD_CS_FINALIZE nvshmemu_thread_cs_finalize
 
 #define NVSHMEMU_MAPPED_PTR_TRANSLATE(toPtr, fromPtr, peer)          \
-    toPtr = (void *)((char *)(nvshmem_state->peer_heap_base[peer]) + \
-                     ((char *)fromPtr - (char *)(nvshmem_state->heap_base)));
+    toPtr = (void *)((char *)(nvshmemi_state->peer_heap_base[peer]) + \
+                     ((char *)fromPtr - (char *)(nvshmemi_state->heap_base)));
 
 #define NVSHMEMU_UNMAPPED_PTR_TRANSLATE(toPtr, fromPtr, peer)               \
-    toPtr = (void *)((char *)(nvshmem_state->peer_heap_base_actual[peer]) + \
-                     ((char *)fromPtr - (char *)(nvshmem_state->heap_base)));
+    toPtr = (void *)((char *)(nvshmemi_state->peer_heap_base_actual[peer]) + \
+                     ((char *)fromPtr - (char *)(nvshmemi_state->heap_base)));
 
 void nvshmemu_thread_cs_init();
 void nvshmemu_thread_cs_finalize();
@@ -245,11 +255,6 @@ typedef size_t nvshmemi_env_size;
 typedef bool nvshmemi_env_bool;
 typedef const char* nvshmemi_env_string;
 
-#define NVSHPRI_int    "%d"
-#define NVSHPRI_long   "%ld"
-#define NVSHPRI_size   "%zu"
-#define NVSHPRI_bool   "%s"
-#define NVSHPRI_string "\"%s\""
 
 #define NVSHFMT_int(_v)    _v
 #define NVSHFMT_long(_v)   _v

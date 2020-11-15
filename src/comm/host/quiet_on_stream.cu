@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmemx.h"
@@ -24,11 +24,11 @@ void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {
     NVSHMEM_CHECK_STATE_AND_INIT();
     int status = 0;
 
-    int tbitmap = nvshmem_state->transport_bitmap;
-    if (nvshmem_state->npes_node > 1) {
+    int tbitmap = nvshmemi_state->transport_bitmap;
+    if (nvshmemi_state->npes_node > 1) {
         for (int s = 0; s < MAX_PEER_STREAMS; s++) {
-            CUstream custrm = nvshmem_state->custreams[s];
-            CUevent cuev = nvshmem_state->cuevents[s];
+            CUstream custrm = nvshmemi_state->custreams[s];
+            CUevent cuev = nvshmemi_state->cuevents[s];
             status = cuEventRecord(cuev, custrm);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                          "nvshmem_quiet_on_stream() failed \n");

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -21,15 +21,15 @@
 #define MAX_SKIP 10
 #define THREADS 1024
 #define BLOCKS 4
-#define MAX_MSG_SIZE 32 * 1024 * 1024
+#define MAX_MSG_SIZE 64 * 1024
 #define UNROLL 2
 
 __global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, int len, int pe,
-                   int iter, int skip) {
+                   int iter, int skip, double *bw_result) {
     int u, i, j, peer, tid, slice;
     unsigned int counter;
     long long int start = 0, stop = 0;
-    double bw, time = 0;
+    double time = 0;
     int threads = gridDim.x * blockDim.x;
     tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -91,8 +91,7 @@ __global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, in
     time = (stop - start);
 
     if (!threadIdx.x && !blockIdx.x) {
-        bw = ((float)iter * (float)len * sizeof(double) * clockrate) / ((time / 1000) * 1024 * 1024 * 1024);
-        printf("%10lu \t\t %4.6f \n", len * sizeof(double), bw);
+        *bw_result = ((float)iter * (float)len * sizeof(double) * clockrate) / ((time / 1000) * 1024 * 1024 * 1024);
     }
 }
 
@@ -101,6 +100,10 @@ int main(int argc, char *argv[]) {
     double *data_d = NULL;
     unsigned int *counter_d;
     int max_blocks = BLOCKS, max_threads = THREADS;
+    int array_size, i;
+    void **h_tables;
+    uint64_t *h_size_arr;
+    double *h_bw;
 
     int iter = MAX_ITERS;
     int skip = MAX_SKIP;
@@ -135,6 +138,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    array_size = floor(log2((float)max_msg_size)) + 1;
+    alloc_tables(&h_tables, 2, array_size);
+    h_size_arr = (uint64_t *)h_tables[0];
+    h_bw = (double *)h_tables[1];
+
     data_d = (double *)nvshmem_malloc(max_msg_size);
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
 
@@ -143,23 +151,21 @@ int main(int argc, char *argv[]) {
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    if (mype == 0) {
-        printf("Size(Bytes) \t\t BW(GB/sec)\n");
-        fflush(stdout);
-    }
-
     int size;
+    i = 0;
     if (mype == 0) {
         for (size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
             int blocks = max_blocks, threads = max_threads;
+            h_size_arr[i] = size;
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
 
-            bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(double), mype, iter, skip);
+            bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(double), mype, iter, skip, &h_bw[i]);
             CUDA_CHECK(cudaGetLastError());
 
             CUDA_CHECK(cudaDeviceSynchronize());
 
             nvshmem_barrier_all();
+            i++;
         }
     } else {
         for (size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
@@ -167,10 +173,14 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (mype == 0) {
+        print_table("shmem_p_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw, i);
+    }
+
 finalize:
 
     if (data_d) nvshmem_free(data_d);
-
+    free_tables(h_tables, 2);
     finalize_wrapper();
 
     return 0;

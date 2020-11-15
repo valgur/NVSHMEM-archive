@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <math.h>
 #include <cuda_runtime.h>
 #include <cuda.h>
 #ifdef NVSHMEM_MPI_SUPPORT
@@ -81,10 +82,15 @@
 
 #define SHMEM_WRK_VALUE 0
 #define MAX_ELEMS (1 * 1024 * 1024)
+#define MAX_ELEMS_LOG 20
 
 extern __device__ int clockrate;
 
 void init_wrapper(int *c, char ***v);
 void finalize_wrapper();
-void reduce_double_wrapper(double *source, double *target);
+void alloc_tables(void ***table_mem, int num_tables, int num_entries_per_table);
+void free_tables(void **tables, int num_tables);
+void print_table(const char *job_name, const char *subjob_name, const char *var_name,
+                 const char *output_var, const char *units, const char plus_minus,
+                 uint64_t *size, double *value, int num_entries);
 #endif

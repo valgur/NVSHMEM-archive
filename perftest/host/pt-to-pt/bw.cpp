@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -102,6 +102,10 @@ int main(int argc, char *argv[]) {
     int skip = DEFAULT_SKIP;
     int min_msg_size = DEFAULT_MIN_MSG_SIZE;
     int max_msg_size = DEFAULT_MAX_MSG_SIZE;
+    uint64_t *size_array = NULL;
+    double *bandwidth_array = NULL;
+    int num_entries;
+    int i;
 
     init_wrapper(&argc, &argv);
 
@@ -148,6 +152,19 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    num_entries = floor(log2((float)max_msg_size)) - floor(log2((float)min_msg_size)) + 1;
+    size_array = (uint64_t *)calloc(sizeof(uint64_t), num_entries);
+    if (!size_array) {
+        status = -1;
+        goto finalize;
+    }
+
+    bandwidth_array = (double *)calloc(sizeof(double), num_entries);
+    if (!bandwidth_array) {
+        status = -1;
+        goto finalize;
+    }
+
     data_d = (char *)nvshmem_malloc(max_msg_size);
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
 
@@ -160,26 +177,24 @@ int main(int argc, char *argv[]) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     if (mype == 0) {
-        printf("Size(Bytes) \t\t BW(GB/sec)\n");
-        fflush(stdout);
-    }
-
-    if (mype == 0) {
         float ms, us, gb;
         cudaEvent_t sev, eev;
         CUDA_CHECK(cudaEventCreate(&sev));
         CUDA_CHECK(cudaEventCreate(&eev));
+        i = 0;
         for (int size = min_msg_size; size <= max_msg_size; size *= 2) {
+            size_array[i] = size;
             bw(data_d, data_d_local, size, mype, iter, skip, iss, dir, strm, sev, eev, &ms, &us);
 
             if (iss == ON_STREAM) {
-                gb = ((float)iter * (float)size) / ((ms / 1000) * 1024 *1024 * 1024);
-                printf("%10d \t\t %4.6f \n", size, gb);
+                bandwidth_array[i] = ((float)iter * (float)size) / ((ms / 1000) * 1024 *1024 * 1024);
             } else {
-                gb = ((float)iter * (float)size) / ((us / 1000000) * 1024 * 1024 * 1024);
-                printf("%10d \t\t %4.6f \n", size, gb);
+                bandwidth_array[i] = ((float)iter * (float)size) / ((us / 1000000) * 1024 * 1024 * 1024);
             }
+            i++;
         }
+
+        print_table("Bandwidth", "None", "size (Bytes)", "Bandwidth", "GB", '+', size_array, bandwidth_array, i);
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));
 
@@ -192,6 +207,8 @@ finalize:
     CUDA_CHECK(cudaStreamDestroy(strm));
 
     if (data_d) nvshmem_free(data_d);
+    if (size_array) free(size_array);
+    if (bandwidth_array) free(bandwidth_array);
 
     if (data_d_local) nvshmem_free(data_d_local);
 

@@ -16,9 +16,9 @@
 /* NVSHMEMI_ENV_DEF( name, kind, default, category, short description )
  *
  * Kinds: long, size, bool, string
- * Categories: NVSHMEM_ENV_CAT_OPENSHMEM, NVSHMEM_ENV_CAT_OTHER,
- *             NVSHMEM_ENV_CAT_COLLECTIVES, NVSHMEM_ENV_CAT_TRANSPORT,
- *             NVSHMEM_ENV_CAT_HIDDEN
+ * Categories: NVSHMEMI_ENV_CAT_OPENSHMEM, NVSHMEMI_ENV_CAT_OTHER,
+ *             NVSHMEMI_ENV_CAT_COLLECTIVES, NVSHMEMI_ENV_CAT_TRANSPORT,
+ *             NVSHMEMI_ENV_CAT_HIDDEN
  */
 
 /*
@@ -49,6 +49,24 @@ NVSHMEMI_ENV_DEF(ENABLE_ERROR_CHECKS, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
 
 /** Bootstrap **/
 
+#if   defined(NVSHMEM_DEFAULT_PMIX)
+#define NVSHMEMI_ENV_BOOTSTRAP_DEFAULT "PMIX"
+#elif defined(NVSHMEM_DEFAULT_PMI2)
+#define NVSHMEMI_ENV_BOOTSTRAP_DEFAULT "PMI-2"
+#else
+#define NVSHMEMI_ENV_BOOTSTRAP_DEFAULT "PMI"
+#endif
+
+NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI, string, NVSHMEMI_ENV_BOOTSTRAP_DEFAULT, NVSHMEMI_ENV_CAT_OTHER,
+                 "Name of the bootstrap that should be used to initialize\n"
+                 "\tNVSHMEM. Allowed values: PMI, PMI-2"
+#ifdef NVSHMEM_PMIX_SUPPORT
+                 ", PMIX"
+#endif
+                 )
+
+#undef NVSHMEMI_ENV_BOOTSTRAP_DEFAULT
+
 NVSHMEMI_ENV_DEF(MPI_LIB_NAME, string, "libmpi.so", NVSHMEMI_ENV_CAT_OTHER,
                  "Name of the MPI shared library to be used for bootstrap")
 NVSHMEMI_ENV_DEF(SHMEM_LIB_NAME, string, "liboshmem.so", NVSHMEMI_ENV_CAT_OTHER,
@@ -59,6 +77,8 @@ NVSHMEMI_ENV_DEF(BYPASS_ACCESSIBILITY_CHECK, bool, false, NVSHMEMI_ENV_CAT_HIDDE
 
 /** General Collectives **/
 
+NVSHMEMI_ENV_DEF(DISABLE_NCCL, bool, false, NVSHMEMI_ENV_CAT_COLLECTIVES,
+                 "Disable use of NCCL for collective operations")
 NVSHMEMI_ENV_DEF(BARRIER_DISSEM_KVAL, int, 2, NVSHMEMI_ENV_CAT_COLLECTIVES,
                  "Radix of the dissemination algorithm used for barriers")
 NVSHMEMI_ENV_DEF(BARRIER_TG_DISSEM_KVAL, int, 2, NVSHMEMI_ENV_CAT_COLLECTIVES,
@@ -68,27 +88,6 @@ NVSHMEMI_ENV_DEF(REDUCE_RECEXCH_KVAL, int, 2, NVSHMEMI_ENV_CAT_HIDDEN,
 
 /** CPU Collectives **/
 
-NVSHMEMI_ENV_DEF(ENABLE_CPU_COLL, bool, true, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Enable CPU collectives")
-NVSHMEMI_ENV_DEF(ENABLE_P2P_CPU_COLL, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Permit the use of collectives over p2p operations")
-NVSHMEMI_ENV_DEF(USE_P2P_CPU_PUSH, bool, true, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Use put operations instead of get where applicable")
-NVSHMEMI_ENV_DEF(USE_TG_FOR_STREAM_COLL, bool, true, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Use scoped (CTA, warp) GPU collectives to realize CPU collectives\n"
-                 "\ton cudaStream_t")
-NVSHMEMI_ENV_DEF(USE_TG_FOR_CPU_COLL, bool, true, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Use scoped (CTA, warp) GPU collectives to realize CPU collectives")
-NVSHMEMI_ENV_DEF(CPU_COLL_OFFSET_REQD, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Offset of var from base ptr of peer processes required")
-NVSHMEMI_ENV_DEF(CPU_COLL_SYNC_REQD, bool, true, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Call barrier or equivalent before/after collective operations")
-NVSHMEMI_ENV_DEF(CPU_RDXN_SEG_SIZE, int, 16384, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Size of buffer segment used to realize reduction collectives")
-NVSHMEMI_ENV_DEF(USE_P2P_CPU_RDXN_ALLGATHER, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Reduction goes through allgather followed by local reduction")
-NVSHMEMI_ENV_DEF(USE_P2P_CPU_RDXN_OD_GATHER, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Reduction goes through elementwise-gather followed by local reduction")
 NVSHMEMI_ENV_DEF(RDX_NUM_TPB, int, 32, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Number of threads per block used for reduction purposes")
 
@@ -107,6 +106,12 @@ NVSHMEMI_ENV_DEF(ENABLE_NIC_PE_MAPPING, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "\tclosest to it by distance. When set to 1, NVSHMEM either assigns NICs to\n"
                  "\tPEs on a round-robin basis or uses NVSHMEM_HCA_PE_MAPPING or\n"
                  "\tNVSHMEM_HCA_LIST when they are specified.")
+NVSHMEMI_ENV_DEF(IB_GID_INDEX, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Source GID Index for ROCE")
+NVSHMEMI_ENV_DEF(IB_TRAFFIC_CLASS, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Traffic calss for ROCE")
+NVSHMEMI_ENV_DEF(IB_SL, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Service level to use over IB/ROCE")
 
 NVSHMEMI_ENV_DEF(HCA_LIST, string, "", NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Comma-separated list of HCAs to use in the NVSHMEM application. Entries\n"

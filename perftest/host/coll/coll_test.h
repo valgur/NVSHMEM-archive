@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -40,57 +40,45 @@
 
 #define broadcast_dest_size(DATATYPE, num_elems, npes) (sizeof(DATATYPE) * num_elems)
 
-#define call_shmem_broadcast(BITS, d_dest, d_source, num_elems, root, PE_start, logPE_stride,    \
-                             npes, d_pSync)                                                      \
-    do {                                                                                         \
-        nvshmem_broadcast##BITS(d_dest, d_source, num_elems, root, PE_start, logPE_stride, npes, \
-                                d_pSync);                                                        \
-    } while (0)
-
-#define call_shmem_collect(BITS, d_dest, d_source, num_elems, root, PE_start, logPE_stride, npes,  \
-                           d_pSync)                                                                \
-    do {                                                                                           \
-        nvshmem_collect##BITS(d_dest, d_source, num_elems, PE_start, logPE_stride, npes, d_pSync); \
-    } while (0)
-
-#define call_shmem_alltoall(BITS, d_dest, d_source, num_elems, root, PE_start, logPE_stride, npes, \
-                            d_pSync)                                                               \
-    do {                                                                                           \
-        nvshmem_alltoall##BITS(d_dest, d_source, num_elems, PE_start, logPE_stride, npes,          \
-                               d_pSync);                                                           \
-    } while (0)
-
-#define call_shmem_broadcast_on_stream(BITS, d_dest, d_source, num_elems, root, PE_start, \
-                                       logPE_stride, npes, d_pSync, stream)               \
-    do {                                                                                  \
-        nvshmemx_broadcast##BITS##_on_stream(d_dest, d_source, num_elems, root, PE_start, \
-                                             logPE_stride, npes, d_pSync, stream);        \
-    } while (0)
-
-#define call_shmem_collect_on_stream(BITS, d_dest, d_source, num_elems, root, PE_start,         \
-                                     logPE_stride, npes, d_pSync, stream)                       \
+#define call_shmem_broadcast(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root)     \
     do {                                                                                        \
-        nvshmemx_collect##BITS##_on_stream(d_dest, d_source, num_elems, PE_start, logPE_stride, \
-                                           npes, d_pSync, stream);                              \
+        nvshmem_##TYPENAME##_broadcast(team, d_dest, d_source, num_elems, root);                \
     } while (0)
 
-#define call_shmem_alltoall_on_stream(BITS, d_dest, d_source, num_elems, root, PE_start,         \
-                                      logPE_stride, npes, d_pSync, stream)                       \
-    do {                                                                                         \
-        nvshmemx_alltoall##BITS##_on_stream(d_dest, d_source, num_elems, PE_start, logPE_stride, \
-                                            npes, d_pSync, stream);                              \
-    } while (0)
-
-#define RUN_COLL(coll, COLL, DATATYPE, BITS, d_source, h_source, d_dest, h_dest, d_pSync, h_pSync, \
-                 npes, root, stream)                                                               \
+#define call_shmem_collect(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root)                \
     do {                                                                                           \
+        nvshmem_##TYPENAME##_collect(team, d_dest, d_source, num_elems);                           \
+    } while (0)
+
+#define call_shmem_alltoall(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root)               \
+    do {                                                                                           \
+        nvshmem_##TYPENAME##_alltoall(team, d_dest, d_source, num_elems);                          \
+    } while (0)
+
+#define call_shmem_broadcast_on_stream(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root, stream)  \
+    do {                                                                                                 \
+        nvshmemx_##TYPENAME##_broadcast_on_stream(team, d_dest, d_source, num_elems, root, stream);      \
+    } while (0)
+
+#define call_shmem_collect_on_stream(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root, stream)    \
+    do {                                                                                        \
+        nvshmemx_##TYPENAME##_collect_on_stream(team, d_dest, d_source, num_elems, stream);     \
+    } while (0)
+
+#define call_shmem_alltoall_on_stream(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root, stream)  \
+    do {                                                                                         \
+        nvshmemx_##TYPENAME##_alltoall_on_stream(team, d_dest, d_source, num_elems, stream);     \
+    } while (0)
+
+#define RUN_COLL(coll, COLL, TYPENAME, TYPE, d_source, h_source, d_dest, h_dest, npes, root, stream,\
+                 sizze_array, latency_array)                                                       \
+    do {                                                                                           \
+        int array_index = 0;                                                                       \
         for (num_elems = 1; num_elems < (MAX_ELEMS / 2); num_elems *= 2) {                         \
             int iters = 0;                                                                         \
             double latency = 0;                                                                    \
             int skip = MAX_SKIP;                                                                   \
             struct timeval t_start, t_stop;                                                        \
-            int PE_start = 0;                                                                      \
-            int logPE_stride = 0;                                                                  \
                                                                                                    \
             for (iters = 0; iters < MAX_ITERS + skip; iters++) {                                   \
                 CUDA_CHECK(cudaMemcpyAsync(d_source, h_source,                                     \
@@ -99,9 +87,6 @@
                 CUDA_CHECK(cudaMemcpyAsync(d_dest, h_dest,                                         \
                                            coll##_dest_size(DATATYPE, num_elems, npes),            \
                                            cudaMemcpyHostToDevice, stream));                       \
-                CUDA_CHECK(cudaMemcpyAsync(d_pSync, h_pSync,                                       \
-                                           (sizeof(long) * NVSHMEM_##COLL##_SYNC_SIZE),            \
-                                           cudaMemcpyHostToDevice, stream));                       \
                                                                                                    \
                 CUDA_CHECK(cudaStreamSynchronize(stream));                                         \
                                                                                                    \
@@ -109,8 +94,7 @@
                                                                                                    \
                 if (iters >= skip) gettimeofday(&t_start, NULL);                                   \
                                                                                                    \
-                call_shmem_##coll(BITS, d_dest, d_source, num_elems, root, PE_start, logPE_stride, \
-                                  npes, d_pSync);                                                  \
+                call_shmem_##coll(TYPENAME, TYPE, NVSHMEM_TEAM_WORLD, d_dest, d_source, num_elems, root);\
                                                                                                    \
                 if (iters >= skip) {                                                               \
                     gettimeofday(&t_stop, NULL);                                                   \
@@ -124,30 +108,26 @@
                 CUDA_CHECK(cudaMemcpyAsync(h_dest, d_dest,                                         \
                                            coll##_dest_size(DATATYPE, num_elems, npes),            \
                                            cudaMemcpyDeviceToHost, stream));                       \
-                CUDA_CHECK(cudaMemcpyAsync(h_pSync, d_pSync,                                       \
-                                           (sizeof(long) * NVSHMEM_##COLL##_SYNC_SIZE),            \
-                                           cudaMemcpyDeviceToHost, stream));                       \
                                                                                                    \
                 CUDA_CHECK(cudaStreamSynchronize(stream));                                         \
             }                                                                                      \
                                                                                                    \
             nvshmem_barrier_all();                                                                 \
-                                                                                                   \
-            if (!mype)                                                                             \
-                printf("|%14.0lu|%18.2lf|\n", num_elems * sizeof(DATATYPE), (latency / MAX_ITERS)); \
+            size_array[array_index] = num_elems * sizeof(DATATYPE);                                \
+            latency_array[array_index] = (latency / MAX_ITERS);                                    \
+            array_index++;                                                                         \
         }                                                                                          \
     } while (0)
 
-#define RUN_COLL_ON_STREAM(coll, COLL, DATATYPE, BITS, d_source, h_source, d_dest, h_dest,         \
-                           d_pSync, h_pSync, npes, root, stream)                                   \
+#define RUN_COLL_ON_STREAM(coll, COLL, TYPENAME, TYPE, d_source, h_source, d_dest, h_dest,         \
+                           npes, root, stream, size_array, latency_array)                          \
     do {                                                                                           \
+        int array_index = 0;                                                                       \
         for (num_elems = 1; num_elems < (MAX_ELEMS / 2); num_elems *= 2) {                         \
             int iters = 0;                                                                         \
             double latency = 0;                                                                    \
             int skip = MAX_SKIP;                                                                   \
             struct timeval t_start, t_stop;                                                        \
-            int PE_start = 0;                                                                      \
-            int logPE_stride = 0;                                                                  \
                                                                                                    \
             for (iters = 0; iters < MAX_ITERS + skip; iters++) {                                   \
                 CUDA_CHECK(cudaMemcpyAsync(d_source, h_source,                                     \
@@ -156,17 +136,14 @@
                 CUDA_CHECK(cudaMemcpyAsync(d_dest, h_dest,                                         \
                                            coll##_dest_size(DATATYPE, num_elems, npes),            \
                                            cudaMemcpyHostToDevice, stream));                       \
-                CUDA_CHECK(cudaMemcpyAsync(d_pSync, h_pSync,                                       \
-                                           (sizeof(long) * NVSHMEM_##COLL##_SYNC_SIZE),            \
-                                           cudaMemcpyHostToDevice, stream));                       \
                                                                                                    \
                 CUDA_CHECK(cudaStreamSynchronize(stream));                                         \
                 nvshmem_barrier_all();                                                             \
                                                                                                    \
                 if (iters >= skip) gettimeofday(&t_start, NULL);                                   \
                                                                                                    \
-                call_shmem_##coll##_on_stream(BITS, d_dest, d_source, num_elems, root, PE_start,   \
-                                              logPE_stride, npes, d_pSync, stream);                \
+                call_shmem_##coll##_on_stream(TYPENAME, TYPE, NVSHMEM_TEAM_WORLD, d_dest, d_source,\
+                                              num_elems, root, stream);                            \
                 CUDA_CHECK(cudaStreamSynchronize(stream));                                         \
                                                                                                    \
                 if (iters >= skip) {                                                               \
@@ -181,16 +158,13 @@
                 CUDA_CHECK(cudaMemcpyAsync(h_dest, d_dest,                                         \
                                            coll##_dest_size(DATATYPE, num_elems, npes),            \
                                            cudaMemcpyDeviceToHost, stream));                       \
-                CUDA_CHECK(cudaMemcpyAsync(h_pSync, d_pSync,                                       \
-                                           (sizeof(long) * NVSHMEM_##COLL##_SYNC_SIZE),            \
-                                           cudaMemcpyDeviceToHost, stream));                       \
                 CUDA_CHECK(cudaStreamSynchronize(stream));                                         \
             }                                                                                      \
                                                                                                    \
             nvshmem_barrier_all();                                                                 \
-                                                                                                   \
-            if (!mype)                                                                             \
-                printf("|%14.0lu|%18.2lf|\n", num_elems * sizeof(DATATYPE), (latency / MAX_ITERS)); \
+            size_array[array_index] = num_elems * sizeof(DATATYPE);                                \
+            latency_array[array_index] = (latency / MAX_ITERS);                                    \
+            array_index++;                                                                         \
         }                                                                                          \
     } while (0)
 

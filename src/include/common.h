@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2017, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #ifndef __COMMON_H
 #define __COMMON_H
@@ -69,16 +69,6 @@ enum {
 };
 
 #define NOT_A_CUDA_STREAM ((cudaStream_t)0)
-
-#if 0
-typedef enum rma_desc {  // distinguish src/dest pointer on sysmem/vidmem
-    P,
-    G,
-    PUT,
-    GET,
-    AMO,
-} rma_desc_t;
-#endif 
 
 typedef struct rma_verb {
     nvshmemi_op_t desc;

@@ -1,4 +1,22 @@
 ===============================================================================
+				Changes in 2.0.2
+===============================================================================
+
+# Added the teams and team-based collectives APIs from OpenSHMEM 1.5.
+# Added support to use the NVIDIA Collective Communication Library (NCCL) for
+optimized NVSHMEM host and on-stream collectives.
+# Added support for RDMA over Converged Ethernet (RoCE) networks.
+# Added support for PMI-2 to enable an NVSHMEM job launch with srun/SLURM. 
+# Added support for PMIx to enable an NVSHMEM job launch with PMIx-compatible
+launchers, such as Slurm and Open MPI.
+# Uniformly reformatted the perftest benchmark output.
+# Added support for the putmem_signal and signal_wait_until APIs.
+# Improved support for single-node environments without InfiniBand.
+# Fixed a bug that occurred when large numbers of fetch atomic operations were
+performed on InfiniBand.
+# Improved topology awareness in NIC-to-GPU assignments for DGX A100 systems.
+
+===============================================================================
 				Changes in 1.1.3
 ===============================================================================
 

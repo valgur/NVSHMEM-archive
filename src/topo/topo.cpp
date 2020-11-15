@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmemx_error.h"
@@ -11,7 +11,7 @@
 #include "util.h"
 #include "topo.h"
 
-int nvshmemi_build_transport_map(nvshmem_state_t *state) {
+int nvshmemi_build_transport_map(nvshmemi_state_t *state) {
     int status = 0;
     int *local_map = NULL;
 
@@ -77,7 +77,7 @@ out:
 }
 
 
-int nvshmemi_detect_same_device(nvshmem_state_t *state) {
+int nvshmemi_detect_same_device(nvshmemi_state_t *state) {
     int status = 0;
     nvshmem_transport_pe_info_t my_info;
 
@@ -87,6 +87,7 @@ int nvshmemi_detect_same_device(nvshmem_state_t *state) {
 
     my_info.hostHash = getHostHash();
 
+    //TODO: move this to a topo init function as it is reused in other functions in topo that follow
     state->pe_info =
         (nvshmem_transport_pe_info_t *)malloc(sizeof(nvshmem_transport_pe_info_t) * state->npes);
     NULL_ERROR_JMP(state->pe_info, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -116,22 +117,26 @@ out:
     return status;
 }
 
-
-static int get_cuda_path(int cuda_dev, char **path) {
+static int get_cuda_bus_id(int cuda_dev, char *bus_id) {
     int status = NVSHMEMX_SUCCESS;
     CUresult cu_err;
-    char bus_id[16];
-    char pathname[MAXPATHSIZE];
-    char *cuda_rpath;
-    char bus_path[] = "/sys/class/pci_bus/0000:00/device";
 
-    cu_err = cuDeviceGetPCIBusId(bus_id, 16, cuda_dev);
+    cu_err = cuDeviceGetPCIBusId(bus_id, MAX_BUSID_SIZE, cuda_dev);
     if (cu_err != CUDA_SUCCESS) {
         ERROR_PRINT("cuDeviceGetPCIBusId failed with error: %d \n", cu_err);
         status = NVSHMEMX_ERROR_INTERNAL;
         goto out;
     }
-    INFO(NVSHMEM_TOPO, "[%d] user selected gpu with busid: %s ", nvshmem_state->mype, bus_id);
+
+out:
+    return status;
+}
+
+static int get_device_path(char *bus_id, char **path) {
+    int status = NVSHMEMX_SUCCESS;
+    char pathname[MAXPATHSIZE];
+    char *cuda_rpath;
+    char bus_path[] = "/sys/class/pci_bus/0000:00/device";
 
     for (int i = 0; i < 16; i++) bus_id[i] = tolower(bus_id[i]);
     memcpy(bus_path + sizeof("/sys/class/pci_bus/") - 1, bus_id, sizeof("0000:00") - 1);
@@ -174,52 +179,88 @@ static int get_pci_distance(char *cuda_path, char *mlx_path) {
     return PATH_PXB;
 }
 
-int get_device_by_distance(int *device, nvshmem_state_t *state, struct nvshmem_transport *tcurr) {
+int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_transport *tcurr) {
     int status = NVSHMEMX_SUCCESS;
-    int dev_id, min_distance;
+    int dev_id, distance;
     int ndev = 0;
-    int *distance = NULL;
+    struct dev_info {
+        char *dev_path; 
+        int use_count;
+    } *dev_info_all = NULL;
+    struct gpu_info{
+        char gpu_bus_id[MAX_BUSID_SIZE];
+    } gpu_info, *gpu_info_all = NULL;
+ 
+    //gather GPU info from all processes
+    //TODO: we only need to exchange info among intra-node ranks, 
+    //add a bootstrap op for intra-node exchange 
+    gpu_info_all = (struct gpu_info *)malloc(sizeof(struct gpu_info) * state->npes);
+    NULL_ERROR_JMP(gpu_info_all, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                   "gpu_info_all allocation failed \n");
+    memset(gpu_info_all, 0, sizeof(struct gpu_info) * state->npes);
 
+    status = get_cuda_bus_id(state->cudevice, gpu_info.gpu_bus_id);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda busid failed \n");
+
+    status = state->boot_handle.allgather((void *)&gpu_info, (void *)gpu_info_all,
+                                          sizeof(struct gpu_info), &state->boot_handle);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of gpu_info failed \n");
+
+    //get net device info
     status = tcurr->host_ops.get_device_count(&ndev, tcurr);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                  "transport devices (setup_connections) failed \n");
 
-    distance = (int *)malloc(sizeof(int) * ndev);
-    NULL_ERROR_JMP(state->pe_info, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "distance allocation failed \n");
-
-    char *cuda_path;
-    status = get_cuda_path(state->cudevice, &cuda_path);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda path failed \n");
+    dev_info_all = (struct dev_info *)malloc(sizeof(struct dev_info) * ndev);
+    NULL_ERROR_JMP(dev_info_all, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                   "dev_info_all allocation failed \n");
+    memset(dev_info_all, 0, sizeof(struct dev_info) * ndev);
 
     for (int i = 0; i < ndev; i++) {
-        char *dev_path;
-
-        status = tcurr->host_ops.get_pci_path(i, &dev_path, tcurr);
+        status = tcurr->host_ops.get_pci_path(i, &dev_info_all[i].dev_path, tcurr);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get device path failed \n");
-
-        distance[i] = get_pci_distance(cuda_path, dev_path);
-
-        free(dev_path);
     }
 
-    free(cuda_path);
+    //figure out best NIC for each GPU within the node 
+    for (int i = 0; i < state->npes; i++) {
+        char *cuda_path;
 
-    dev_id = 0;
-    for (int i = 1; i < ndev; i++) {
-        if (distance[i] < distance[dev_id]) dev_id = i;
-    }
+        if (state->pe_info[i].hostHash != state->pe_info[state->mype].hostHash) continue; 
+        //only need to go until this PE
+        if (i > state->mype) break;
 
-    if (distance[dev_id] > PATH_PXB) {
-        if (!state->mype) {
-            WARN_PRINT(
-                "IB HCA and GPU are not connected to a PCIe switch "
-                "so IB performance can be limited depending on the CPU generation \n");
+        status = get_device_path(gpu_info_all[i].gpu_bus_id, &cuda_path);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda path failed \n");
+
+        dev_id = 0; 
+        distance = get_pci_distance(cuda_path, dev_info_all[dev_id].dev_path);
+        for (int j = 1; j < ndev; j++) {
+            int new_distance = get_pci_distance(cuda_path, dev_info_all[j].dev_path);
+
+            /*pick closer device*/
+            /*or pick lesser used device if it is equidistant or <= PXB apart*/
+            if (new_distance < distance || /*pick the closer device*/ 
+                (dev_info_all[j].use_count < dev_info_all[dev_id].use_count && 
+                 (new_distance == distance || new_distance <= PATH_PXB))) {
+                dev_id = j;
+                distance = new_distance;
+            }
         }
+        free(cuda_path);
+
+        dev_info_all[dev_id].use_count++;
+    }
+
+    INFO(NVSHMEM_TOPO, "Total net devices found: %d Net device selected: %d Distance from GPU: %d Is net device shared: %d \n", 
+                ndev, dev_id, distance, dev_info_all[dev_id].use_count);
+
+    if (distance > PATH_PXB) {
+        INFO(NVSHMEM_TOPO, "WARNING!! IB HCA and GPU are not connected by PCIe switch, so IB performance can be limited \n");
     }
     *device = dev_id;
 
-    free(distance);
 out:
+    if(gpu_info_all) free(gpu_info_all);
+    if(dev_info_all) free(dev_info_all);
     return status;
 }

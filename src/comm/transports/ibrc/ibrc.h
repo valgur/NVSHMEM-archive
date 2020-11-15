@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2017, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #ifndef _IBRC_H
 #define _IBRC_H
@@ -27,6 +27,8 @@ struct ibrc_function_table {
     struct ibv_qp *(*create_qp)(struct ibv_pd *pd, struct ibv_qp_init_attr *qp_init_attr);
     struct ibv_srq *(*create_srq)(struct ibv_pd *pd, struct ibv_srq_init_attr *srq_init_attr);
     int (*modify_qp)(struct ibv_qp *qp, struct ibv_qp_attr *attr, int attr_mask);
+    int (*query_gid)(struct ibv_context *context, uint8_t port_num,
+                  int index, union ibv_gid *gid);
 };
 
 #endif

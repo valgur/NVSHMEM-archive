@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
@@ -17,7 +17,7 @@
 
 int (*nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_COUNT])(nvshmem_transport_t *transport);
 
-int nvshmemi_transport_show_info(nvshmem_state_t *state) {
+int nvshmemi_transport_show_info(nvshmemi_state_t *state) {
     int status = 0;
     nvshmem_transport_t *transports = (nvshmem_transport_t *)state->transports;
     for (int i = 0; i < state->transport_count; ++i) {
@@ -39,7 +39,7 @@ void nvshmemi_transports_preinit() {
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_IBRC, nvshmemt_ibrc_init);
 }
 
-int nvshmemi_transport_init(nvshmem_state_t *state) {
+int nvshmemi_transport_init(nvshmemi_state_t *state) {
     int status = 0;
     nvshmem_transport_t *transports = NULL;
 
@@ -72,7 +72,7 @@ out:
     return status;
 }
 
-int nvshmemi_transport_finalize(nvshmem_state_t *state) {
+int nvshmemi_transport_finalize(nvshmemi_state_t *state) {
     int status = 0;
     nvshmem_transport_t *transports = NULL;
     ;
@@ -91,7 +91,7 @@ out:
     return status;
 }
 
-int nvshmemi_setup_connections(nvshmem_state_t *state) {
+int nvshmemi_setup_connections(nvshmemi_state_t *state) {
     int status = 0;
     nvshmem_transport_t *transports = (nvshmem_transport_t *)state->transports;
     nvshmemt_ep_handle_t *local_ep_handles = NULL, *ep_handles = NULL;

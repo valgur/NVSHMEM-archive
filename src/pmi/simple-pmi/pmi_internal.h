@@ -13,14 +13,9 @@
  * For detailed copyright and licensing information, please refer to the
  * copyright file COPYRIGHT in the top level MVAPICH2 directory.
  */
-/*TODO: NVIDIA copyright?*/
 
 #ifndef PMI_H_INCLUDED
 #define PMI_H_INCLUDED
-
-#ifdef USE_PMI2_API
-#error This header file defines the PMI v1 API, but PMI2 was selected
-#endif
 
 /* prototypes for the PMI interface in MPICH */
 

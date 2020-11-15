@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
 #
 # See LICENCE.txt for license information
 #

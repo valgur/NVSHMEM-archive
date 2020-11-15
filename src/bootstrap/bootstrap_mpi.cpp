@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2017-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 
@@ -21,6 +21,7 @@ int (*mpi_wrapper_allgather)(const void *sendbuf, int sendcount, MPI_Datatype se
                              void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm);
 int (*mpi_wrapper_alltoall)(const void *sendbuf, int sendcount, MPI_Datatype sendtype,
                              void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm);
+
 #ifdef NVSHMEM_MPI_IS_OMPI
 MPI_Datatype mpi_wrapper_byte;
 #endif
@@ -78,6 +79,7 @@ out:
     return status;
 }
 
+
 #define get_symbol(lib_handle, name, var, status)                                              \
     do {                                                                                       \
         void **var_ptr = (void **)&var;                                                        \
@@ -115,6 +117,17 @@ out:
     return status;
 }
 
+static int bootstrap_mpi_finalize(bootstrap_handle_t *handle) {
+    mpi_info_t *mpi_info = (mpi_info_t *)handle->internal;
+
+    if (mpi_info) {
+        free(mpi_info);
+        handle->internal = NULL;
+    }
+
+    return 0;
+}
+
 int bootstrap_mpi_init(void *mpi_comm, bootstrap_handle_t *handle) {
     int status = 0;
     mpi_info_t *mpi_info;
@@ -137,18 +150,8 @@ int bootstrap_mpi_init(void *mpi_comm, bootstrap_handle_t *handle) {
     handle->allgather = bootstrap_mpi_allgather;
     handle->alltoall = bootstrap_mpi_alltoall;
     handle->barrier = bootstrap_mpi_barrier;
+    handle->finalize = bootstrap_mpi_finalize;
 
 out:
     return status;
-}
-
-int bootstrap_mpi_finalize(bootstrap_handle_t *handle) {
-    mpi_info_t *mpi_info = (mpi_info_t *)handle->internal;
-
-    if (mpi_info) {
-        free(mpi_info);
-        handle->internal = NULL;
-    }
-
-    return 0;
 }

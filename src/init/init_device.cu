@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2017-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
@@ -35,7 +35,7 @@ __constant__ int barrier_dissem_kval_d;
 __constant__ int barrier_tg_dissem_kval_d;
 __device__ unsigned long long test_wait_any_start_idx_d;
 
-int set_job_connectivity (nvshmem_state_t *state) {
+int set_job_connectivity (nvshmemi_state_t *state) {
     int status;
     int *job_connectivity_all; 
     bool proxy_ops_are_ordered = true;
@@ -113,7 +113,7 @@ out:
     return status;
 }
 
-int nvshmemi_init_device_state(nvshmem_state_t *state) {
+int nvshmemi_init_device_state(nvshmemi_state_t *state) {
     int status = CUDA_SUCCESS;
     int dev_count;
     pcie_id_t *pcie_ids = NULL;
@@ -177,7 +177,8 @@ int nvshmemi_init_device_state(nvshmem_state_t *state) {
 
     if (state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
         nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_ID_IBRC] &&
-        state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized)
+        state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized &&
+        nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST)
         use_proxy = 1;
 
     status = cudaMemcpyToSymbolAsync(nvshmemi_proxy_d, &use_proxy, sizeof(int), 0,

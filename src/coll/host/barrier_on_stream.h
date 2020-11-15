@@ -1,10 +1,11 @@
+/*
+ * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
+
 #ifndef NVSHMEMI_BARRIER_ON_STREAM_CPU_H
-#define NVSHMEMI_BARRIER_ON_STREAM_CPU_H 1
+#define NVSHMEMI_BARRIER_ON_STREAM_CPU_H
 #include "barrier_common.h"
 
-int nvshmemxi_barrier_cpu_base_on_stream(int PE_start, int logPE_stride, int PE_size, long *pSync,
-                                         cudaStream_t stream);
-void nvshmemxi_sync_p2p_on_stream(int PE_start, int logPE_stride, int PE_size, cudaStream_t stream);
-int nvshmemxi_barrier_all_cpu_base_on_stream(cudaStream_t stream);
-
-#endif
+#endif /* NVSHMEMI_BARRIER_ON_STREAM_CPU_H */

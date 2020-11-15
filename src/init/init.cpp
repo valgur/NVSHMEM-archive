@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmemx.h"
@@ -17,7 +17,7 @@
 #include "unistd.h"
 #include "debug.h"
 
-nvshmem_state_t *nvshmem_state;
+nvshmemi_state_t *nvshmemi_state;
 nvshmem_options_t nvshmem_options;
 const char *p_err_str;
 int nvshmem_debug_level;
@@ -29,7 +29,7 @@ FILE *nvshmem_debug_file = stdout;
 std::chrono::high_resolution_clock::time_point nvshmem_epoch;
 #endif
 
-int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr, nvshmem_state_t *state) {
+int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr, nvshmemi_state_t *state) {
     int status = 0;
     uint64_t myHostHash = 0;
     uint64_t *hostHash = 0;
@@ -42,7 +42,7 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr, nvshmem_st
     } else if (flags & NVSHMEMX_INIT_WITH_SHMEM) {
         status = bootstrap_init(BOOTSTRAP_SHMEM, NULL, &state->boot_handle);
     } else {
-        status = bootstrap_init(BOOTSTRAP_STATIC, NULL, &state->boot_handle);
+        status = bootstrap_init(BOOTSTRAP_PMI, NULL, &state->boot_handle);
     }
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_init failed \n");
 
@@ -67,7 +67,7 @@ out:
     return status;
 }
 
-int nvshmemi_get_cucontext(nvshmem_state_t *state) {
+int nvshmemi_get_cucontext(nvshmemi_state_t *state) {
     int status = 0;
     int leastPriority, greatestPriority;
 
@@ -125,7 +125,7 @@ out:
     return status;
 }
 
-int nvshmemi_setup_stream_priorities(nvshmem_state_t *state) {
+int nvshmemi_setup_stream_priorities(nvshmemi_state_t *state) {
     int status = 0;
     int leastPriority, greatestPriority;
 
@@ -141,7 +141,7 @@ out:
     return status;
 }
 
-int nvshmemi_setup_memory_ordering(nvshmem_state_t *state, int selected_transport) {
+int nvshmemi_setup_memory_ordering(nvshmemi_state_t *state, int selected_transport) {
     int status = 0;
 
     state->fence[selected_transport] = state->transports[selected_transport]->host_ops.fence;
@@ -150,7 +150,7 @@ int nvshmemi_setup_memory_ordering(nvshmem_state_t *state, int selected_transpor
     return status;
 }
 
-int nvshmemi_teardown_handles(nvshmem_state_t *state) {
+int nvshmemi_teardown_handles(nvshmemi_state_t *state) {
     int status = 0;
     free(state->rma);
     free(state->selected_transport_for_rma);
@@ -169,7 +169,7 @@ out:
     return status;
 }
 
-static int nvshmemi_setup_nvshmem_handles(nvshmem_state_t *state) {
+static int nvshmemi_setup_nvshmem_handles(nvshmemi_state_t *state) {
     int status = 0;
     state->rma = (rma_handle *)calloc(state->npes, sizeof(rma_handle));
     state->amo = (amo_handle *)calloc(state->npes, sizeof(amo_handle));
@@ -225,7 +225,7 @@ out:
     return status;
 }
 
-static int nvshmemi_setup_cuda_handles(nvshmem_state_t *state) {
+static int nvshmemi_setup_cuda_handles(nvshmemi_state_t *state) {
     int status = 0;
     state->custreams = (CUstream *)malloc(MAX_PEER_STREAMS * sizeof(CUstream));
     state->cuevents = (CUevent *)malloc(MAX_PEER_STREAMS * sizeof(CUevent));
@@ -251,7 +251,7 @@ out:
     return status;
 }
 
-int nvshmemi_common_init(nvshmem_state_t *state) {
+int nvshmemi_common_init(nvshmemi_state_t *state) {
     int status = 0;
     char *value;
 
@@ -304,16 +304,23 @@ int nvshmemi_common_init(nvshmem_state_t *state) {
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gpu collective setup failed \n");
 
     // enable proxy only if IB transport is initialized
-    if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST) {
+    if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST &&
+        state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
+        state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized) {
         status = nvshmemi_proxy_init(state);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy initialization failed \n");
     }
 
+    nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
+    status = nvshmemi_team_init();
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "team setup failed \n");
+    
+    nvshmemi_barrier_all();
 out:
     return status;
 }
 
-int nvshmemi_try_common_init(nvshmem_state_t *state) {
+int nvshmemi_try_common_init(nvshmemi_state_t *state) {
     int status = 0;
 
     status = nvshmemi_common_init(state);
@@ -334,14 +341,14 @@ int nvshmemi_init_thread(int requested, int *provided) {
     nvshmemi_options_init();
     init_debug();
 
-    nvshmem_state = (nvshmem_state_t *)calloc(1, sizeof(nvshmem_state_t));
-    NULL_ERROR_JMP(nvshmem_state, status, NVSHMEMX_ERROR_INTERNAL, out,
+    nvshmemi_state = (nvshmemi_state_t *)calloc(1, sizeof(nvshmemi_state_t));
+    NULL_ERROR_JMP(nvshmemi_state, status, NVSHMEMX_ERROR_INTERNAL, out,
                    "nvshmemi_init_thread/calloc failed \n");
 
-    status = nvshmemi_bootstrap(0, NULL, nvshmem_state);
+    status = nvshmemi_bootstrap(0, NULL, nvshmemi_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_bootstrap failed \n");
 
-    if (0 == nvshmem_state->mype) {
+    if (0 == nvshmemi_state->mype) {
         if (nvshmemi_options.VERSION)
             printf("%s\n", NVSHMEM_VENDOR_STRING);
 
@@ -375,6 +382,15 @@ int nvshmemi_init_thread(int requested, int *provided) {
 #ifdef NVSHMEM_SHMEM_SUPPORT
                     " NVSHMEM_SHMEM_SUPPORT"
 #endif
+#ifdef NVSHMEM_PMIX_SUPPORT
+                    " NVSHMEM_PMIX_SUPPORT"
+#endif
+#ifdef NVSHMEM_DEFAULT_PMIX
+                    " NVSHMEM_DEFAULT_PMIX"
+#endif
+#ifdef NVSHMEM_DEFAULT_PMI2
+                    " NVSHMEM_DEFAULT_PMI2"
+#endif
 #ifdef NVSHMEM_USE_GDRCOPY
                     " NVSHMEM_USE_GDRCOPY"
 #endif
@@ -404,10 +420,10 @@ int nvshmemi_init_thread(int requested, int *provided) {
             nvshmemi_options_print();
     }
 
-    nvshmem_state->scratch = (int *)calloc(
-        nvshmem_state->npes, sizeof(int)); /*XXX:scratch used by nvshmemi_try_common_init*/
+    nvshmemi_state->scratch = (int *)calloc(
+        nvshmemi_state->npes, sizeof(int)); /*XXX:scratch used by nvshmemi_try_common_init*/
 
-    status = nvshmemi_try_common_init(nvshmem_state);
+    status = nvshmemi_try_common_init(nvshmemi_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem common init failed \n");
 
     *provided = NVSHMEM_THREAD_MULTIPLE;
@@ -450,13 +466,13 @@ int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attr) {
     nvshmemi_options_init();
     init_debug();
 
-    nvshmem_state = (nvshmem_state_t *)calloc(1, sizeof(nvshmem_state_t));
+    nvshmemi_state = (nvshmemi_state_t *)calloc(1, sizeof(nvshmemi_state_t));
     p_err_str = (char *)malloc(MAX_LENGTH_ERROR_STRING);
 
-    status = nvshmemi_bootstrap(flags, attr, nvshmem_state);
+    status = nvshmemi_bootstrap(flags, attr, nvshmemi_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_bootstrap failed \n");
 
-    if (0 == nvshmem_state->mype) {
+    if (0 == nvshmemi_state->mype) {
         if (nvshmemi_options.VERSION)
             printf("%s\n", NVSHMEM_VENDOR_STRING);
 
@@ -464,10 +480,10 @@ int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attr) {
             nvshmemi_options_print();
     }
 
-    status = nvshmemi_try_common_init(nvshmem_state);
+    status = nvshmemi_try_common_init(nvshmemi_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem topo init failed \n");
 
-    nvshmem_state->scratch = (int *)calloc(nvshmem_state->npes, sizeof(int));
+    nvshmemi_state->scratch = (int *)calloc(nvshmemi_state->npes, sizeof(int));
 
 out:
     return status;
@@ -479,17 +495,23 @@ void nvshmem_finalize() {
 
     INFO(NVSHMEM_INIT, "[%d] in nvshmem_finalize:", pid);
 
-    if (nvshmem_state->initialized) {
+    if (nvshmemi_state->initialized) {
         nvshmemi_barrier_all();
-        nvshmemx_quiet_on_stream(nvshmem_state->my_stream); /* wait for signal ops from barrier to complete */
+        nvshmemx_quiet_on_stream(nvshmemi_state->my_stream); /* wait for signal ops from barrier to complete */
         cudaDeviceSynchronize();
 
+        /* teams cleanup */
+        status = nvshmemi_team_finalize();
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Teams cleanup failed \n");
+
         /*cleaning up proxy*/
-        if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST) {
-            status = nvshmemi_proxy_finalize(nvshmem_state);
+        if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST &&
+            nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
+            nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized) {
+            status = nvshmemi_proxy_finalize(nvshmemi_state);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy cleanup failed \n");
         }
-
+        
         /* collective cleanup */
         status = nvshmemi_coll_common_cpu_finalize();
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "CPU collectives cleanup failed \n");
@@ -497,28 +519,28 @@ void nvshmem_finalize() {
         status = nvshmemi_coll_common_gpu_finalize();
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "GPU collectives cleanup failed \n");
 
-        status = nvshmemi_teardown_handles(nvshmem_state);
+        status = nvshmemi_teardown_handles(nvshmemi_state);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "handles cleanup failed \n");
 
-        status = nvshmemi_cleanup_symmetric_heap(nvshmem_state);
+        status = nvshmemi_cleanup_symmetric_heap(nvshmemi_state);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "symmetric heap cleanup failed \n");
 
-        status = nvshmemi_transport_finalize(nvshmem_state);
+        status = nvshmemi_transport_finalize(nvshmemi_state);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem transport finalize failed \n");
 
-        status = nvshmemi_teardown_collective_launch(nvshmem_state);
+        status = nvshmemi_teardown_collective_launch(nvshmemi_state);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "collective launch cleanup failed \n");
     } else
-        nvshmem_state->boot_handle.barrier(&nvshmem_state->boot_handle);
+        nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
 
-    status = bootstrap_finalize(&nvshmem_state->boot_handle);
+    status = bootstrap_finalize(&nvshmemi_state->boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_finalize failed \n");
 
     /* cleanup state */
-    if (nvshmem_state->scratch_size) free(nvshmem_state->scratch_space);
+    if (nvshmemi_state->scratch_size) free(nvshmemi_state->scratch_space);
 
-    if (nvshmem_state->scratch) free(nvshmem_state->scratch);
-    free(nvshmem_state);
+    if (nvshmemi_state->scratch) free(nvshmemi_state->scratch);
+    free(nvshmemi_state);
 
     NVSHMEMU_THREAD_CS_FINALIZE();
 

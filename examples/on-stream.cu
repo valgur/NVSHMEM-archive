@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -56,11 +56,6 @@ int main(int c, char *v[]) {
     int *full_sum;
     int input_nelems = 512;
     int to_all_nelems = 1;
-    int PE_start = 0;
-    int PE_size = 0;
-    int logPE_stride = 0;
-    long *pSync;
-    int *pWrk;
     cudaStream_t stream;
 
 #ifdef ENABLE_MPI_SUPPORT
@@ -86,7 +81,6 @@ int main(int c, char *v[]) {
     nvshmem_init();
 #endif
 
-    PE_size = nvshmem_n_pes();
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
 
@@ -96,12 +90,9 @@ int main(int c, char *v[]) {
     input = (int *)nvshmem_malloc(sizeof(int) * input_nelems);
     partial_sum = (int *)nvshmem_malloc(sizeof(int));
     full_sum = (int *)nvshmem_malloc(sizeof(int));
-    pWrk = (int *)nvshmem_malloc(sizeof(int) * NVSHMEM_REDUCE_MIN_WRKDATA_SIZE);
-    pSync = (long *)nvshmem_malloc(sizeof(long) * NVSHMEM_REDUCE_SYNC_SIZE);
 
     accumulate<<<1, input_nelems, 0, stream>>>(input, partial_sum);
-    nvshmemx_int_sum_to_all_on_stream(full_sum, partial_sum, to_all_nelems, PE_start, logPE_stride,
-                                      PE_size, pWrk, pSync, stream);
+    nvshmemx_int_sum_reduce_on_stream(NVSHMEM_TEAM_WORLD, full_sum, partial_sum, to_all_nelems, stream);
     correct_accumulate<<<1, input_nelems, 0, stream>>>(input, partial_sum, full_sum);
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -112,8 +103,6 @@ int main(int c, char *v[]) {
     nvshmem_free(input);
     nvshmem_free(partial_sum);
     nvshmem_free(full_sum);
-    nvshmem_free(pWrk);
-    nvshmem_free(pSync);
 
     nvshmem_finalize();
 

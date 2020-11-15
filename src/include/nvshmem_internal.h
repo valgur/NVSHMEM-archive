@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2018, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #ifndef _INTERNAL_H
 #define _INTERNAL_H
@@ -13,42 +13,27 @@
 #include "transport.h"
 #include "util.h"
 #include "common.h"
+#include "nvshmem_common.cuh"
+#ifdef NVSHMEM_USE_NCCL
+#include "nccl.h"
+#endif /* NVSHMEM_USE_NCCL */
 
 #define MAX_PEER_STREAMS 3
-
-#define MAX_LENGTH_PREFIX_STRING 1024
 
 #define MAX_TRANSPORT_EP_COUNT 1
 
 #define SYMMETRIC_SIZE_DEFAULT 1024 * 1024 * 1024
 
 #define MAXPATHSIZE 1024
+#define MAX_BUSID_SIZE 16
 
 #define NUM_G_BUF_ELEMENTS 1024 * 1024
 
-// constansts that grow with npes
-#define CPU_SYNC_SIZE sizeof(int)
-#define CPU_GPU_SYNC_SIZE sizeof(int)
-#define CPU_DATA_SIZE sizeof(int)
-#define GPU_IPSYNC_SIZE sizeof(long)
-#define COLL_NPES_FACTOR (CPU_SYNC_SIZE + CPU_GPU_SYNC_SIZE + CPU_DATA_SIZE + GPU_IPSYNC_SIZE)
-
-// independent constansts
-#define GPU_SCRATCH_SIZE 16384
-#define GPU_RDXN_SCRATCH_SIZE 16384
-#define GPU_IPWRK_SIZE sizeof(int4) * 2 * SYNC_SIZE
-#define GPU_ICOUNTER_SIZE sizeof(long) * SYNC_SIZE
-#define GPU_ICOUNTER_BARRIER_SIZE sizeof(long) * SYNC_SIZE
-
-#define COLL_CONSTANT_FACTOR                                                         \
-    (GPU_SCRATCH_SIZE + GPU_RDXN_SCRATCH_SIZE + GPU_IPWRK_SIZE + GPU_ICOUNTER_SIZE + \
-     GPU_ICOUNTER_BARRIER_SIZE)
-
 #define NVSHMEM_CHECK_STATE_AND_INIT()                                               \
     do {                                                                             \
-        if (!nvshmem_state) ERROR_EXIT("nvshmem API called before nvshmem_init \n"); \
-        if (!nvshmem_state->initialized) {                                           \
-            if (nvshmemi_common_init(nvshmem_state)) {                               \
+        if (!nvshmemi_state) ERROR_EXIT("nvshmem API called before nvshmem_init \n"); \
+        if (!nvshmemi_state->initialized) {                                           \
+            if (nvshmemi_common_init(nvshmemi_state)) {                               \
                 ERROR_EXIT("nvshmem initialization failed, exiting \n");             \
             }                                                                        \
         }                                                                            \
@@ -65,7 +50,7 @@ typedef struct {
     CUevent end_event;
 } collective_launch_params_t;
 
-typedef struct nvshmem_state_dec {
+typedef struct nvshmemi_state_dec {
     /*PE state*/
     int mype;
     int npes;
@@ -111,7 +96,7 @@ typedef struct nvshmem_state_dec {
     CUstream *custreams;
     CUevent *cuevents;
     CUdeviceptr *curets;
-} nvshmem_state_t;
+} nvshmemi_state_t;
 
 typedef struct {
     volatile uint64_t data;
@@ -122,21 +107,125 @@ typedef struct {
     int error_checks;
 } nvshmem_options_t;
 
-extern nvshmem_state_t *nvshmem_state;
+extern nvshmemi_state_t *nvshmemi_state;
 extern nvshmem_options_t nvshmem_options;
 extern __device__ unsigned long long test_wait_any_start_idx_d;
 extern int nvshmemi_job_connectivity;
+extern int nvshmemi_use_nccl;
+#ifdef NVSHMEM_USE_NCCL
+/* Reduction operation types */
+#define NCCL_REDOP_sum ncclSum
+#define NCCL_REDOP_prod ncclProd
+#define NCCL_REDOP_min ncclMin
+#define NCCL_REDOP_max ncclMax
+#define NCCL_REDOP_and -1
+#define NCCL_REDOP_or -1
+#define NCCL_REDOP_xor -1
 
-int nvshmemi_common_init(nvshmem_state_t *state);
+/* Reduction datatypes */
+#define NCCL_DT_char        ncclChar
+#define NCCL_DT_schar       -1
+#define NCCL_DT_short       -1
+#define NCCL_DT_int         ncclInt
+#define NCCL_DT_long        ncclInt64
+#define NCCL_DT_longlong    ncclInt64
+#define NCCL_DT_ptrdiff     ncclUint64
+#define NCCL_DT_uchar       ncclUint8
+#define NCCL_DT_ushort      -1
+#define NCCL_DT_uint        ncclUint32
+#define NCCL_DT_ulong       ncclUint64
+#define NCCL_DT_ulonglong   ncclUint64
+#define NCCL_DT_int8        ncclInt8
+#define NCCL_DT_int16       -1
+#define NCCL_DT_int32       ncclInt
+#define NCCL_DT_int64       ncclInt64
+#define NCCL_DT_uint8       ncclUint8
+#define NCCL_DT_uint16       -1
+#define NCCL_DT_uint32      ncclUint32
+#define NCCL_DT_uint64      ncclUint64
+#define NCCL_DT_size        ncclUint64
+#define NCCL_DT_float       ncclFloat
+#define NCCL_DT_double      ncclDouble
+#define NCCL_DT_longdouble  -1
+#define NCCL_DT_complexd    -1
+#define NCCL_DT_complexf    -1
+
+#else /* NVSHMEM_USE_NCCL */
+
+/* Reduction operation types */
+#define NCCL_REDOP_sum -1
+#define NCCL_REDOP_prod -1
+#define NCCL_REDOP_min -1
+#define NCCL_REDOP_max -1
+#define NCCL_REDOP_and -1
+#define NCCL_REDOP_or -1
+#define NCCL_REDOP_xor -1
+
+/* Reduction datatypes */
+#define NCCL_DT_char        -1
+#define NCCL_DT_schar       -1
+#define NCCL_DT_short       -1
+#define NCCL_DT_int         -1
+#define NCCL_DT_long        -1
+#define NCCL_DT_longlong    -1
+#define NCCL_DT_ptrdiff     -1
+#define NCCL_DT_uchar       -1
+#define NCCL_DT_ushort      -1
+#define NCCL_DT_uint        -1
+#define NCCL_DT_ulong       -1
+#define NCCL_DT_ulonglong   -1
+#define NCCL_DT_int8        -1
+#define NCCL_DT_int16       -1
+#define NCCL_DT_int32       -1
+#define NCCL_DT_int64       -1
+#define NCCL_DT_uint8       -1
+#define NCCL_DT_uint16      -1
+#define NCCL_DT_uint32      -1
+#define NCCL_DT_uint64      -1
+#define NCCL_DT_size        -1
+#define NCCL_DT_float       -1
+#define NCCL_DT_double      -1
+#define NCCL_DT_longdouble  -1
+#define NCCL_DT_complexd    -1
+#define NCCL_DT_complexf    -1
+
+typedef int ncclRedOp_t;
+typedef int ncclDataType_t;
+typedef int ncclComm_t;
+typedef int ncclResult_t;
+typedef int ncclUniqueId;
+#define ncclSuccess 0
+
+#endif /* NVSHMEM_USE_NCCL */
+
+struct nccl_function_table {
+    ncclResult_t (*GetVersion)(int *version);
+    const char*  (*GetErrorString)(ncclResult_t result);
+    ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
+    ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
+    ncclResult_t (*CommDestroy)(ncclComm_t comm);
+    ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count,
+                              ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
+    ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count,
+                              ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream);
+    ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount,
+                              ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
+};
+
+extern struct nccl_function_table nccl_ftable;
+
+#include "nvshmemi_team.h"
+
+int nvshmemi_common_init(nvshmemi_state_t *state);
 int nvshmemi_init_g_buffer();
-int nvshmemi_init_device_state(nvshmem_state_t *state);
-int nvshmemi_setup_local_heap(nvshmem_state_t *state);
-int nvshmemi_setup_symmetric_heap(nvshmem_state_t *state);
-int nvshmemi_setup_connections(nvshmem_state_t *state);
-int nvshmemi_cleanup_symmetric_heap(nvshmem_state_t *state);
-int nvshmemi_setup_collective_launch(nvshmem_state_t *state);
-int nvshmemi_teardown_collective_launch(nvshmem_state_t *state);
-int nvshmemi_setup_mops_kernels(nvshmem_state_t *state);
+int nvshmemi_init_device_state(nvshmemi_state_t *state);
+int nvshmemi_setup_local_heap(nvshmemi_state_t *state);
+int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state);
+int nvshmemi_setup_connections(nvshmemi_state_t *state);
+int nvshmemi_cleanup_symmetric_heap(nvshmemi_state_t *state);
+int nvshmemi_setup_collective_launch(nvshmemi_state_t *state);
+int nvshmemi_teardown_collective_launch(nvshmemi_state_t *state);
+int nvshmemi_setup_mops_kernels(nvshmemi_state_t *state);
 void *nvshmemi_malloc(size_t size);
 void *nvshmemi_calloc(size_t count, size_t size);
 void *nvshmemi_align(size_t alignment, size_t size);
@@ -144,7 +233,8 @@ void nvshmemi_free(void *ptr);
 
 void nvshmemi_barrier_all();
 
-int nvshmemi_proxy_init(nvshmem_state_t *state);
-int nvshmemi_proxy_finalize(nvshmem_state_t *state);
+int nvshmemi_proxy_init(nvshmemi_state_t *state);
+int nvshmemi_proxy_finalize(nvshmemi_state_t *state);
+
 
 #endif

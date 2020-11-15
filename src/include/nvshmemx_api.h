@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -15,6 +15,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "nvshmem_types.h"
 #include "nvshmem_constants.h"
 #include "nvshmem_common.cuh"
 #include "nvshmemx_coll_api.h"

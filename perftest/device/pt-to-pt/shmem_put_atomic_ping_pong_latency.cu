@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -21,9 +21,9 @@
 #define UNROLL 8
 
 __global__ void ping_pong(volatile int *data_d, uint64_t *flag_d,
-                          int len, int pe, int iter, int skip, int *hflag) {
+                          int len, int pe, int iter, int skip, int *hflag, double *lat_result) {
     long long int start, stop;
-    double usec, time;
+    double time;
     int i, tid, peer;
 
     peer = !pe;
@@ -56,8 +56,7 @@ __global__ void ping_pong(volatile int *data_d, uint64_t *flag_d,
 
     if ((pe == 0) && !tid) {
         time = (stop - start) / iter;
-        usec = time * 1000 / clockrate;
-        printf("%7lu \t %8.2f \n", len * sizeof(int), usec);
+        *lat_result = time * 1000 / clockrate;
     }
 }
 
@@ -66,10 +65,16 @@ int main(int c, char *v[]) {
     uint64_t *flag_d = NULL;
     int *data_d = NULL;
     cudaStream_t stream;
+    double *cur_lat;
 
     int iter = 500;
     int skip = 50;
     int max_msg_size = MAX_MSG_SIZE;
+
+    int array_size, i;
+    void **h_tables;
+    uint64_t *h_size_arr;
+    double *h_lat;
 
     init_wrapper(&c, &v);
 
@@ -80,6 +85,11 @@ int main(int c, char *v[]) {
         fprintf(stderr, "This test requires exactly two processes \n");
         goto finalize;
     }
+
+    array_size = floor(log2((float)max_msg_size)) + 1;
+    alloc_tables(&h_tables, 2, array_size);
+    h_size_arr = (uint64_t *)h_tables[0];
+    h_lat = (double *)h_tables[1];
 
     data_d = (int *)nvshmem_malloc(max_msg_size);
     flag_d = (uint64_t *)nvshmem_malloc(sizeof(uint64_t));
@@ -100,14 +110,15 @@ int main(int c, char *v[]) {
 
     if (mype == 0) {
         printf("Note: This test measures full round-trip latency\n");
-        printf("   size(bytes) \t latency(us)\n");
-        fflush(stdout);
     }
 
+    i = 0;
     for (size = sizeof(int); size <= max_msg_size; size *= 2) {
         int nelems, status = 0;
+        h_size_arr[i] = size;
         nelems = size / sizeof(int);
-        void *args[] = {&data_d, &flag_d, &nelems, &mype, &iter, &skip, &hflag_d};
+        cur_lat = &h_lat[i];
+        void *args[] = {&data_d, &flag_d, &nelems, &mype, &iter, &skip, &hflag_d, &cur_lat};
 
         CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
         CUDA_CHECK(cudaDeviceSynchronize());
@@ -124,6 +135,11 @@ int main(int c, char *v[]) {
             ;
 
         nvshmem_barrier_all();
+        i++;
+    }
+
+    if (mype == 0) {
+        print_table("shmem_at_ping_lat", "None", "size (Bytes)", "latency", "us", '-', h_size_arr, h_lat, i);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -132,7 +148,7 @@ finalize:
 
     if (data_d) nvshmem_free(data_d);
     if (flag_d) nvshmem_free(flag_d);
-
+    free_tables(h_tables, 2);
     finalize_wrapper();
 
     return 0;

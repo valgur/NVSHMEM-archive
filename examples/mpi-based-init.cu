@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -45,7 +45,7 @@ int main(int c, char *v[]) {
     int rank, nranks;
     MPI_Comm mpi_comm;
     nvshmemx_init_attr_t attr;
-    int mype, npes;
+    int mype, npes, mype_node;
 
     MPI_CHECK(MPI_Init(&c, &v));
     MPI_CHECK(MPI_Comm_rank(MPI_COMM_WORLD, &rank));
@@ -56,9 +56,10 @@ int main(int c, char *v[]) {
     nvshmemx_init_attr(NVSHMEMX_INIT_WITH_MPI_COMM, &attr);
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
+    mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
 
     // application picks the device each PE will use
-    CUDA_CHECK(cudaSetDevice(mype));
+    CUDA_CHECK(cudaSetDevice(mype_node));
     target = (int *)nvshmem_malloc(sizeof(int));
 
     simple_shift<<<1, 1>>>(target, mype, npes);

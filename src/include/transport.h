@@ -1,8 +1,8 @@
 /*
- * * Copyright (c) 2016-2017, NVIDIA CORPORATION. All rights reserved.
- * *
- * * See COPYRIGHT for license information
- * */
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #ifndef __TRANSPORT_H
 #define __TRANSPORT_H
@@ -150,9 +150,9 @@ struct nvshmem_transport {
 typedef struct nvshmem_transport *nvshmem_transport_t;
 
 void nvshmemi_add_transport(int id, int (*init_op)(nvshmem_transport_t *));
-int nvshmemi_transport_init(struct nvshmem_state_dec *state);
-int nvshmemi_transport_finalize(struct nvshmem_state_dec *state);
-int nvshmemi_transport_show_info(nvshmem_state_dec *state);
+int nvshmemi_transport_init(struct nvshmemi_state_dec *state);
+int nvshmemi_transport_finalize(struct nvshmemi_state_dec *state);
+int nvshmemi_transport_show_info(nvshmemi_state_dec *state);
 
 /*Per transport struct*/
 

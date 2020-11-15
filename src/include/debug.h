@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -39,6 +39,7 @@ typedef enum {
     NVSHMEM_BOOTSTRAP = 64,
     NVSHMEM_TOPO = 128,
     NVSHMEM_UTIL = 256,
+    NVSHMEM_TEAM = 512,
     NVSHMEM_ALL = ~0
 } nvshmem_debug_log_sub_sys;
 

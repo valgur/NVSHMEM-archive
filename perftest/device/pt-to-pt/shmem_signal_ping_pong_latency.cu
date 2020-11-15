@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -21,9 +21,9 @@
 #define UNROLL 8
 
 __global__ void ping_pong(uint64_t *flag_d,
-                          int pe, int iter, int skip, int *hflag) {
+                          int pe, int iter, int skip, int *hflag, double *lat_result) {
     long long int start, stop;
-    double usec, time;
+    double time;
     int i, tid, peer;
 
     peer = !pe;
@@ -48,8 +48,7 @@ __global__ void ping_pong(uint64_t *flag_d,
 
     if ((pe == 0) && !tid) {
         time = (stop - start) / iter;
-        usec = time * 1000 / clockrate;
-        printf("%7lu \t %8.2f \n", sizeof(uint64_t), usec);
+        *lat_result = time * 1000 / clockrate;
     }
 }
 
@@ -61,6 +60,10 @@ int main(int c, char *v[]) {
     int iter = 500;
     int skip = 50;
 
+    void **h_tables;
+    double *h_lat;
+    uint64_t size = sizeof(uint64_t);
+
     init_wrapper(&c, &v);
 
     mype = nvshmem_my_pe();
@@ -70,6 +73,9 @@ int main(int c, char *v[]) {
         fprintf(stderr, "This test requires exactly two processes \n");
         goto finalize;
     }
+
+    alloc_tables(&h_tables, 2, 1);
+    h_lat = (double *)h_tables[1];
 
     flag_d = (uint64_t *)nvshmem_malloc(sizeof(uint64_t));
     CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
@@ -88,13 +94,11 @@ int main(int c, char *v[]) {
 
     if (mype == 0) {
         printf("Note: This test measures full round-trip latency\n");
-        printf("   size(bytes) \t latency(us)\n");
-        fflush(stdout);
     }
     
     {
         int status = 0;
-        void *args[] = {&flag_d, &mype, &iter, &skip, &hflag_d};
+        void *args[] = {&flag_d, &mype, &iter, &skip, &hflag_d, &h_lat};
 
         CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
         CUDA_CHECK(cudaDeviceSynchronize());
@@ -114,10 +118,14 @@ int main(int c, char *v[]) {
 
         CUDA_CHECK(cudaDeviceSynchronize());
     }
+
+    if (mype == 0) {
+        print_table("shmem_sig_ping_lat", "None", "size (Bytes)", "latency", "us", '-', &size, h_lat, 1);
+    }
 finalize:
 
     if (flag_d) nvshmem_free(flag_d);
-
+    free_tables(h_tables, 2);
     finalize_wrapper();
 
     return 0;

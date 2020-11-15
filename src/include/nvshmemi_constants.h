@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -12,6 +12,19 @@
 
 #ifndef _NVSHMEMI_CONSTANTS_H_
 #define _NVSHMEMI_CONSTANTS_H_
+
+#define NVSHMEMI_DIAG_STRLEN 1024
+
+#define SYNC_SIZE 27648 /*XXX:Number of GPUs on Summit; currently O(N), need to be O(1)*/
+#define NVSHMEMI_SYNC_VALUE 0
+#define NVSHMEMI_SYNC_SIZE (2 * SYNC_SIZE)
+#define NVSHMEMI_BARRIER_SYNC_SIZE (2 * SYNC_SIZE)
+#define NVSHMEMI_BCAST_SYNC_SIZE SYNC_SIZE
+#define NVSHMEMI_REDUCE_SYNC_SIZE SYNC_SIZE
+#define NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE SYNC_SIZE
+#define NVSHMEMI_COLLECT_SYNC_SIZE SYNC_SIZE
+#define NVSHMEMI_ALLTOALL_SYNC_SIZE SYNC_SIZE
+
 
 typedef enum {
     NVSHMEMI_OP_PUT = 1,

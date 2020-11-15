@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -16,6 +16,7 @@ int main(int c, char *v[]) {
     int status = 0;
     int mype, npes;
     size_t size = 128 * 1024;
+    double latency_value;
     int iters = BARRIER_MAX_ITERS;
     int skip = BARRIER_MAX_SKIP;
     struct timeval t_start, t_stop;
@@ -42,8 +43,9 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaStreamSynchronize(stream));
     CUDA_CHECK(cudaEventElapsedTime(&ms, start_event, stop_event));
 
-    if (0 == mype) {
-        printf("%s\t\t%lf\n", "latency (us)", (ms / BARRIER_MAX_ITERS) * 1000);
+    if (!mype) {
+        latency_value = (ms / BARRIER_MAX_ITERS) * 1000;
+        print_table("barrier_all_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size, &latency_value, 1);
     }
 
     nvshmem_barrier_all();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -13,7 +13,6 @@
 #ifndef _NVSHMEM_COLL_API_H_
 #define _NVSHMEM_COLL_API_H_
 
-#include "nvshmem_coll_common.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,47 +22,56 @@ extern "C" {
 //===============================
 
 // alltoall(s) collectives
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_alltoall32(void *dest, const void *src, size_t nelems, NVSHMEMI_ASET);
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_alltoall64(void *dest, const void *src, size_t nelems, NVSHMEMI_ASET);
+#define DECL_NVSHMEM_TYPENAME_ALLTOALL(TYPENAME, TYPE)                                                                  \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_alltoall(nvshmem_team_t team, TYPE *dest, const TYPE* src, size_t nelems);
 
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_alltoalls32(void *dest, const void *src, ptrdiff_t dst, ptrdiff_t sst, size_t nelems, NVSHMEMI_ASET);
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_alltoalls64(void *dest, const void *src, ptrdiff_t dst, ptrdiff_t sst, size_t nelems, NVSHMEMI_ASET);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_ALLTOALL)
+#undef DECL_NVSHMEM_TYPENAME_ALLTOALL
+
+#define DECL_NVSHMEM_TYPENAME_ALLTOALLS(TYPENAME, TYPE)                                                                 \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_alltoalls(nvshmem_team_t team, TYPE *dest, const TYPE* src,    \
+                                                                   ptrdiff_t dst, ptrdiff_t sst, size_t nelems);
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_ALLTOALLS)
+#undef DECL_NVSHMEM_TYPENAME_ALLTOALLS
 
 // barrier collectives
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_barrier(NVSHMEMI_ASET);
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_barrier(nvshmem_team_t team);
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_barrier_all();
 
 // sync collectives
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_sync(NVSHMEMI_ASET);
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_sync(nvshmem_team_t team);
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_sync_all();
+#define nvshmem_sync nvshmem_team_sync
 
 // broadcast collectives
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_broadcast32(void *dest, const void *src, size_t nelem, int PE_root, NVSHMEMI_ASET);
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_broadcast64(void *dest, const void *src, size_t nelem, int PE_root, NVSHMEMI_ASET);
+#define DECL_NVSHMEM_TYPENAME_BROADCAST(TYPENAME, TYPE) \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_broadcast(nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nelem, int PE_root);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_BROADCAST)
+#undef DECL_NVSHMEM_TYPENAME_BROADCAST
 
 // collect and fcollect collectives
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_collect32(void *dest, const void *src, size_t nelems, NVSHMEMI_ASET);
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_collect64(void *dest, const void *src, size_t nelems, NVSHMEMI_ASET);
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_fcollect32(void *dest, const void *src, size_t nelems, NVSHMEMI_ASET);
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_fcollect64(void *dest, const void *src, size_t nelems, NVSHMEMI_ASET);
+#define DECL_NVSHMEM_TYPENAME_COLLECT(TYPENAME, TYPE) \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_collect(nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nelem);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_COLLECT)
+#undef DECL_NVSHMEM_TYPENAME_COLLECT
 
 // reduction collectives
-#define NVSHMEMI_DECL_REDUCE(NAME, TYPE, OP)                            \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_##OP##_to_all(     \
-            TYPE *dest, const TYPE *src, int nreduce,                   \
-            int PE_start, int logPE_stride, int PE_size, TYPE *pWrk, long *pSync);
+#define NVSHMEMI_DECL_TEAM_REDUCE(NAME, TYPE, OP)                            \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##NAME##_##OP##_reduce(          \
+            nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nreduce);
 
-NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, and)
-NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, or)
-NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, xor)
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, and)
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, or)
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, xor)
 
-NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, max)
-NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, min)
+NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, max)
+NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, min)
 
-NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, sum)
-NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE, prod)
+NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, sum)
+NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, prod)
 
-#undef NVSHMEMI_DECL_REDUCE
+#undef NVSHMEMI_DECL_TEAM_REDUCE
 
 #ifdef __cplusplus
 }

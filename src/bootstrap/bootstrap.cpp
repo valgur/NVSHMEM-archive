@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
  *
  * See COPYRIGHT for license information
  */
@@ -19,36 +19,48 @@ int bootstrap_preinit(bootstrap_preinit_handle_t *handle) {
 int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle) {
     int status = NVSHMEMX_SUCCESS;
 
+    switch (mode) {
+        case BOOTSTRAP_MPI:
 #ifdef NVSHMEM_MPI_SUPPORT
-    if (mode == BOOTSTRAP_MPI) {
-        status = bootstrap_mpi_init(attr->mpi_comm, handle);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_mpi_init returned error \n");
-    } else
+            status = bootstrap_mpi_init(attr->mpi_comm, handle);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_mpi_init returned error\n");
+#else
+            ERROR_PRINT("MPI-based initialization selected but NVSHMEM not built with MPI Support\n");
 #endif
+            break;
+        case BOOTSTRAP_SHMEM:
 #ifdef NVSHMEM_SHMEM_SUPPORT
-    if (mode == BOOTSTRAP_SHMEM) {
-        status = bootstrap_shmem_init(handle);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                     "bootstrap_shmem_init returned error \n");
-    } else
+            status = bootstrap_shmem_init(handle);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                    "bootstrap_shmem_init returned error\n");
+#else
+            ERROR_PRINT("OpenSHMEM-based bootstrap selected but NVSHMEM not built with OpenSHMEM Support\n");
 #endif
-    if (mode == BOOTSTRAP_STATIC) {
-        status = bootstrap_pmi_init(handle);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmi_init returned error \n");
-    } else if (mode == BOOTSTRAP_DYNAMIC) {
-        ERROR_PRINT("not implemented");
-        status = NVSHMEMX_ERROR_INVALID_VALUE;
-    } else {
-	if(mode == BOOTSTRAP_MPI) 
-      	    ERROR_PRINT("MPI-based initialization selected but NVSHMEM not built with MPI Support \n");
-	else if (mode == BOOTSTRAP_SHMEM)
-      	    ERROR_PRINT("OpenSHMEM-based bootstrap selected but NVSHMEM not built with OpenSHMEM Support \n");
-	else
-      	    ERROR_PRINT("Invalid bootstrap mode selected \n");
-	status = NVSHMEMX_ERROR_INVALID_VALUE;
+            break;
+        case BOOTSTRAP_PMI:
+            if (strcmp(nvshmemi_options.BOOTSTRAP_PMI, "PMIX") == 0) {
+#ifdef NVSHMEM_PMIX_SUPPORT
+                status = bootstrap_loader_init("nvshmem_pmix.so", handle);
+                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_loader_init returned error\n");
+#else
+                ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "PMIx bootstrap selected but NVSHMEM not built with PMIx support\n");
+#endif
+            } else if (strcmp(nvshmemi_options.BOOTSTRAP_PMI, "PMI-2") == 0 ||
+                       strcmp(nvshmemi_options.BOOTSTRAP_PMI, "PMI2") == 0) {
+                status = bootstrap_pmi2_init(handle);
+                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmi_init returned error\n");
+            } else if (strcmp(nvshmemi_options.BOOTSTRAP_PMI, "PMI") == 0) {
+                status = bootstrap_pmi_init(handle);
+                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmi_init returned error\n");
+            } else {
+                ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmi_init invalid bootstrap '%s'\n",
+                        nvshmemi_options.BOOTSTRAP_PMI);
+            }
+            break;
+        default:
+            ERROR_PRINT("Invalid bootstrap mode selected\n");
     }
-
-    handle->mode = mode;
 
 out:
     return status;
@@ -56,30 +68,10 @@ out:
 
 int bootstrap_finalize(bootstrap_handle_t *handle) {
     int status = NVSHMEMX_SUCCESS;
-    int mode = handle->mode;
 
-#ifdef NVSHMEM_MPI_SUPPORT
-    if (mode == BOOTSTRAP_MPI) {
-        status = bootstrap_mpi_finalize(handle);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                     "bootstrap_mpi_finalize returned error \n");
-    } else
-#endif
-#ifdef NVSHMEM_SHMEM_SUPPORT
-        if (mode == BOOTSTRAP_SHMEM) {
-        status = bootstrap_shmem_finalize(handle);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                     "bootstrap_shmem_finalize returned error \n");
-    } else
-#endif
-        if (mode == BOOTSTRAP_STATIC) {
-        status = bootstrap_pmi_finalize(handle);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                     "bootstrap_pmi_finalize returned error \n");
-    } else {
-        ERROR_PRINT("invalid initialization mode \n");
-        status = NVSHMEMX_ERROR_INVALID_VALUE;
-    }
+    status = handle->finalize(handle);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+            "bootstrap finalization returned error\n");
 
 out:
     return status;
