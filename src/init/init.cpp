@@ -426,7 +426,7 @@ int nvshmemi_init_thread(int requested, int *provided) {
     status = nvshmemi_try_common_init(nvshmemi_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem common init failed \n");
 
-    *provided = NVSHMEM_THREAD_MULTIPLE;
+    *provided = NVSHMEM_THREAD_SERIALIZED;
 
 out:
     if (status) NVSHMEMU_THREAD_CS_FINALIZE();
@@ -435,7 +435,7 @@ out:
 }
 
 void nvshmem_init() {
-    int status = 0, requested = NVSHMEM_THREAD_MULTIPLE, provided;
+    int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
 
     status = nvshmemi_init_thread(requested, &provided);
     NZ_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
@@ -454,7 +454,7 @@ int nvshmemx_init_thread(int requested, int *provided) {
     return nvshmem_init_thread(requested, provided);
 }
 
-void nvshmem_query_thread(int *provided) { *provided = NVSHMEM_THREAD_MULTIPLE; }
+void nvshmem_query_thread(int *provided) { *provided = NVSHMEM_THREAD_SERIALIZED; }
 
 void nvshmemx_query_thread(int *provided) { nvshmem_query_thread(provided); }
 

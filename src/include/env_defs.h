@@ -75,6 +75,11 @@ NVSHMEMI_ENV_DEF(SHMEM_LIB_NAME, string, "liboshmem.so", NVSHMEMI_ENV_CAT_OTHER,
 NVSHMEMI_ENV_DEF(BYPASS_ACCESSIBILITY_CHECK, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass peer GPU accessbility checks")
 
+#if defined(NVSHMEM_PPC64LE)
+NVSHMEMI_ENV_DEF(CUDA_LIMIT_STACK_SIZE, size, 0, NVSHMEMI_ENV_CAT_OTHER,
+                 "Specify limit on stack size of each GPU thread")
+#endif
+
 /** General Collectives **/
 
 NVSHMEMI_ENV_DEF(DISABLE_NCCL, bool, false, NVSHMEMI_ENV_CAT_COLLECTIVES,

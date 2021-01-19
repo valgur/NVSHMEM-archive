@@ -51,7 +51,7 @@ int nvshmemi_coll_common_cpu_init() {
 
     nccl_handle = dlopen("libnccl.so", RTLD_LAZY);
     if (!nccl_handle) {
-        WARN_PRINT("NCCL library not found...");
+        WARN_PRINT("NCCL library not found...\n");
         nvshmemi_use_nccl = 0;
         goto fn_out;
     }

@@ -92,17 +92,17 @@ size_t nvshmemi_get_teams_mem_requirement() {
 }
 
 #ifdef NVSHMEM_USE_NCCL
-static ncclUniqueId *device_ncclUniqueId;
 void nvshmemi_team_init_nccl_comm(nvshmemi_team_t *teami) {
     ncclUniqueId Id;
     int start = teami->start;
     int stride = teami->stride;
     int size = teami->size;
+    long *pWrk = nvshmemi_team_get_psync(teami, REDUCE);
     if (teami->my_pe == 0) {
         NCCL_CHECK(nccl_ftable.GetUniqueId(&Id));
-        CUDA_RUNTIME_CHECK(cudaMemcpy(device_ncclUniqueId, &Id, sizeof(ncclUniqueId), cudaMemcpyHostToDevice));
+        CUDA_RUNTIME_CHECK(cudaMemcpy(pWrk, &Id, sizeof(ncclUniqueId), cudaMemcpyHostToDevice));
         for (int i = 0; i < size; i++) {
-            nvshmem_char_put_nbi((char *)device_ncclUniqueId, (const char *)device_ncclUniqueId,
+            nvshmem_char_put_nbi((char *)pWrk, (const char *)pWrk,
                                  sizeof(ncclUniqueId), start + i * stride);
         }
         nvshmemi_barrier(start, stride, size, 
@@ -112,7 +112,7 @@ void nvshmemi_team_init_nccl_comm(nvshmemi_team_t *teami) {
         nvshmemi_barrier(start, stride, size, 
                          nvshmemi_team_get_psync(teami, SYNC),
                          nvshmemi_team_get_sync_counter(teami)); /* assumes barrier does not use NCCL */
-        CUDA_RUNTIME_CHECK(cudaMemcpy(&Id, device_ncclUniqueId, sizeof(ncclUniqueId), cudaMemcpyDeviceToHost));
+        CUDA_RUNTIME_CHECK(cudaMemcpy(&Id, pWrk, sizeof(ncclUniqueId), cudaMemcpyDeviceToHost));
     }
     INFO(NVSHMEM_TEAM, "Calling ncclCommInitRank, teami->size = %d, teami->my_pe = %d\n", teami->size, teami->my_pe);
     NCCL_CHECK(nccl_ftable.CommInitRank(&teami->nccl_comm, teami->size, Id, teami->my_pe));
@@ -271,13 +271,31 @@ int nvshmemi_team_init(void) {
 #ifdef NVSHMEM_USE_NCCL
     if (nvshmemi_use_nccl) {
         /* Setup NCCL usage */
-        device_ncclUniqueId = (ncclUniqueId *) nvshmemi_malloc(sizeof(ncclUniqueId));
-        NULL_ERROR_JMP(device_ncclUniqueId, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "device_ncclUniqueId failed \n");
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_world);
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_shared);
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_node);
     }
 #endif /* NVSHMEM_USE_NCCL */
+
+#if defined(NVSHMEM_PPC64LE)
+    if (nvshmemi_use_nccl) {
+        /* Set GPU thread stack size to be max stack size of any kernel invoked by NCCL.
+           The value 1256 has been obtained by profiling all NCCL kernels in NCCL 2.8.3-1.
+           This value is being set to prevent any memory config during application run
+           as that can lead to potential deadlock */
+        if (nvshmemi_options.CUDA_LIMIT_STACK_SIZE_provided) {
+            CUDA_RUNTIME_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, nvshmemi_options.CUDA_LIMIT_STACK_SIZE));
+            if (nvshmemi_options.CUDA_LIMIT_STACK_SIZE < 1256)
+                WARN_PRINT("CUDA stack size limit has been set to less than 1256.\n"
+                           "This can lead to hangs because a NCCL kernel can need up\n"
+                           "to 1256 bytes");
+        }
+        else
+            CUDA_RUNTIME_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, 1256));
+    } else if (nvshmemi_options.CUDA_LIMIT_STACK_SIZE_provided) {
+        CUDA_RUNTIME_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, nvshmemi_options.CUDA_LIMIT_STACK_SIZE));
+    }
+#endif
 
     CUDA_RUNTIME_CHECK(cudaGetSymbolAddress((void **)&team_addr, nvshmemi_team_world_d));
     CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_WORLD_INDEX], &team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));

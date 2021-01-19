@@ -448,7 +448,7 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
     lvalue = lvalue | ((uint64_t)req_1->swap_add_high << 32);
 
     if (amo_op == NVSHMEMI_AMO_COMPARE_SWAP) {
-        cvalue = (*((uint64_t *)req_2) & 0x00);
+        cvalue = (*((uint64_t *)req_2) & 0xFFFFFFFFFFFFFF00);
         cvalue |= req_1->compare_low;
     }
 

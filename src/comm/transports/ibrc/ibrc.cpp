@@ -15,6 +15,10 @@
 #include <dlfcn.h>
 #include "ibrc.h"
 #include "nvshmemx_error.h"
+#include <asm/types.h>
+#ifdef NVSHMEM_X86_64
+#include <immintrin.h>
+#endif
 
 #ifdef NVSHMEM_USE_GDRCOPY
 #include "gdrapi.h"
@@ -705,8 +709,14 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
     int status = 0;
 
     T old_value, new_value;
-    status = gdrcopy_ftable.copy_from_mapping(mh, &old_value, ptr, sizeof(T));
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr copy to mapping failed\n");
+    // FIXME: gdrcopy causing duplicate copies for small transfers, using direct LD/ST until this resolved
+    //status = gdrcopy_ftable.copy_from_mapping(mh, &old_value, ptr, sizeof(T));
+    //NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr copy from mapping failed\n");
+#if __cplusplus >= 201103L
+    // assert size is 64-bit or smaller, issued as single tansaction
+    static_assert(sizeof(T) <= 8, "static_assert(sizeof(T) >= 8) failed");
+#endif
+    old_value = *((volatile T *)ptr);
 
     switch (op->op) {
         case NVSHMEMI_AMO_SIGNAL:
@@ -747,8 +757,15 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
         }
     }
 
-    status = gdrcopy_ftable.copy_to_mapping(mh, ptr, (void *)&new_value, sizeof(T));
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr copy to mapping failed\n");
+    // FIXME: gdrcopy causing duplicate copies for small transfers, using direct LD/ST until this resolved
+    // status = gdrcopy_ftable.copy_to_mapping(mh, ptr, (void *)&new_value, sizeof(T));
+    // NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr copy to mapping failed\n");
+    *((volatile T *)ptr) = new_value;
+#if defined(NVSHMEM_X86_64)
+    _mm_sfence();
+#elif defined(NVSHMEM_PPC64LE)
+    asm volatile("sync");
+#endif
 
     {
         transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
