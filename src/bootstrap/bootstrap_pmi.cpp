@@ -137,9 +137,9 @@ static size_t base64_encode_length(size_t in_len) { return (4 * ((in_len + 2) / 
 static size_t base64_decode_length(size_t in_len) { return (in_len / 4 * 3); }
 
 static size_t base64_encode(char *out, const unsigned char *in, size_t in_len) {
-    size_t len = 4 * ((in_len + 2) / 3);
+    size_t len = base64_encode_length(in_len);
 
-    for (int i = 0, j = 0; i < in_len;) {
+    for (size_t i = 0, j = 0; i < in_len;) {
         uint32_t a = i < in_len ? (unsigned char)in[i++] : 0;
         uint32_t b = i < in_len ? (unsigned char)in[i++] : 0;
         uint32_t c = i < in_len ? (unsigned char)in[i++] : 0;
@@ -158,16 +158,16 @@ static size_t base64_encode(char *out, const unsigned char *in, size_t in_len) {
 }
 
 static size_t base64_decode(char *out, const char *in, size_t in_len) {
-    size_t len = in_len / 4 * 3;
+    size_t len = base64_decode_length(in_len);
 
     if (in[in_len - 1] == '=') (len)--;
     if (in[in_len - 2] == '=') (len)--;
 
-    for (int i = 0, j = 0; i < in_len;) {
-        uint32_t a = in[i] == '=' ? 0 & i++ : decoding_table[in[i++]];
-        uint32_t b = in[i] == '=' ? 0 & i++ : decoding_table[in[i++]];
-        uint32_t c = in[i] == '=' ? 0 & i++ : decoding_table[in[i++]];
-        uint32_t d = in[i] == '=' ? 0 & i++ : decoding_table[in[i++]];
+    for (size_t i = 0, j = 0; i < in_len;) {
+        uint32_t a = in[i] == '=' ? 0 & i++ : decoding_table[(int)(in[i++])];
+        uint32_t b = in[i] == '=' ? 0 & i++ : decoding_table[(int)(in[i++])];
+        uint32_t c = in[i] == '=' ? 0 & i++ : decoding_table[(int)(in[i++])];
+        uint32_t d = in[i] == '=' ? 0 & i++ : decoding_table[(int)(in[i++])];
 
         uint32_t fused = (a << 3 * 6) + (b << 2 * 6) + (c << 1 * 6) + (d << 0 * 6);
 
@@ -194,7 +194,6 @@ static int bootstrap_pmi_allgather(const void *sendbuf, void *recvbuf, int lengt
     int status = 0, length64;
     static int key_index = 1;
     pmi_info_t *pmi_info;
-    void *kvs_value;
 
     if (handle->pg_size == 1) {
         memcpy(recvbuf, sendbuf, length);
@@ -207,12 +206,11 @@ static int bootstrap_pmi_allgather(const void *sendbuf, void *recvbuf, int lengt
     int max_length = pmi_info->max_value_input_length;
     int num_transfers = ((length + (max_length - 1)) / max_length);
 
-    INFO(NVSHMEM_BOOTSTRAP, "PMI allgather: transfer length: %d max input length: %d", length,
-         max_length);
+    INFO(NVSHMEM_BOOTSTRAP, "PMI allgather: transfer length: %d max input length: %d, transfers: %d", length,
+         max_length, num_transfers);
 
     int processed = 0;
     int transfer = 0;
-    int nbytes = 0;
     while (processed < length) {
         int curr_length = ((length - processed) > max_length) ? max_length : (length - processed);
 
@@ -255,10 +253,9 @@ out:
 
 static int bootstrap_pmi_alltoall(const void *sendbuf, void *recvbuf, int length,
                             bootstrap_handle_t *handle) {
-    int status = 0, length64;
+    int status = 0, length64 = 0;
     static int key_index = 1;
     pmi_info_t *pmi_info;
-    void *kvs_value;
 
     if (handle->pg_size == 1) {
         memcpy(recvbuf, sendbuf, length);
@@ -271,8 +268,8 @@ static int bootstrap_pmi_alltoall(const void *sendbuf, void *recvbuf, int length
     int max_length = pmi_info->max_value_input_length;
     int num_transfers = ((length + (max_length - 1)) / max_length);
 
-    INFO(NVSHMEM_BOOTSTRAP, "PMI alltoall: transfer length: %d max input length: %d", length,
-         max_length);
+    INFO(NVSHMEM_BOOTSTRAP, "PMI alltoall: transfer length: %d max input length: %d, transfers: %d", length,
+         max_length, num_transfers);
 
     int processed = 0;
     int transfer = 0;
@@ -324,17 +321,16 @@ static int bootstrap_pmi_finalize(bootstrap_handle_t *handle) {
     pmi_info_t *pmi_info = (pmi_info_t *)handle->internal;
 
     status = WRAP_PMI_Finalize();
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "WRAP_PMI_KVS_Get_my_name failed \n");
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "WRAP_PMI_Finalize failed \n");
 
     base64_cleanup();
 
-error:
     if (pmi_info) {
         if (pmi_info->kvs_name) free(pmi_info->kvs_name);
         free(pmi_info);
     }
 
-out:
+error:
     return status;
 }
 

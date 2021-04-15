@@ -51,9 +51,13 @@ NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmem_ptr(const void *ptr, int pe);
 #define NVSHMEMI_DECL_TYPE_INC(type, TYPE, opname) \
     NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##type##_atomic_##opname(TYPE *dest, int pe);
 
-/* finc, fetch */
-#define NVSHMEMI_DECL_TYPE_FINC_FETCH(type, TYPE, opname) \
+/* finc */
+#define NVSHMEMI_DECL_TYPE_FINC(type, TYPE, opname) \
     NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_##opname(TYPE *dest, int pe);
+
+/* fetch */
+#define NVSHMEMI_DECL_TYPE_FETCH(type, TYPE, opname) \
+    NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_##opname(const TYPE *dest, int pe);
 
 /* add, set */
 #define NVSHMEMI_DECL_TYPE_ADD_SET(type, TYPE, opname) \
@@ -71,12 +75,12 @@ NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmem_ptr(const void *ptr, int pe);
 NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(INC, inc)
 NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(INC, inc)
 
-NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(FINC_FETCH, fetch_inc)
-NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(FINC_FETCH, fetch_inc)
+NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(FINC, fetch_inc)
+NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(FINC, fetch_inc)
 
-NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(FINC_FETCH, fetch)
-NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(FINC_FETCH, fetch)
-NVSHMEMI_REPT_OPGROUP_FOR_EXTENDED_AMO(FINC_FETCH, fetch)
+NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(FETCH, fetch)
+NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(FETCH, fetch)
+NVSHMEMI_REPT_OPGROUP_FOR_EXTENDED_AMO(FETCH, fetch)
 
 NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(ADD_SET, add)
 NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(ADD_SET, add)
@@ -96,7 +100,8 @@ NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(CSWAP, compare_swap)
 NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(CSWAP, compare_swap)
 
 #undef NVSHMEMI_DECL_TYPE_INC
-#undef NVSHMEMI_DECL_TYPE_FINC_FETCH
+#undef NVSHMEMI_DECL_TYPE_FINC
+#undef NVSHMEMI_DECL_TYPE_FETCH
 #undef NVSHMEMI_DECL_TYPE_ADD_SET
 #undef NVSHMEMI_DECL_TYPE_FADD_SWAP
 #undef NVSHMEMI_DECL_TYPE_CSWAP
@@ -235,20 +240,23 @@ NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_DECL_SIZE_GET_NBI)
 
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_getmem_nbi(void *dest, const void *source, size_t bytes,
                                                    int pe);
+
+#ifdef __CUDACC__
 /* Signal API */
-#define NVSHMEMI_DECL_PUT_SIGNAL(TYPENAME, TYPE)                                                        \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##TYPENAME##_put_signal(TYPE *dest, const TYPE *source,       \
-                                                                  size_t nelems, uint64_t *sig_addr,    \
-                                                                  uint64_t signal, int sig_op, int pe);
+#define NVSHMEMI_DECL_PUT_SIGNAL(TYPENAME, TYPE)                                          \
+    __device__ void nvshmem_##TYPENAME##_put_signal(TYPE *dest, const TYPE *source,       \
+                                                    size_t nelems, uint64_t *sig_addr,    \
+                                                    uint64_t signal, int sig_op, int pe);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL)
 #undef NVSHMEMI_DECL_PUT_SIGNAL
 
-#define NVSHMEMI_DECL_PUT_SIGNAL_NBI(TYPENAME, TYPE)                                                        \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##TYPENAME##_put_signal_nbi(TYPE *dest, const TYPE *source,       \
-                                                                      size_t nelems, uint64_t *sig_addr,    \
-                                                                      uint64_t signal, int sig_op, int pe);
+#define NVSHMEMI_DECL_PUT_SIGNAL_NBI(TYPENAME, TYPE)                                          \
+    __device__ void nvshmem_##TYPENAME##_put_signal_nbi(TYPE *dest, const TYPE *source,       \
+                                                        size_t nelems, uint64_t *sig_addr,    \
+                                                        uint64_t signal, int sig_op, int pe);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL_NBI)
 #undef NVSHMEMI_DECL_PUT_SIGNAL_NBI
+#endif
 
 #ifdef __CUDACC__
 #define NVSHMEMI_DECL_SIZE_PUT_SIGNAL(BITS)                                                     \
@@ -258,9 +266,20 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL_NBI)
 NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_DECL_SIZE_PUT_SIGNAL)
 #undef NVSHMEMI_DECL_SIZE_PUT_SIGNAL
 
+#define NVSHMEMI_DECL_SIZE_PUT_SIGNAL_NBI(BITS)                                                 \
+    __device__ void nvshmem_put##BITS##_signal_nbi(void *dest, const void *source, size_t nelems,   \
+                                                   uint64_t *sig_addr, uint64_t signal, int sig_op, \
+                                                   int pe);
+NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_DECL_SIZE_PUT_SIGNAL_NBI)
+#undef NVSHMEMI_DECL_SIZE_PUT_SIGNAL_NBI
+
 __device__ void nvshmem_putmem_signal(void *dest, const void *source, size_t bytes,
                                       uint64_t *sig_addr, uint64_t signal, int sig_op,
                                       int pe);
+
+__device__ void nvshmem_putmem_signal_nbi(void *dest, const void *source, size_t bytes,
+                                          uint64_t *sig_addr, uint64_t signal, int sig_op,
+                                          int pe);
 #endif
 
 NVSHMEMI_HOSTDEVICE_PREFIX uint64_t nvshmem_signal_fetch(uint64_t *sig_addr);
@@ -270,17 +289,9 @@ NVSHMEMI_HOSTDEVICE_PREFIX uint64_t nvshmem_signal_fetch(uint64_t *sig_addr);
 
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_quiet();
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_fence();
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_wait(long *ivar, long cmp_value);
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_wait_until(long *ivar, int cmp, long cmp_value);
 #ifdef __CUDACC__
 __device__ uint64_t nvshmem_signal_wait_until(uint64_t *sig_addr, int cmp, uint64_t cmp_val);
 #endif
-
-#define NVSHMEMI_DECL_WAIT(NAME, TYPE) \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_wait(TYPE *ivar, TYPE cmp_value);
-
-NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT)
-#undef NVSHMEMI_DECL_WAIT
 
 #define NVSHMEMI_DECL_WAIT_UNTIL(NAME, TYPE)                                         \
     NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_wait_until(TYPE *ivar, int cmp, \

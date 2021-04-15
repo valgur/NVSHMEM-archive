@@ -20,8 +20,8 @@
 #define MAX_MSG_SIZE 1 * 1024 * 1024
 #define UNROLL 8
 
-__global__ void ping_pong(volatile int *data_d, uint64_t *flag_d,
-                          int len, int pe, int iter, int skip, int *hflag, double *lat_result) {
+__global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int iter, int skip,
+                          int *hflag, double *lat_result) {
     long long int start, stop;
     double time;
     int i, tid, peer;

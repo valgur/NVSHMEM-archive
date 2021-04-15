@@ -1,4 +1,4 @@
-# Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2018-2021, NVIDIA CORPORATION.  All rights reserved.
 
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -8,47 +8,14 @@
 #
 # See COPYRIGHT.txt for license information
 
-include ../common.mk
-
-NVSHMEM_HOME ?= /usr/local/nvshmem-0.1
-
-NVSHMEM_MPI_SUPPORT ?= 0
-MPI_HOME ?= /usr/local/openmpi-3.0.1
-
-NVSHMEM_DEBUG ?= 0
-NVSHMEM_VERBOSE ?= 0
-
+# Define this variable for the Include Variable in common.mk
 mkfile_path := $(abspath $(firstword $(MAKEFILE_LIST)))
 mkfile_dir := $(dir $(mkfile_path))
 
-EXAMPLES_INSTALL ?= $(mkfile_dir)/examples_install
+include ../common.mk
 
-TESTCUFLAGS  := -ccbin $(CXX) 
-
-# Use addprefix so that we can specify more than one path
-TESTLDFLAGS :=
-
-TESTINC := -I$(CUDA_INC) -I$(NVSHMEM_HOME)/include  -I$(mkfile_dir)/common
-
-ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
-MPI_LIB = -lmpi  
-TESTINC += -I$(MPI_HOME)/include -DENABLE_MPI_SUPPORT
-endif
-
-ifeq ($(NVSHMEM_DEBUG), 0)
-TESTCUFLAGS  += -O3 
-else
-TESTCUFLAGS  += -O0 -g -G -lineinfo
-endif
-
-ifneq ($(NVSHMEM_VERBOSE), 0)
-TESTCUFLAGS  += -lineinfo -Xptxas -v -Xcompiler -Wall,-Wextra
-endif
-
-TESTLDFLAGS += -L$(NVSHMEM_HOME)/lib -lnvshmem -lcuda -L$(CUDA_HOME)/lib64 -lcudart  
-ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
-TESTLDFLAGS += -L$(MPI_HOME)/lib $(MPI_LIB)
-endif
+NVSHMEM_EXAMPLES_BUILDDIR ?= $(mkfile_dir)/obj
+NVSHMEM_EXAMPLES_INSTALL ?= $(mkfile_dir)/examples_install
  
 .PHONY : default 
 default : examples
@@ -57,28 +24,38 @@ EXAMPLECUSRCFILES := \
     collective-launch.cu        \
     on-stream.cu                \
     thread-group.cu             \
-    put_block.cu                \
-    dev-guide-ring.cu
+    put-block.cu                \
+    dev-guide-ring.cu           \
+    prefix-sum-ring.cu
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
 EXAMPLECUSRCFILES += mpi-based-init.cu dev-guide-ring-mpi.cu
 endif
 
-OBJDIR := $(mkfile_dir)/obj
-
-CUPERFBIN   := $(patsubst %.cu, $(OBJDIR)/%, $(filter %.cu, $(EXAMPLECUSRCFILES)))
-CXXPERFBIN  := $(patsubst %.cpp, $(OBJDIR)/%, $(filter %.cpp, $(PERFCXXSRCFILES)))
+CUPERFBIN   := $(patsubst %.cu, $(NVSHMEM_EXAMPLES_BUILDDIR)/%, $(filter %.cu, $(EXAMPLECUSRCFILES)))
+CXXPERFBIN  := $(patsubst %.cpp, $(NVSHMEM_EXAMPLES_BUILDDIR)/%, $(filter %.cpp, $(PERFCXXSRCFILES)))
 
 examples : $(CUPERFBIN) $(CXXPERFBIN)
  
-$(OBJDIR)/% : %.cu
+$(NVSHMEM_EXAMPLES_BUILDDIR)/% : %.cu
 	@printf "Compiling %-25s > %-25s\n" $< $@
 	mkdir -p `dirname $@`
-	$(NVCC) $(NVCC_GENCODE) $(TESTCUFLAGS) $(TESTINC) -rdc=true $< -o $@ $(TESTLDFLAGS)
+	$(NVCC) $(TESTCUFLAGS) $(TESTINC) $< -c -o $@.o
+	$(NVCC) $(NVCC_GENCODE) $@.o $(TESTCPPHELPEROBJ) $(TESTCUHELPEROBJ) -o $@ $(TESTLDFLAGS)
+	@rm $@.o
 
+.PHONY : clean 
 clean :
-	rm -rf $(OBJDIR)
+	rm -rf $(NVSHMEM_EXAMPLES_BUILDDIR)
 
+.PHONY : uninstall 
+uninstall : 
+	rm -rf $(NVSHMEM_EXAMPLES_INSTALL)
+
+.PHONY : purge 
+purge : clean uninstall
+
+.PHONY : install 
 install : examples
-	mkdir -p $(EXAMPLES_INSTALL)
-	cp -r -v $(OBJDIR)/* $(EXAMPLES_INSTALL)/
+	mkdir -p $(NVSHMEM_EXAMPLES_INSTALL)
+	cp -r -v $(NVSHMEM_EXAMPLES_BUILDDIR)/* $(NVSHMEM_EXAMPLES_INSTALL)/

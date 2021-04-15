@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #include "ibrc.h"
 #include "nvshmemx_error.h"
+#include "topo.h"
 #include <asm/types.h>
 #ifdef NVSHMEM_X86_64
 #include <immintrin.h>
@@ -54,13 +55,6 @@ enum { WAIT_ANY = 0, WAIT_ALL = 1 };
 
 int MAX_RD_ATOMIC; /* Maximum number of RDMA Read & Atomic operations that can be outstanding per QP
                     */
-
-typedef struct {
-    void *devices;
-    int *dev_ids;
-    int *port_ids;
-    int n_dev_ids;
-} transport_ibrc_state_t;
 
 struct ibrc_request {
     struct ibv_send_wr sr;
@@ -126,6 +120,17 @@ struct ibrc_ep_handle {
     uint64_t iid;
 };
 
+typedef struct {
+    void *devices;
+    int *dev_ids;
+    int *port_ids;
+    int n_dev_ids;
+    int proxy_ep_idx;
+    int ep_count;
+    int selected_dev_id;
+    struct ibrc_ep **ep;
+} transport_ibrc_state_t;
+
 struct ibrc_mem_handle {
     uint32_t lkey;
     uint32_t rkey;
@@ -176,14 +181,6 @@ static volatile uint64_t atomics_processed = 0;
 static volatile uint64_t atomics_issued = 0;
 static volatile uint64_t atomics_completed = 0;
 static volatile uint64_t atomics_acked = 0;
-
-struct gdrmap_heap_info {
-    void *gpu_ptr;
-    gdr_mh_t mh;
-    void *mapped_ptr;
-    int size;
-};
-static struct gdrmap_heap_info gdrmap_heap;
 #endif
 
 static struct ibrc_function_table ftable;
@@ -299,21 +296,14 @@ int parse_hca_list(const char *string, struct ibrc_hca_info *hca_list, int max_c
 }
 
 int nvshmemt_ibrc_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
-                            int transport_count, nvshmemt_ep_t *eps, int ep_count, int npes,
-                            int mype) {
+                            int transport_count, int npes, int mype) {
     for (int i = 0; i < npes; ++i) {
         INFO(NVSHMEM_TRANSPORT, "[%d] mem_handle %d : %p", mype, transport_id,
              &mem_handles[i * transport_count + transport_id]);
         struct ibrc_mem_handle *mem_handle =
             (struct ibrc_mem_handle *)&mem_handles[i * transport_count + transport_id];
-        (struct ibrc_mem_handle *)&mem_handles[i * transport_count + transport_id];
         INFO(NVSHMEM_TRANSPORT, "[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey,
              mem_handle->rkey, mem_handle->mr);
-        if (i != mype) {
-            for (int j = 0; j < ep_count; ++j) {
-                /*XXX : not implemented*/
-            }
-        }
     }
     return 0;
 }
@@ -326,7 +316,6 @@ int nvshmemt_ibrc_get_device_count(int *ndev, nvshmem_transport_t t) {
 
     *ndev = ibrc_state->n_dev_ids;
 
-out:
     return status;
 }
 
@@ -365,7 +354,6 @@ int nvshmemt_ibrc_can_reach_peer(int *access, struct nvshmem_transport_pe_info *
     *access = NVSHMEM_TRANSPORT_CAP_CPU_WRITE | NVSHMEM_TRANSPORT_CAP_CPU_READ |
               NVSHMEM_TRANSPORT_CAP_CPU_ATOMICS;
 
-out:
     return status;
 }
 
@@ -378,7 +366,6 @@ static int ep_create(struct ibrc_ep **ep_ptr, int devid, transport_ibrc_state_t 
     struct ibrc_device *device =
         ((struct ibrc_device *)ibrc_state->devices + ibrc_state->dev_ids[devid]);
     int portid = ibrc_state->port_ids[devid];
-    struct ibv_port_attr port_attr = device->port_attr[ibrc_state->port_ids[devid] - 1];
     struct ibv_context *context = device->context;
     struct ibv_pd *pd = device->pd;
 
@@ -531,8 +518,6 @@ int ep_get_handle(struct ibrc_ep_handle *ep_handle, struct ibrc_ep *ep) {
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
     struct ibrc_device *device = ((struct ibrc_device *)ibrc_state->devices + ep->devid);
 
-    assert(sizeof(struct ibrc_ep_handle) <= NVSHMEM_EP_HANDLE_SIZE);
-
     ep_handle->lid = device->port_attr[ep->portid - 1].lid;
     ep_handle->qpn = ep->qp->qp_num;
     if (ep_handle->lid == 0) { 
@@ -540,14 +525,11 @@ int ep_get_handle(struct ibrc_ep_handle *ep_handle, struct ibrc_ep *ep) {
         ep_handle->iid = device->gid[ep->portid - 1].global.interface_id;
     }
 
-out:
     return status;
 }
 
 int setup_cst_loopback(transport_ibrc_state_t *ibrc_state, int dev_id) {
     int status = 0;
-    struct ibrc_device *device =
-        ((struct ibrc_device *)ibrc_state->devices + ibrc_state->dev_ids[dev_id]);
     struct ibrc_ep_handle cst_ep_handle;
 
     status = ep_create(&ibrc_cst_ep, dev_id, ibrc_state);
@@ -561,14 +543,14 @@ int setup_cst_loopback(transport_ibrc_state_t *ibrc_state, int dev_id) {
 out:
     return status;
 }
-
-int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle, void *buf, size_t length,
-                                 int dev_id, nvshmem_transport_t t) {
+int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
+                                 nvshmem_mem_handle_t mem_handle_in, void *buf, size_t length,
+                                 nvshmem_transport_t t) {
     int status = 0;
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)transport->state;
     struct ibrc_device *device =
-        ((struct ibrc_device *)ibrc_state->devices + ibrc_state->dev_ids[dev_id]);
+        ((struct ibrc_device *)ibrc_state->devices + ibrc_state->dev_ids[ibrc_state->selected_dev_id]);
     struct ibrc_mem_handle_info handle_info;
     struct ibrc_mem_handle *handle = (struct ibrc_mem_handle *)mem_handle;
 
@@ -632,7 +614,7 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_release_mem_handle(nvshmem_mem_handle_t mem_handle) {
+int nvshmemt_ibrc_release_mem_handle(nvshmem_mem_handle_t mem_handle, nvshmem_transport_t t) {
     int status = 0;
     struct ibrc_mem_handle *handle = (struct ibrc_mem_handle *)&mem_handle;
 
@@ -646,8 +628,6 @@ out:
 
 int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
     int status = 0;
-    struct nvshmem_transport *t = (struct nvshmem_transport *)transport;
-    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)t->state;
 
     while (!mem_handle_cache.empty()) {
         ibrc_mem_handle_info_t handle_info = mem_handle_cache.back();
@@ -723,32 +703,33 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
         case NVSHMEMI_AMO_SIGNAL_SET:
         case NVSHMEMI_AMO_SET:
         case NVSHMEMI_AMO_SWAP: {
-            new_value = *((T *)&op->swap_add);
+            /* The static_cast is used to truncate the uint64_t value of swap_add back to its original length */
+            new_value = static_cast<T>(op->swap_add);
             break;
         }
         case NVSHMEMI_AMO_ADD:
         case NVSHMEMI_AMO_SIGNAL_ADD:
         case NVSHMEMI_AMO_FETCH_ADD: {
-            new_value = old_value + (*((T *)&op->swap_add));
+            new_value = old_value + static_cast<T>(op->swap_add);
             break;
         }
         case NVSHMEMI_AMO_OR:
         case NVSHMEMI_AMO_FETCH_OR: {
-            new_value = old_value | (*((T *)&op->swap_add));
+            new_value = old_value | static_cast<T>(op->swap_add);
             break;
         }
         case NVSHMEMI_AMO_AND:
         case NVSHMEMI_AMO_FETCH_AND: {
-            new_value = old_value & (*((T *)&op->swap_add));
+            new_value = old_value & static_cast<T>(op->swap_add);
             break;
         }
         case NVSHMEMI_AMO_XOR:
         case NVSHMEMI_AMO_FETCH_XOR: {
-            new_value = old_value ^ (*((T *)&op->swap_add));
+            new_value = old_value ^ static_cast<T>(op->swap_add);
             break;
         }
         case NVSHMEMI_AMO_COMPARE_SWAP: {
-            new_value = (old_value == *((T *)&op->compare)) ? *((T *)&op->swap_add) : old_value;
+            new_value = (old_value == static_cast<T>(op->compare)) ? static_cast<T>(op->swap_add) : old_value;
             break;
         }
         default: {
@@ -769,16 +750,15 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
 
     {
         transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
-        struct ibrc_device *device = ((struct ibrc_device *)ibrc_state->devices + ep->devid);
         struct ibv_send_wr *sr, **bad_sr;
         struct ibv_sge *sge;
-        struct ibrc_request *req;
         int op_id;
         nvshmemi_amo_t ack;
         g_elem_t ret;
 
         // wait for one send request to become avaialble on the ep
-        int outstanding_count = (ibrc_qp_depth - 1);
+        assert(ibrc_qp_depth >= 1);
+        uint32_t outstanding_count = (ibrc_qp_depth - 1);
         while ((ep->head_op_id - ep->tail_op_id) > outstanding_count) {
             status = progress_send(ibrc_state);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
@@ -801,7 +781,7 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
         memset(sr, 0, sizeof(ibv_send_wr));
         if (op->op > NVSHMEMI_AMO_END_OF_NONFETCH) {
             ret.data = ret.flag = 0;
-            *((T *)&ret.data) = old_value;
+            ret.data = old_value;
             ret.flag = op->retflag;
 
             sr->next = NULL;
@@ -844,7 +824,6 @@ out:
 int poll_recv(transport_ibrc_state_t *ibrc_state) {
     int status = 0;
     int n_devs = ibrc_state->n_dev_ids;
-    static int atomic_in_progress = 0;
 
     // poll all CQs available
     for (int i = 0; i < n_devs; i++) {
@@ -859,8 +838,6 @@ int poll_recv(transport_ibrc_state_t *ibrc_state) {
             status = ne;
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_poll_cq failed \n");
         } else if (ne) {
-            uint64_t idx;
-            struct ibrc_atomic_op *op;
 
             assert(ne == 1);
             ibrc_buf_t *buf = (ibrc_buf_t *)wc.wr_id;
@@ -950,7 +927,6 @@ out:
 
 int progress_send(transport_ibrc_state_t *ibrc_state) {
     int status = 0;
-    struct ibrc_ep *ep;
     int n_devs = ibrc_state->n_dev_ids;
 
     pthread_mutex_lock(&ibrc_mutex_send_progress);
@@ -1011,7 +987,10 @@ out:
 
 int check_poll_avail(struct ibrc_ep *ep, int wait_predicate) {
     int status = 0;
-    int outstanding_count = (ibrc_qp_depth - 1);
+    uint32_t outstanding_count;
+
+    assert(ibrc_qp_depth >= 1);
+    outstanding_count = (ibrc_qp_depth - 1);
     if (wait_predicate == WAIT_ALL) outstanding_count = 0;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
 
@@ -1038,16 +1017,20 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_rma(nvshmemt_ep_t tep, rma_verb_t verb, rma_memdesc_t remote, rma_memdesc_t local,
-                      rma_bytesdesc_t bytesdesc) {
+int nvshmemt_ibrc_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, rma_memdesc_t remote, rma_memdesc_t local,
+                      rma_bytesdesc_t bytesdesc, int is_proxy) {
     int status = 0;
-    struct ibrc_ep *ep = (struct ibrc_ep *)tep;
-    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
-    struct ibrc_device *device = ((struct ibrc_device *)ibrc_state->devices + ep->devid);
+    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)tcurr->state;
     struct ibv_send_wr *sr, **bad_sr;
+    struct ibrc_ep *ep;
     struct ibv_sge *sge;
-    struct ibrc_request *req;
     int op_id;
+
+    if (is_proxy) {
+        ep = ibrc_state->ep[(ibrc_state->ep_count * pe + ibrc_state->proxy_ep_idx)];
+    } else {
+        ep = ibrc_state->ep[(ibrc_state->ep_count * pe)];
+    }
 
     status = check_poll_avail(ep, WAIT_ANY);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
@@ -1104,18 +1087,21 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_amo(nvshmemt_ep_t tep, void *curetptr, amo_verb_t verb, amo_memdesc_t remote,
-                      amo_bytesdesc_t bytesdesc) {
+int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, amo_verb_t verb, amo_memdesc_t remote,
+                      amo_bytesdesc_t bytesdesc, int is_proxy) {
     int status = 0;
-    struct ibrc_ep *ep = (struct ibrc_ep *)tep;
-    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
-    struct ibrc_device *device = ((struct ibrc_device *)ibrc_state->devices + ep->devid);
+    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)tcurr->state;
+    struct ibrc_ep *ep;
     struct ibv_send_wr *sr, **bad_sr;
     struct ibv_sge *sge;
-    struct ibrc_request *req;
     int op_id;
-    int op_prepared = 0;
     struct ibrc_atomic_op op;
+
+    if (is_proxy) {
+        ep = ibrc_state->ep[(ibrc_state->ep_count * pe + ibrc_state->proxy_ep_idx)];
+    } else {
+        ep = ibrc_state->ep[(ibrc_state->ep_count * pe)];
+    }
 
     status = check_poll_avail(ep, WAIT_ANY);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
@@ -1135,7 +1121,7 @@ int nvshmemt_ibrc_amo(nvshmemt_ep_t tep, void *curetptr, amo_verb_t verb, amo_me
 
     if (use_ib_native_atomics) {
         if (verb.desc == NVSHMEMI_AMO_SIGNAL_ADD) {
-            if (bytesdesc.elembytes = 8) {
+            if (bytesdesc.elembytes == 8) {
                 sr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
                 sr->send_flags = IBV_SEND_SIGNALED;
 
@@ -1186,7 +1172,7 @@ int nvshmemt_ibrc_amo(nvshmemt_ep_t tep, void *curetptr, amo_verb_t verb, amo_me
 
     if (use_ib_native_atomics) {
         if (verb.desc == NVSHMEMI_AMO_ADD) {
-            if (bytesdesc.elembytes = 8) {
+            if (bytesdesc.elembytes == 8) {
                 sr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
                 sr->send_flags = IBV_SEND_SIGNALED;
 
@@ -1226,7 +1212,7 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_enforce_cst_at_target() {
+int nvshmemt_ibrc_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
     int status = 0;
     ibrc_mem_handle_info_t mem_handle_info;
 
@@ -1245,10 +1231,8 @@ int nvshmemt_ibrc_enforce_cst_at_target() {
 #endif
 
     struct ibrc_ep *ep = ibrc_cst_ep;
-    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
     struct ibv_send_wr *sr, **bad_sr;
     struct ibv_sge *sge;
-    struct ibrc_request *req;
     int op_id;
 
     op_id = ep->head_op_id & IBRC_REQUEST_QUEUE_MASK;  // ep->head_op_id % ibrc_qp_depth
@@ -1281,15 +1265,20 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_quiet(nvshmemt_ep_t tep) {
+int nvshmemt_ibrc_quiet(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
+    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)tcurr->state;
+    struct ibrc_ep *ep;
     int status = 0;
-    struct ibrc_ep *ep = (struct ibrc_ep *)tep;
-    static uint64_t quiet_count = 0;
+
+    if (is_proxy) {
+        ep = ibrc_state->ep[(pe * ibrc_state->ep_count + ibrc_state->proxy_ep_idx)];
+    } else {
+        ep = ibrc_state->ep[(pe * ibrc_state->ep_count)];
+    }
 
     status = check_poll_avail(ep, WAIT_ALL /*1*/);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
 
-    quiet_count++;
 #ifdef NVSHMEM_USE_GDRCOPY
     while (atomics_acked < atomics_issued) {
         status = progress_recv((transport_ibrc_state_t *)ep->ibrc_state);
@@ -1300,15 +1289,11 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_ep_create(nvshmemt_ep_t *tep, int devid, nvshmem_transport_t t) {
+int nvshmemt_ibrc_ep_create(struct ibrc_ep **ep, int devid, transport_ibrc_state_t *ibrc_state) {
     int status = 0;
-    struct ibrc_ep *ep;
-    struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
-    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)transport->state;
 
-    status = ep_create(&ep, devid, ibrc_state);
+    status = ep_create(ep, devid, ibrc_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_create failed\n");
-    *tep = ep;
 
     // setup loopback connection on the first device used.
     if (!ibrc_cst_ep) {
@@ -1320,14 +1305,8 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_ep_get_handle(nvshmemt_ep_handle_t *ep_handle, nvshmemt_ep_t tep) {
+int nvshmemt_ibrc_ep_get_handle(struct ibrc_ep_handle *ep_handle_ptr, struct ibrc_ep *ep) {
     int status = 0;
-    struct ibrc_ep *ep = (struct ibrc_ep *)tep;
-    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)ep->ibrc_state;
-    struct ibrc_device *device = ((struct ibrc_device *)ibrc_state->devices + ep->devid);
-    struct ibrc_ep_handle *ep_handle_ptr = (struct ibrc_ep_handle *)ep_handle;
-
-    assert(sizeof(struct ibrc_ep_handle) <= NVSHMEM_EP_HANDLE_SIZE);
 
     status = ep_get_handle(ep_handle_ptr, ep);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_get_handle failed \n");
@@ -1336,9 +1315,8 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_ep_destroy(nvshmemt_ep_t tep) {
+int nvshmemt_ibrc_ep_destroy(struct ibrc_ep *ep) {
     int status = 0;
-    struct ibrc_ep *ep = (struct ibrc_ep *)tep;
 
     status = check_poll_avail(ep, WAIT_ALL /*1*/);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
@@ -1349,15 +1327,84 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_ep_connect(nvshmemt_ep_t tep, nvshmemt_ep_handle_t remote_ep_handle) {
+int nvshmemt_ibrc_ep_connect(struct ibrc_ep *ep, struct ibrc_ep_handle *ep_handle) {
     int status = 0;
-    struct ibrc_ep *ep = (struct ibrc_ep *)tep;
-    struct ibrc_ep_handle *ep_handle = (struct ibrc_ep_handle *)&remote_ep_handle;
 
     status = ep_connect(ep, ep_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_connect failed \n");
 
 out:
+    return status;
+}
+
+int nvshmemt_ibrc_connect_endpoints(nvshmem_transport_t t) {
+    /* transport side */
+    struct ibrc_ep_handle *local_ep_handles = NULL, *ep_handles = NULL;
+    transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)t->state;
+    int status = 0, ndev;
+
+    /* allocate all EPs for transport, plus 1 for the proxy thread. */
+    int ep_count = ibrc_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
+    ibrc_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
+
+    ibrc_state->ep = (struct ibrc_ep **)calloc(nvshmemi_state->npes * ep_count, sizeof(struct ibrc_ep *));
+    NULL_ERROR_JMP(ibrc_state->ep, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                    "failed allocating space for endpoints \n");
+
+    local_ep_handles = (struct ibrc_ep_handle *)calloc(nvshmemi_state->npes * ep_count,
+                                                        sizeof(struct ibrc_ep_handle));
+    NULL_ERROR_JMP(local_ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                    "failed allocating space for local ep handles \n");
+    
+    ep_handles = (struct ibrc_ep_handle *)calloc(nvshmemi_state->npes * ep_count, sizeof(struct ibrc_ep_handle));
+    NULL_ERROR_JMP(ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                   "failed allocating space for ep handles \n");
+
+    /*if NVSHMEM_ENABLE_NIC_PE_MAPPING is not set, let transport manage the device binding
+     * and do round robin. #TODO remove these direct references to nvshmemi_options if we want
+     * to allow dl_open of transports.
+     */
+    if (nvshmemi_options.ENABLE_NIC_PE_MAPPING) {
+        ndev = ibrc_state->n_dev_ids;
+
+        ibrc_state->selected_dev_id = nvshmemi_state->mype_node % ndev;
+        INFO(NVSHMEM_INIT, "NVSHMEM_ENABLE_NIC_PE_MAPPING = 1, setting dev_id = %d", ibrc_state->selected_dev_id);
+    } else {
+        status = get_device_by_distance(&ibrc_state->selected_dev_id, nvshmemi_state, t);
+        INFO(NVSHMEM_INIT, "Getting closest device by distance, device index = %d", ibrc_state->selected_dev_id);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                        "get_device_by_distance failed \n");
+    }
+
+    for (int j = 0; j < nvshmemi_state->npes; j++) {
+        for (int k = 0; k < ep_count; k++) {
+            nvshmemt_ibrc_ep_create(&ibrc_state->ep[j * ep_count + k], ibrc_state->selected_dev_id, ibrc_state);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport create ep failed \n");
+            status = nvshmemt_ibrc_ep_get_handle(&local_ep_handles[j * ep_count + k], ibrc_state->ep[j * ep_count + k]);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport get ep handle failed \n");
+        }
+    }
+
+    status = nvshmemi_state->boot_handle.alltoall(
+        (void *)local_ep_handles, (void *)ep_handles,
+        sizeof(struct ibrc_ep_handle) * ep_count, &nvshmemi_state->boot_handle);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of ep handles failed \n");
+
+    for (int j = 0; j < nvshmemi_state->npes; j++) {
+        for (int k = 0; k < ep_count; k++) {
+            status = nvshmemt_ibrc_ep_connect(
+                ibrc_state->ep[j * ep_count + k],
+                &ep_handles[j * ep_count + k]);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                            "transport create connect failed \n");
+        }
+    }
+    out:
+    if (status) {
+        if (ibrc_state->ep) free(ibrc_state->ep);
+    }
+    if (local_ep_handles) free(local_ep_handles);
+    if (ep_handles) free(ep_handles);
     return status;
 }
 
@@ -1375,20 +1422,34 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     struct ibv_device **dev_list = NULL;
     int num_devices;
     struct ibrc_device *device;
-    char *value = NULL;
     std::vector<std::string> nic_names_n_pes;
     std::vector<std::string> nic_names;
     int exclude_list = 0;
-    int pes_counted = 0;
     struct ibrc_hca_info hca_list[MAX_NUM_HCAS];
     struct ibrc_hca_info pe_hca_mapping[MAX_NUM_PES_PER_NODE];
     int hca_list_count = 0, pe_hca_map_count = 0, user_selection = 0;
+    int transport_skipped;
     int offset = 0;
 
-    ibv_handle = dlopen("libibverbs.so", RTLD_LAZY);
+    transport_skipped = strncasecmp(nvshmemi_options.REMOTE_TRANSPORT,
+                                        DEFAULT_TRANSPORT_STRING,
+                                        TRANSPORT_STRING_MAX_LENGTH);
+    if (transport_skipped) {
+        transport_skipped = strncasecmp(nvshmemi_options.REMOTE_TRANSPORT,
+                                            IB_TRANSPORT_STRING,
+                                            TRANSPORT_STRING_MAX_LENGTH);
+    }
+    if (transport_skipped) {
+        INFO(NVSHMEM_INIT, "IB disabled by user through environment "
+                            "in favor of the %s transport.\n", nvshmemi_options.REMOTE_TRANSPORT);
+        status = NVSHMEMI_ERROR_SKIPPED;
+        goto out;
+    }
+
+    ibv_handle = dlopen("libibverbs.so.1", RTLD_LAZY);
     if (ibv_handle == NULL) {
-        INFO(NVSHMEM_INIT, "libibverbs not found on the system; skipping IB RC transport \n");
-        status = NVSHMEMX_ERROR_INTERNAL;
+        INFO(NVSHMEM_INIT, "libibverbs not found on the system; skipping IB RC transport");
+        status = NVSHMEMI_ERROR_SKIPPED;
         goto out;
     }
 
@@ -1419,7 +1480,7 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
         use_gdrcopy = 0;
     }
 
-    gdrcopy_handle = dlopen("libgdrapi.so", RTLD_LAZY);
+    gdrcopy_handle = dlopen("libgdrapi.so.2", RTLD_LAZY);
     if (!gdrcopy_handle) use_gdrcopy = 0;
 
     if (use_gdrcopy) {
@@ -1506,7 +1567,7 @@ skip_gdrcopy_dlsym:
 
         device->context = ftable.open_device(device->dev);
         if (!device->context) {
-            INFO(NVSHMEM_INIT, "open_device failed for IB device at index %d \n", i);
+            INFO(NVSHMEM_INIT, "open_device failed for IB device at index %d", i);
             continue;
         }
 
@@ -1640,10 +1701,7 @@ skip_gdrcopy_dlsym:
     transport->host_ops.get_device_count = nvshmemt_ibrc_get_device_count;
     transport->host_ops.get_pci_path = nvshmemt_ibrc_get_pci_path;
     transport->host_ops.can_reach_peer = nvshmemt_ibrc_can_reach_peer;
-    transport->host_ops.ep_create = nvshmemt_ibrc_ep_create;
-    transport->host_ops.ep_get_handle = nvshmemt_ibrc_ep_get_handle;
-    transport->host_ops.ep_connect = nvshmemt_ibrc_ep_connect;
-    transport->host_ops.ep_destroy = nvshmemt_ibrc_ep_destroy;
+    transport->host_ops.connect_endpoints = nvshmemt_ibrc_connect_endpoints;
     transport->host_ops.get_mem_handle = nvshmemt_ibrc_get_mem_handle;
     transport->host_ops.release_mem_handle = nvshmemt_ibrc_release_mem_handle;
     transport->host_ops.rma = nvshmemt_ibrc_rma;

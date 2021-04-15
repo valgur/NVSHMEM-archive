@@ -70,7 +70,7 @@ as in nvshmem_<type>_signal function, it can lead to race conditions.
 For example NVLink writes (of data and signal) can overtake IB writes.
 And hence the data may not be visible after the barrier operation.
 */
-
+#ifdef __CUDACC__
 template <typename T>
 __device__ inline void nvshmemi_signal_for_barrier(T *dest, const T value, int pe) {
    const void *peer_base_addr =
@@ -84,6 +84,6 @@ __device__ inline void nvshmemi_signal_for_barrier(T *dest, const T value, int p
        nvshmemi_proxy_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
    }
 }
-
+#endif /* __CUDACC__ */
 
 #endif /* NVSHMEMI_COLL_GPU_H */

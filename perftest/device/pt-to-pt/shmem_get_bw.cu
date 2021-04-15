@@ -24,8 +24,8 @@
 #define BLOCKS 4
 #define THREADS_PER_BLOCK 1024
 
-__global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, int len, int pe,
-                   int iter, int skip, double *bw_result) {
+__global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, int pe, int iter,
+                   int skip, double *bw_result) {
     int i, peer;
     unsigned int counter;
     int tid = (threadIdx.x * blockDim.y * blockDim.z + threadIdx.y * blockDim.z + threadIdx.z);
@@ -40,9 +40,8 @@ __global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, in
             nvshmem_quiet();
             start = clock64();
         }
-        nvshmemx_double_get_nbi_block((double *)data_d + (bid * (len / nblocks)),
-                                      (double *)data_d + (bid * (len / nblocks)), len / nblocks,
-                                      peer);
+        nvshmemx_double_get_nbi_block(data_d + (bid * (len / nblocks)),
+                                      data_d + (bid * (len / nblocks)), len / nblocks, peer);
         // synchronizing across blocks
         __syncthreads();
         if (!tid) {

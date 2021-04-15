@@ -7,6 +7,7 @@
 #include "nvshmem.h"
 #include "nvshmemx.h"
 #include "nvshmem_internal.h"
+#include "nvshmem_nvtx.hpp"
 
 #include <iostream>
 #include <cassert>
@@ -93,6 +94,7 @@ inline int nvshmemi_maxv(int *vec, int count) {
 
 int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, void **args,
                                size_t sharedMem, cudaStream_t stream) {
+    NVTX_FUNC_RANGE_IN_GROUP(LAUNCH);
     NVSHMEM_CHECK_STATE_AND_INIT();
 
     int multiProcessorCount;
@@ -100,8 +102,6 @@ int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
     int maxBlocksSM;
     int gridSize = -1;
     int launchFailed = 1;
-    CUresult cures;
-    cudaError_t cudares;
     int status = 0;
 
     // XXX: Supports the user passing a non-zero grid but of differing size across ranks

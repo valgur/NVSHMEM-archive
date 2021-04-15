@@ -24,8 +24,8 @@
 #define MAX_MSG_SIZE 64 * 1024
 #define UNROLL 2
 
-__global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, int len, int pe,
-                   int iter, int skip, double *bw_result) {
+__global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, int pe, int iter, int skip,
+                   double *bw_result) {
     int u, i, j, peer, tid, slice;
     unsigned int counter;
     long long int start = 0, stop = 0;
@@ -45,7 +45,7 @@ __global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, in
         for (j = 0; j < len - slice; j += slice) {
             for (u = 0; u < UNROLL; ++u) {
                 int idx = j + u * threads + tid;
-                *(data_d + idx) = nvshmem_double_g((double *)data_d + idx, peer);
+                *(data_d + idx) = nvshmem_double_g(data_d + idx, peer);
             }
             __syncthreads(); /* This is required for performance over PCIe. PCIe has a P2P mailbox protocol
                                 that has a window of 64KB for device BAR addresses. Not synchronizing
@@ -54,7 +54,7 @@ __global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, in
 
         for (u = 0; u < UNROLL; ++u) {
             int idx = j + u * threads + tid;
-            if (idx < len) *(data_d + idx) = nvshmem_double_g((double *)data_d + idx, peer);
+            if (idx < len) *(data_d + idx) = nvshmem_double_g(data_d + idx, peer);
         }
 
         // synchronizing across blocks

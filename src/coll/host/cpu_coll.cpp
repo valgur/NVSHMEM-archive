@@ -22,12 +22,12 @@ struct nccl_function_table nccl_ftable;
     } while (0)
 
 int nvshmemi_use_nccl = 0;
+int nccl_version;
 
 
 int nvshmemi_coll_common_cpu_read_env() {
     int status = 0;
 
-fn_out:
     return status;
 }
 
@@ -35,8 +35,8 @@ int nvshmemi_coll_common_cpu_init() {
     int status = 0;
 #ifdef NVSHMEM_USE_NCCL
     void *nccl_handle = NULL;
-#endif
     int nccl_build_version;
+#endif
 
     status = nvshmemi_coll_common_cpu_read_env();
     if (status) NVSHMEMI_COLL_CPU_ERR_POP();
@@ -49,7 +49,7 @@ int nvshmemi_coll_common_cpu_init() {
         goto fn_out;
     }
 
-    nccl_handle = dlopen("libnccl.so", RTLD_LAZY);
+    nccl_handle = dlopen("libnccl.so.2", RTLD_LAZY);
     if (!nccl_handle) {
         WARN_PRINT("NCCL library not found...\n");
         nvshmemi_use_nccl = 0;
@@ -58,11 +58,12 @@ int nvshmemi_coll_common_cpu_init() {
     
     nccl_build_version = NCCL_VERSION_CODE;
     LOAD_SYM(nccl_handle, "ncclGetVersion", nccl_ftable.GetVersion);
-    int version;
-    nccl_ftable.GetVersion(&version);
-    if (version < nccl_build_version) {
-        WARN_PRINT("NCCL library version (%d) is older than the"
-                    " version (%d) with which NVSHMEM was built, skipping use...\n", version, nccl_build_version);
+    nccl_ftable.GetVersion(&nccl_version);
+    if (nccl_version < nccl_build_version) {
+        WARN_PRINT(
+            "NCCL library version (%d) is older than the"
+            " version (%d) with which NVSHMEM was built, skipping use...\n",
+            nccl_version, nccl_build_version);
         nvshmemi_use_nccl = 0;
         goto fn_out;
     }
@@ -73,9 +74,15 @@ int nvshmemi_coll_common_cpu_init() {
     LOAD_SYM(nccl_handle, "ncclBroadcast", nccl_ftable.Broadcast);
     LOAD_SYM(nccl_handle, "ncclAllGather", nccl_ftable.AllGather);
     LOAD_SYM(nccl_handle, "ncclGetErrorString", nccl_ftable.GetErrorString);
+    LOAD_SYM(nccl_handle, "ncclGroupStart", nccl_ftable.GroupStart);
+    LOAD_SYM(nccl_handle, "ncclGroupEnd", nccl_ftable.GroupEnd);
+    if (nccl_version >= 2700) {
+        LOAD_SYM(nccl_handle, "ncclSend", nccl_ftable.Send);
+        LOAD_SYM(nccl_handle, "ncclRecv", nccl_ftable.Recv);
+    }
 
-#endif /* NVSHMEM_USE_NCCL */
 fn_out:
+#endif /* NVSHMEM_USE_NCCL */
     return status;
 fn_fail:
     return status;
@@ -84,8 +91,5 @@ fn_fail:
 int nvshmemi_coll_common_cpu_finalize() {
     int status = 0;
 
-fn_out:
-    return status;
-fn_fail:
     return status;
 }

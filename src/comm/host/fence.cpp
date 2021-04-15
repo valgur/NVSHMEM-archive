@@ -6,9 +6,11 @@
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
+#include "nvshmem_nvtx.hpp"
 #include "nvshmemx_error.h"
 
 void nvshmem_fence(void) {
+    NVTX_FUNC_RANGE_IN_GROUP(MEMORDER);
     NVSHMEM_CHECK_STATE_AND_INIT();
 
     int status;
@@ -24,13 +26,8 @@ void nvshmem_fence(void) {
             } else if (nvshmemi_state->fence[j]) {
                 struct nvshmem_transport *tcurr =
                     ((nvshmem_transport_t *)nvshmemi_state->transports)[j];
-                int ep_count = 1;
-                if (tcurr->attr & NVSHMEM_TRANSPORT_ATTR_CONNECTED) {
-                    ep_count = tcurr->ep_count * nvshmemi_state->npes;
-                }
-                for (int k = 0; k < ep_count; k++) {
-                    if (!tcurr->ep[k]) continue;
-                    status = nvshmemi_state->fence[j](tcurr->ep[k]);
+                for (int k = 0; k < nvshmemi_state->npes; k++) {
+                    status = nvshmemi_state->fence[j](tcurr, k, 0);
                     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_fence() failed \n");
                 }
             }

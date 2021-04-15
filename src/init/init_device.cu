@@ -14,6 +14,19 @@
 
 extern int (*nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_COUNT])(nvshmem_transport_t *transport);
 
+bool nvshmemi_need_proxy(nvshmemi_state_t *state) {
+    bool need_proxy = false;
+
+    need_proxy = (state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
+                  nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_ID_IBRC] &&
+                  state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized);
+    need_proxy |= (state->transports[NVSHMEM_TRANSPORT_ID_UCX] &&
+                   nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_ID_UCX] &&
+                   state->transports[NVSHMEM_TRANSPORT_ID_UCX]->is_successfully_initialized);
+
+    return need_proxy;
+}
+
 void *heap_base_array_dptr = NULL;
 void *heap_base_actual_array_dptr = NULL;
 int *p2p_attrib_native_atomic_support_array_dptr = NULL;
@@ -175,10 +188,7 @@ int nvshmemi_init_device_state(nvshmemi_state_t *state) {
          "[%d] heap_base_array_dptr %p p2p_attrib_native_atomic_support_array_dptr %p", state->mype,
          heap_base_array_dptr, p2p_attrib_native_atomic_support_array_dptr);
 
-    if (state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
-        nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_ID_IBRC] &&
-        state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized &&
-        nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST)
+    if (nvshmemi_need_proxy(state) && nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST)
         use_proxy = 1;
 
     status = cudaMemcpyToSymbolAsync(nvshmemi_proxy_d, &use_proxy, sizeof(int), 0,

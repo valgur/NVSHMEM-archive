@@ -121,8 +121,9 @@ int PMI2U_writeline(int fd, char *buf) {
             PMI2U_printf("write_line error; fd=%d buf=:%s:", fd, buf);
             return (-1);
         }
-        if (n < size)
+        if (n < size) {
             PMI2U_printf("write_line failed to write entire message");
+        }
     }
     return 0;
 }

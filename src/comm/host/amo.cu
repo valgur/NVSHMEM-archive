@@ -7,6 +7,7 @@
 #define NVSHMEMI_HOST_ONLY
 #include "nvshmem_api.h"
 #include "nvshmem_internal.h"
+#include "nvshmem_nvtx.hpp"
 #include "nvshmemx_error.h"
 #include "amo_kernel_entrypoints.cuh"
 
@@ -467,6 +468,8 @@ static int nvshmemi_p2p_amo(CUstream custrm, CUevent cuev, void *curetptr, amo_v
             status = nvshmemi_p2p_amo_fetch_xor(verb, custrm, target.ptr, target.retptr, curetptr,
                                            target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
             break;
+        default:
+            ERROR_EXIT("[%d] Invalid AMO (%d)\n", nvshmemi_state->mype, verb.desc);
     }
     return status;
 }
@@ -514,6 +517,9 @@ static void nvshmemi_prepare_and_post_amo(nvshmemi_amo_t desc, void *targetptr, 
             verb.is_cmp = 1;
             verb.is_fetch = 1;
             break;
+        default:
+            ERROR_EXIT("[%d] amo type %d not supported on transport\n", nvshmemi_state->mype, desc);
+            break;
     }
     bytesdesc.elembytes = elembytes;
     bytesdesc.name_type = nameoftype;
@@ -542,14 +548,11 @@ static void nvshmemi_prepare_and_post_amo(nvshmemi_amo_t desc, void *targetptr, 
             ERROR_EXIT("[%d] amo not supported on transport to pe: %d \n", nvshmemi_state->mype, pe);
         }
 
-        nvshmemt_ep_t ep;
-        int tcount = nvshmemi_state->transport_count;
+        int tcount = NVSHMEM_TRANSPORT_COUNT;
         struct nvshmem_transport *tcurr = nvshmemi_state->transports[t];
-        int ep_offset = pe * tcurr->ep_count;
-        ep = tcurr->ep[ep_offset];
         nvshmem_mem_handle_t *handles = nvshmemi_state->handles;
         target.handle = handles[pe * tcount + t];
-        status = nvshmemi_state->amo[pe](ep, curetptr, verb, target, bytesdesc);
+        status = nvshmemi_state->amo[pe](tcurr, pe, curetptr, verb, target, bytesdesc, 0);
     }
     if (status) {
         ERROR_EXIT("[%d] aborting due to error in %s \n", nvshmemi_state->mype, apiname);
@@ -558,6 +561,7 @@ static void nvshmemi_prepare_and_post_amo(nvshmemi_amo_t desc, void *targetptr, 
 
 #define NVSHMEM_TYPE_INC(Name, NameIdx, TYPE)                                                  \
     void nvshmem_##Name##_atomic_inc(TYPE *target, int pe) {                                          \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_SET);                                                  \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                        \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_INC, (void *)target, 0, 0, 0, sizeof(TYPE), pe, NameIdx, \
                                       "nvshmem_" #Name "_atomic_inc");                                \
@@ -583,6 +587,7 @@ NVSHMEM_TYPE_INC_NOT_IMPLEMENTED(ptrdiff, PTRDIFF, ptrdiff_t) /*XXX:not implemen
 
 #define NVSHMEM_TYPE_ADD(Name, NameIdx, TYPE)                                              \
     void nvshmem_##Name##_atomic_add(TYPE *target, TYPE value, int pe) {                          \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_SET);                                              \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                    \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_ADD, (void *)target, 0, &value, 0, sizeof(TYPE), pe, \
                                       NameIdx, "nvshmem_" #Name "_atomic_add");                   \
@@ -608,6 +613,7 @@ NVSHMEM_TYPE_ADD_NOT_IMPLEMENTED(ptrdiff, PTRDIFF, ptrdiff_t) /*XXX:not implemen
 
 #define NVSHMEM_TYPE_SET(Name, NameIdx, TYPE)                                              \
     void nvshmem_##Name##_atomic_set(TYPE *target, TYPE value, int pe) {                          \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_SET);                                              \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                    \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_SET, (void *)target, 0, &value, 0, sizeof(TYPE), pe, \
                                       NameIdx, "nvshmem_" #Name "_atomic_set");                   \
@@ -629,6 +635,7 @@ NVSHMEM_TYPE_SET(double, DOUBLE, double)
 
 #define NVSHMEM_TYPE_AND(Name, NameIdx, TYPE)                                              \
     void nvshmem_##Name##_atomic_and(TYPE *target, TYPE value, int pe) {                   \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_SET);                                              \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                    \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_AND, (void *)target, 0, &value, 0, sizeof(TYPE), pe, \
                                       NameIdx, "nvshmem_" #Name "_atomic_and");                   \
@@ -643,6 +650,7 @@ NVSHMEM_TYPE_AND(uint64, UINT64, uint64_t)
 
 #define NVSHMEM_TYPE_OR(Name, NameIdx, TYPE)                                                       \
     void nvshmem_##Name##_atomic_or(TYPE *target, TYPE value, int pe) {                            \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_SET);                                                      \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_OR, (void *)target, 0, &value, 0, sizeof(TYPE), pe, NameIdx, \
                                       "nvshmem_" #Name "_atomic_or");                                     \
@@ -657,6 +665,7 @@ NVSHMEM_TYPE_OR(uint64, UINT64, uint64_t)
 
 #define NVSHMEM_TYPE_XOR(Name, NameIdx, TYPE)                                              \
     void nvshmem_##Name##_atomic_xor(TYPE *target, TYPE value, int pe) {                   \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_SET);                                              \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                    \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_XOR, (void *)target, 0, &value, 0, sizeof(TYPE), pe, \
                                       NameIdx, "nvshmem_" #Name "_atomic_xor");                   \
@@ -670,7 +679,8 @@ NVSHMEM_TYPE_XOR(int64, INT64, int64_t)
 NVSHMEM_TYPE_XOR(uint64, UINT64, uint64_t)
 
 #define NVSHMEM_TYPE_FETCH(Name, NameIdx, TYPE)                                                    \
-    TYPE nvshmem_##Name##_atomic_fetch(TYPE *target, int pe) {                                            \
+    TYPE nvshmem_##Name##_atomic_fetch(const TYPE *target, int pe) {                               \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_FETCH);                                                    \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         TYPE ret;                                                                                  \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_FETCH, (void *)target, (void *)&ret, 0, 0, sizeof(TYPE), pe, \
@@ -694,6 +704,7 @@ NVSHMEM_TYPE_FETCH(double, DOUBLE, double)
 
 #define NVSHMEM_TYPE_FETCH_INC(Name, NameIdx, TYPE)                                                     \
     TYPE nvshmem_##Name##_atomic_fetch_inc(TYPE *target, int pe) {                                             \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_FETCH);                                                    \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         TYPE ret;                                                                                  \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_FETCH_INC, (void *)target, (void *)&ret, 0, 0, sizeof(TYPE), \
@@ -722,6 +733,7 @@ NVSHMEM_TYPE_FETCH_INC_NOT_IMPLEMENTED(ptrdiff, PTRDIFF, ptrdiff_t) /*XXX:not im
 
 #define NVSHMEM_TYPE_FETCH_ADD(Name, NameIdx, TYPE)                                              \
     TYPE nvshmem_##Name##_atomic_fetch_add(TYPE *target, TYPE value, int pe) {                          \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_FETCH);                                             \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                     \
         TYPE ret;                                                                           \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_FETCH_ADD, (void *)target, (void *)&ret, &value, 0,   \
@@ -750,6 +762,7 @@ NVSHMEM_TYPE_FETCH_ADD_NOT_IMPLEMENTED(ptrdiff, PTRDIFF, ptrdiff_t) /*XXX:not im
 
 #define NVSHMEM_TYPE_SWAP(Name, NameIdx, TYPE)                                                     \
     TYPE nvshmem_##Name##_atomic_swap(TYPE *target, TYPE value, int pe) {                                 \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_FETCH);                                                    \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         TYPE ret;                                                                                  \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_SWAP, (void *)target, (void *)&ret, &value, 0, sizeof(TYPE), \
@@ -773,6 +786,7 @@ NVSHMEM_TYPE_SWAP(double, DOUBLE, double)
 
 #define NVSHMEM_TYPE_COMPARE_SWAP(Name, NameIdx, TYPE)                                                  \
     TYPE nvshmem_##Name##_atomic_compare_swap(TYPE *target, TYPE cond, TYPE value, int pe) {                   \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_FETCH);                                                  \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                          \
         TYPE ret;                                                                                \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_COMPARE_SWAP, (void *)target, (void *)&ret, &value, &cond, \
@@ -794,6 +808,7 @@ NVSHMEM_TYPE_COMPARE_SWAP(ptrdiff, PTRDIFF, ptrdiff_t)
 
 #define NVSHMEM_TYPE_FETCH_AND(Name, NameIdx, TYPE)                                              \
     TYPE nvshmem_##Name##_atomic_fetch_and(TYPE *target, TYPE value, int pe) {              \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_FETCH);                                             \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                     \
         TYPE ret;                                                                           \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_FETCH_AND, (void *)target, (void *)&ret, &value, 0,   \
@@ -810,6 +825,7 @@ NVSHMEM_TYPE_FETCH_AND(uint64, UINT64, uint64_t)
 
 #define NVSHMEM_TYPE_FETCH_OR(Name, NameIdx, TYPE)                                              \
     TYPE nvshmem_##Name##_atomic_fetch_or(TYPE *target, TYPE value, int pe) {              \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_FETCH);                                              \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                    \
         TYPE ret;                                                                          \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_FETCH_OR, (void *)target, (void *)&ret, &value, 0,   \
@@ -826,6 +842,7 @@ NVSHMEM_TYPE_FETCH_OR(uint64, UINT64, uint64_t)
 
 #define NVSHMEM_TYPE_FETCH_XOR(Name, NameIdx, TYPE)                                              \
     TYPE nvshmem_##Name##_atomic_fetch_xor(TYPE *target, TYPE value, int pe) {              \
+        NVTX_FUNC_RANGE_IN_GROUP(ATOMIC_FETCH);                                               \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                     \
         TYPE ret;                                                                           \
         nvshmemi_prepare_and_post_amo(NVSHMEMI_AMO_FETCH_XOR, (void *)target, (void *)&ret, &value, 0,   \

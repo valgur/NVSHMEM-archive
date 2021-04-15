@@ -60,7 +60,6 @@ static int PMI_keylen_max = 0;
 static int PMI_vallen_max = 0;
 
 static int PMI_debug = 0;
-static int PMI_spawned = 0;
 
 /* Function prototypes for internal routines */
 static int PMII_getmaxes(int *kvsname_max, int *keylen_max, int *vallen_max);

@@ -24,9 +24,8 @@
 #define MAX_MSG_SIZE 32 * 1024 * 1024
 #define UNROLL 2
 
-__global__ void bw(volatile double *data_d, volatile double *remote_d,
-                   volatile unsigned int *counter_d, int len, int pe, int iter, int skip,
-                   double *bw_result) {
+__global__ void bw(double *data_d, double *remote_d, volatile unsigned int *counter_d, int len,
+                   int pe, int iter, int skip, double *bw_result) {
     int u, i, j, tid, slice;
     unsigned int counter;
     long long int start = 0, stop = 0;

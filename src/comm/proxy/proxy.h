@@ -20,6 +20,11 @@
 #define WRAPPED_CHANNEL_BUF(state, ch, counter) (ch->buf + (counter & (state->channel_bufsize - 1)))
 #define WRAPPED_CHANNEL_BUF_(state, buf, counter) (buf + (counter & (state->channel_bufsize - 1)))
 
+#define PROXY_DMA_REQ_BYTES 32
+#define PROXY_AMO_REQ_BYTES 32
+#define PROXY_INLINE_REQ_BYTES 24
+#define CHANNEL_ENTRY_BYTES 8
+
 enum {
     PROXY_QUIET_STATUS_CHANNELS_INACTIVE = 0,
     PROXY_QUIET_STATUS_CHANNELS_IN_PROGRESS,
@@ -32,94 +37,112 @@ typedef struct {
     uint64_t data[4];
 } channel_request_t;
 
+/* Note that this is only safe because we are using this across a single system
+ * that shares the GPUs endianness.
+ * This struct is not actually portable. 
+ */
+typedef union channel_bounce_buffer {
+    char bytes[8];
+    uint64_t whole_buffer;
+} channel_bounce_buffer_t;
+
 /* base_request_t
  * 32 | 8 | 8 | 8 | 8
  * roffset_high | roffset_low | op | group_size | flag */
-typedef struct base_request {
+typedef struct __attribute__ ((packed)) base_request {
     volatile uint8_t flag;
     uint8_t groupsize;
     uint8_t op;
     uint8_t roffset_low;   // target is remote
     uint32_t roffset_high; /*used as pe for base-only requests*/
 } base_request_t;
+static_assert(sizeof(base_request_t) == 8, "request_size must be 8 bytes.");
 
 /* put_dma_request_0
  * 32 | 16 | 8 | 8
  * loffset_high | loffset_low | pe | flag */
-typedef struct put_dma_request_0 {
+typedef struct __attribute__ ((packed)) put_dma_request_0 {
     volatile uint8_t flag;
     uint8_t resv;
     uint16_t loffset_low;  // source is local
     uint32_t loffset_high;
 } put_dma_request_0_t;
+static_assert(sizeof(put_dma_request_0) == 8, "request_size must be 8 bytes.");
 
 /* put_dma_request_1
  * 32 | 16 | 8 | 8
  * size_high | size_low | resv | flag */
-typedef struct put_dma_request_1 {
+typedef struct __attribute__ ((packed)) put_dma_request_1 {
     volatile uint8_t flag;
     uint8_t resv;
     uint16_t size_low;
     uint32_t size_high;
 } put_dma_request_1_t;
+static_assert(sizeof(put_dma_request_1) == 8, "request_size must be 8 bytes.");
 
 /* put_dma_request_2
  * 32 | 16 | 8 | 8
  * resv2 | pe | resv | flag */
-typedef struct put_dma_request_2 {
+typedef struct __attribute__ ((packed)) put_dma_request_2 {
     volatile uint8_t flag;
     uint8_t resv;
     uint16_t pe;
     uint32_t resv1;
 } put_dma_request_2_t;
+static_assert(sizeof(put_dma_request_2) == 8, "request_size must be 8 bytes.");
 
 /* put_inline_request_0
  * 32 | 16 | 8 | 8
  * loffset_high | loffset_low | pe | flag */
-typedef struct put_inline_request_0 {
+typedef struct __attribute__ ((packed)) put_inline_request_0 {
     volatile uint8_t flag;
     uint8_t resv;
     uint16_t pe;  
     uint32_t lvalue_low;
 } put_inline_request_0_t;
+static_assert(sizeof(put_inline_request_0) == 8, "request_size must be 8 bytes.");
 
 /* put_inline_request_1
  * 32 | 16 | 8 | 8
  * size_high | size_low | resv | flag */
-typedef struct put_inline_request_1 {
+typedef struct __attribute__ ((packed)) put_inline_request_1 {
     volatile uint8_t flag;
     uint8_t resv;
     uint16_t size;
     uint32_t lvalue_high;
 } put_inline_request_1_t;
+static_assert(sizeof(put_inline_request_1) == 8, "request_size must be 8 bytes.");
 
 /* amo_request_0
  * 32 | 16 | 8 | 8
  * lvalue_low | pe | amo | flag */
-typedef struct amo_request_0 {
+typedef struct __attribute__ ((packed)) amo_request_0 {
     volatile uint8_t flag;
     uint8_t amo;
     uint16_t pe;  
     uint32_t swap_add_low;
 } amo_request_0_t;
+static_assert(sizeof(amo_request_0) == 8, "request_size must be 8 bytes.");
 
 /* amo_request_1
  * 32 | 16 | 8 | 8
  * lvalue_high | resv | size | flag */
-typedef struct amo_request_1 {
+typedef struct __attribute__ ((packed)) amo_request_1 {
     volatile uint8_t flag;
     uint8_t compare_low;
     uint16_t size;
     uint32_t swap_add_high;
 } amo_request_1_t;
+static_assert(sizeof(amo_request_1) == 8, "request_size must be 8 bytes.");
 
 /* amo_request_2
  * 56 | 8
  * compare_high | flag */
-typedef struct amo_request_2 {
+typedef struct __attribute__ ((packed)) amo_request_2 {
     volatile uint8_t flag;
     uint8_t compare_high[7];
 } amo_request_2_t;
+static_assert(sizeof(amo_request_2) == 8, "request_size must be 8 bytes.");
 
 typedef struct {
     struct proxy_state *state;
@@ -141,7 +164,6 @@ typedef struct proxy_channel {
 } proxy_channel_t;
 
 typedef struct proxy_state {
-    nvshmemt_ep_t *ep;
     int *transport_id;
     int transport_bitmap;
     struct nvshmem_transport **transport;
@@ -166,6 +188,8 @@ typedef struct proxy_state {
     int finalize_count;
     int issued_get;
     nvshmemi_timeout_t* nvshmemi_timeout;
+    bool is_consistency_api_supported;
+    int gdr_device_native_ordering;
 } proxy_state_t;
 
 int nvshmemi_proxy_setup_device_channels(proxy_state_t *state);

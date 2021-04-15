@@ -75,7 +75,7 @@ void init_wrapper(int *c, char ***v) {
         shmem_init();
         mype = shmem_my_pe();
         npes = shmem_n_pes();
-        DEBUG_PRINT("SHMEM: [%d of %d] hello SHMEM world! \n", my_pe, n_pes);
+        DEBUG_PRINT("SHMEM: [%d of %d] hello SHMEM world! \n", my_pe, npes);
 
         latency = (double *)shmem_malloc(sizeof(double));
         if (!latency) ERROR_EXIT("(shmem_malloc) failed \n");
@@ -185,7 +185,7 @@ print_table(const char *job_name, const char *subjob_name, const char *var_name,
 	printf("| %-22s | %10s %-9s |\n", var_name, output_var, units);
 	printf("+------------------------+----------------------+\n");
 	for (i = 0; i < num_entries; i++) {
-		printf("| %-22.0lu | %-20.6lf |\n", size[i], value[i]);
+		printf("| %-22.1lu | %-20.6lf |\n", size[i], value[i]);
 		printf("+------------------------+----------------------+\n");
 	}
 #endif

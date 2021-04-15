@@ -14,7 +14,7 @@
 #include "nvshmem.h"
 #include "nvshmemx.h"
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
 #include "mpi.h"
 #endif
 
@@ -49,7 +49,7 @@ __global__ void distributed_vector_sum(int *x, int *y, int *partial_sum, int *su
 }
 
 int main(int c, char *v[]) {
-    int mype, npes;
+    int mype, npes, mype_node, num_devices;
     int *x;
     int *y;
     int *partial_sum;
@@ -57,13 +57,13 @@ int main(int c, char *v[]) {
     int use_threadgroup = 1;
     int nthreads = NTHREADS;
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     bool use_mpi = false;
     char *value = getenv("NVSHMEMTEST_USE_MPI_LAUNCHER");
     if (value) use_mpi = atoi(value);
 #endif
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     if (use_mpi) {
         MPI_Init(&c, &v);
         int rank, nranks;
@@ -82,8 +82,10 @@ int main(int c, char *v[]) {
 
     npes = nvshmem_n_pes();
     mype = nvshmem_my_pe();
+    mype_node = nvshmem_team_n_pes(NVSHMEMX_TEAM_NODE);
 
-    CUDA_CHECK(cudaSetDevice(mype));
+    CUDA_CHECK(cudaGetDeviceCount(&num_devices));
+    CUDA_CHECK(cudaSetDevice(mype_node % num_devices));
 
     x = (int *)nvshmem_malloc(sizeof(int) * nthreads);
     y = (int *)nvshmem_malloc(sizeof(int) * nthreads);
@@ -104,7 +106,7 @@ int main(int c, char *v[]) {
     nvshmem_free(sum);
 
     nvshmem_finalize();
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     if (use_mpi) MPI_Finalize();
 #endif
 

@@ -21,8 +21,7 @@
 #define THREADS_PER_WARP 32
 #define THREADS_PER_BLOCK 1024
 
-__global__ void latency(volatile int *data_d, volatile int *flag_d, int len, int pe, int iter,
-                        int skip, double *lat_result) {
+__global__ void latency(int *data_d, int len, int pe, int iter, int skip, double *lat_result) {
     long long int start, stop;
     double time;
     int i, tid, peer;
@@ -36,7 +35,7 @@ __global__ void latency(volatile int *data_d, volatile int *flag_d, int len, int
             start = clock64();
         }
 
-        nvshmem_int_get_nbi((int *)data_d, (int *)data_d, len, peer);
+        nvshmem_int_get_nbi(data_d, data_d, len, peer);
 
         nvshmem_quiet();
     }
@@ -48,38 +47,38 @@ __global__ void latency(volatile int *data_d, volatile int *flag_d, int len, int
     }
 }
 
-#define LATENCY_THREADGROUP(group)                                                               \
-    __global__ void latency_##group(volatile int *data_d, volatile int *flag_d, int len, int pe, \
-                                    int iter, int skip, double *lat_result) {                    \
-        long long int start, stop;                                                               \
-        double time;                                                                             \
-        int i, tid, peer;                                                                        \
-                                                                                                 \
-        peer = !pe;                                                                              \
-        tid = threadIdx.x;                                                                       \
-                                                                                                 \
-        for (i = 0; i < (iter + skip); i++) {                                                    \
-            if (i == skip) {                                                                     \
-                __syncthreads();                                                                 \
-                if (!tid) {                                                                      \
-                    nvshmem_quiet();                                                             \
-                    start = clock64();                                                           \
-                }                                                                                \
-                __syncthreads();                                                                 \
-            }                                                                                    \
-                                                                                                 \
-            nvshmemx_int_get_nbi_##group((int *)data_d, (int *)data_d, len, peer);               \
-                                                                                                 \
-            __syncthreads();                                                                     \
-            if (!tid) nvshmem_quiet();                                                           \
-            __syncthreads();                                                                     \
-        }                                                                                        \
-                                                                                                 \
-        if (!tid) {                                                                              \
-            stop = clock64();                                                                    \
-            time = (stop - start) / iter;                                                        \
-            *lat_result = time * 1000 / clockrate;                                               \
-        }                                                                                        \
+#define LATENCY_THREADGROUP(group)                                                    \
+    __global__ void latency_##group(int *data_d, int len, int pe, int iter, int skip, \
+                                    double *lat_result) {                             \
+        long long int start, stop;                                                    \
+        double time;                                                                  \
+        int i, tid, peer;                                                             \
+                                                                                      \
+        peer = !pe;                                                                   \
+        tid = threadIdx.x;                                                            \
+                                                                                      \
+        for (i = 0; i < (iter + skip); i++) {                                         \
+            if (i == skip) {                                                          \
+                __syncthreads();                                                      \
+                if (!tid) {                                                           \
+                    nvshmem_quiet();                                                  \
+                    start = clock64();                                                \
+                }                                                                     \
+                __syncthreads();                                                      \
+            }                                                                         \
+                                                                                      \
+            nvshmemx_int_get_nbi_##group(data_d, data_d, len, peer);                  \
+                                                                                      \
+            __syncthreads();                                                          \
+            if (!tid) nvshmem_quiet();                                                \
+            __syncthreads();                                                          \
+        }                                                                             \
+                                                                                      \
+        if (!tid) {                                                                   \
+            stop = clock64();                                                         \
+            time = (stop - start) / iter;                                             \
+            *lat_result = time * 1000 / clockrate;                                    \
+        }                                                                             \
     }
 
 LATENCY_THREADGROUP(warp)
@@ -87,7 +86,7 @@ LATENCY_THREADGROUP(block)
 
 int main(int c, char *v[]) {
     int mype, npes, size;
-    int *flag_d = NULL, *data_d = NULL;
+    int *data_d = NULL;
 
     int iter = 200;
     int skip = 20;
@@ -109,9 +108,7 @@ int main(int c, char *v[]) {
     }
 
     data_d = (int *)nvshmem_malloc(max_msg_size);
-    flag_d = (int *)nvshmem_malloc(sizeof(int));
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
-    CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(int)));
 
     array_size = floor(log2((float)max_msg_size)) + 1;
     alloc_tables(&h_tables, 2, array_size);
@@ -129,7 +126,7 @@ int main(int c, char *v[]) {
             h_size_arr[i] = size;
             nelems = size / sizeof(int);
 
-            latency<<<1, 1>>>(data_d, flag_d, nelems, mype, iter, skip, &h_lat[i]);
+            latency<<<1, 1>>>(data_d, nelems, mype, iter, skip, &h_lat[i]);
 
             CUDA_CHECK(cudaGetLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
@@ -150,7 +147,7 @@ int main(int c, char *v[]) {
             h_size_arr[i] = size;
             nelems = size / sizeof(int);
 
-            latency_warp<<<1, THREADS_PER_WARP>>>(data_d, flag_d, nelems, mype, iter, skip, &h_lat[i]);
+            latency_warp<<<1, THREADS_PER_WARP>>>(data_d, nelems, mype, iter, skip, &h_lat[i]);
 
             CUDA_CHECK(cudaGetLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
@@ -171,7 +168,7 @@ int main(int c, char *v[]) {
             h_size_arr[i] = size;
             nelems = size / sizeof(int);
 
-            latency_block<<<1, THREADS_PER_BLOCK>>>(data_d, flag_d, nelems, mype, iter, skip, &h_lat[i]);
+            latency_block<<<1, THREADS_PER_BLOCK>>>(data_d, nelems, mype, iter, skip, &h_lat[i]);
 
             CUDA_CHECK(cudaGetLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
@@ -188,7 +185,6 @@ int main(int c, char *v[]) {
 finalize:
 
     if (data_d) nvshmem_free(data_d);
-    if (flag_d) nvshmem_free(flag_d);
     free_tables(h_tables, 2);
     finalize_wrapper();
 

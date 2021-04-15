@@ -41,10 +41,12 @@ __device__ nvshmemi_timeout_t *nvshmemi_timeout_d;
 // this will have to be arrays of pointers if more than one channels are used
 __device__ void *proxy_channels_buf_d;       /* requests are written in this buffer */
 __device__ char *proxy_channel_g_buf_d;
+__device__ char *proxy_channel_g_coalescing_buf_d;
 __device__ uint64_t proxy_channel_g_buf_head_d;     /* next location to be assigned to a thread */
 __constant__ uint64_t proxy_channel_g_buf_size_d;   /* Total size of g_buf in bytes */
 __constant__ uint64_t proxy_channel_g_buf_log_size_d;   /* Total size of g_buf in bytes */
 char *proxy_channel_g_buf;
+char *proxy_channel_g_coalescing_buf;
 uint64_t proxy_channel_g_buf_head;     /* next location to be assigned to a thread */
 uint64_t proxy_channel_g_buf_size;   /* Total size of g_buf in bytes */
 uint64_t proxy_channel_g_buf_log_size;   /* Total size of g_buf in bytes */
@@ -72,49 +74,68 @@ __forceinline__ __device__ void check_channel_availability(uint64_t tail_idx) {
     }
 }
 
-__device__ void nvshmemi_proxy_quiet() {
+__device__ void nvshmemi_proxy_quiet(bool use_membar) {
     uint64_t quiet_issue;
     quiet_issue = (*(volatile uint64_t *)proxy_channels_issue_d);
     atomicMax((unsigned long long int *)proxy_channels_quiet_issue_d, quiet_issue);
 
     nvshmemi_wait_until_greater_than_equals<uint64_t>(proxy_channels_quiet_ack_d, quiet_issue, NVSHMEMI_CALL_SITE_PROXY_QUIET);
-    __threadfence_system();  // XXX: prevents store to issue_d reordered to before load from
-                             // quiet_ack_d (breaks quiet -> rma)
+    if (use_membar) {
+        __threadfence_system();  // XXX: prevents store to issue_d reordered to before load from
+                                // quiet_ack_d (breaks quiet -> rma)
+    }
 }
 
-__device__ void nvshmemi_proxy_quiet_no_membar() { /* This function is same as nvshmemi_proxy_quiet
-                                                      except that it does not have __threadfence_sysmte() call
-                                                      at the end */
-    uint64_t quiet_issue;
-    quiet_issue = (*(volatile uint64_t *)proxy_channels_issue_d);
-    atomicMax((unsigned long long int *)proxy_channels_quiet_issue_d, quiet_issue);
-
-    nvshmemi_wait_until_greater_than_equals<uint64_t>(proxy_channels_quiet_ack_d, quiet_issue, NVSHMEMI_CALL_SITE_PROXY_QUIET);
-}
-
-__device__ void nvshmemi_proxy_enforce_consistency_at_target() {
+__device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar) {
     uint64_t cst_issue;
     cst_issue = (*(volatile uint64_t *)proxy_channels_issue_d);
     atomicMax((unsigned long long int *)proxy_channels_cst_issue_d, cst_issue);
 
     nvshmemi_wait_until_greater_than_equals<uint64_t>(proxy_channels_cst_ack_d, cst_issue, NVSHMEMI_CALL_SITE_PROXY_ENFORCE_CONSISTENCY_AT_TARGET);
-    __threadfence_system();  // XXX: prevents store to issue_d reordered to before load from
-                             // cst_ack_d (breaks cst -> rma)
+    if (use_membar) {
+        __threadfence_system();  // XXX: prevents store to issue_d reordered to before load from
+                                // cst_ack_d (breaks cst -> rma)
+    }
 }
 
-__device__ void nvshmemi_proxy_enforce_consistency_at_target_no_membar() {/* This function is same as nvshmemi_proxy_enforce_consistency_at_target()
-                                                                             except that it does not have __threadfence_sysmte() call
-                                                                             at the end */
-    uint64_t cst_issue;
-    cst_issue = (*(volatile uint64_t *)proxy_channels_issue_d);
-    atomicMax((unsigned long long int *)proxy_channels_cst_issue_d, cst_issue);
+__device__ void copy_to_channel(void *ptr, uint32_t size) {
+    channel_bounce_buffer_t bounce;
+    uint64_t idx, tail_idx; 
+    volatile uint64_t *channel_ptr;
+    char *src_ptr = (char *)ptr;
+    uint32_t size_with_flags;
+    uint32_t size_remaining;
 
-    nvshmemi_wait_until_greater_than_equals<uint64_t>(proxy_channels_cst_ack_d, cst_issue, NVSHMEMI_CALL_SITE_PROXY_ENFORCE_CONSISTENCY_AT_TARGET);
+    /* idx is an every increasing counter. Since it is 64 bit integer, practically
+    it will not overflow */
+    size_with_flags = (size * 8) / 7;
+    if (size_with_flags % 8) {
+        size_with_flags += (8 - (size_with_flags % 8));
+    }
+    idx = atomicAdd((unsigned long long int *)proxy_channels_issue_d, size_with_flags);
+    tail_idx = idx + (size_with_flags - 1);
+
+    // flow-control
+    check_channel_availability(tail_idx);
+    
+    for (size_remaining = size; size_remaining > 7; idx += sizeof(uint64_t), size_remaining -= 7) {
+        channel_ptr = (volatile uint64_t *)((uint64_t)proxy_channels_buf_d + (idx & (CHANNEL_BUF_SIZE - 1)));
+        memcpy(&bounce.bytes[1], src_ptr, 7);
+        /* Note, the second to last bit being set denotes a continuation of the same request to the other side. */
+        bounce.bytes[0] = (char)(!((idx >> proxy_channel_buf_logsize_d) & 1) | 0x10);
+        *channel_ptr = bounce.whole_buffer;
+        src_ptr += 7;
+    }
+
+    channel_ptr = (volatile uint64_t *)((uint64_t)proxy_channels_buf_d + (idx & (CHANNEL_BUF_SIZE - 1)));
+    memcpy(&bounce.bytes[1], src_ptr, size_remaining);
+    bounce.bytes[0] = (char)!((idx >> proxy_channel_buf_logsize_d) & 1);
+    *channel_ptr = bounce.whole_buffer;
 }
 
 __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size_t bytes, int pe, int channel_op) {
     uint64_t idx, tail_idx, *req;
-    int size = sizeof(channel_request_t);
+    int size = PROXY_DMA_REQ_BYTES;
     int group_size = 1;
     void *buf_ptr = proxy_channels_buf_d;
     void *base_ptr = nvshmemi_heap_base_d;
@@ -129,11 +150,12 @@ __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size_t byte
     // flow-control
     check_channel_availability(tail_idx);
 
-    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (proxy_channel_buf_size_d - 1)));
-    uint64_t curr_flag = !((idx >> proxy_channel_buf_logsize_d) &
-                           1); /* curr_flag is either 0 or 1. Starting at idx = 0 to idx =
-                                  proxy_channel_buf_size_d - 1, it will be 1, then for next
-                                  proxy_channel_buf_size_d idx values it will be 0, and so on. */
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
+    uint64_t curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
+    /* curr_flag is either 0 or 1. Starting at idx = 0 to idx =
+     * proxy_channel_buf_size_d - 1, it will be 1, then for next
+     * proxy_channel_buf_size_d idx values it will be 0, and so on.
+     */
     uint64_t roffset = (uint64_t)((char *)rptr - (char *)base_ptr);
     uint64_t loffset = (uint64_t)((char *)lptr - (char *)base_ptr);
     uint64_t op = channel_op;
@@ -142,7 +164,6 @@ __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size_t byte
 
     // assumption that wrap around does not occur in the middle of the request,
     // issue is always incremenet in multiples of sizeof(channel_request_t)
-
     /* base_request_t
      * 32 | 8 | 8 | 8 | 8
      * roffset_high | roffset_low | op | group_size | flag */
@@ -152,19 +173,25 @@ __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size_t byte
     /* put_dma_request_0
      * 32 | 16 | 8 | 8
      * loffset_high | loffset_low | resv | flag */
-    req++;
+     idx += CHANNEL_ENTRY_BYTES;
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
+    curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
     *((volatile uint64_t *)req) = (uint64_t)(loffset << 16 | curr_flag);
 
     /* put_dma_request_1
      * 32 | 16 | 8 | 8
      * size_high | size_low | resv | flag */
-    req++;
+    idx += CHANNEL_ENTRY_BYTES;
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (proxy_channel_buf_size_d - 1)));
+    curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
     *((volatile uint64_t *)req) = (uint64_t)(size_u64 << 16 | curr_flag);
 
     /* put_dma_request_2
      * 32 | 16 | 8 | 8
      * resv2 | pe | resv1 | flag */
-    req++;
+    idx += CHANNEL_ENTRY_BYTES;
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
+    curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
     *((volatile uint64_t *)req) = (uint64_t)((pe_u16 << 16) | curr_flag);
 }
 
@@ -182,24 +209,75 @@ template __device__ void nvshmemi_proxy_rma<NVSHMEMI_OP_GET>(void *rptr, void *l
 
 template<typename T>
 __device__ T nvshmemi_proxy_rma_g(void * source, int pe) {
-    uint64_t counter = atomicAdd((unsigned long long int *) &proxy_channel_g_buf_head_d, 1);
-    uint64_t idx = counter*sizeof(g_elem_t);
-    uint64_t idx_in_buf = idx & (proxy_channel_g_buf_size_d - 1);
-    g_elem_t *elem = (g_elem_t *)(proxy_channel_g_buf_d + idx_in_buf);
-    uint64_t flag = (idx >> proxy_channel_g_buf_log_size_d)*2;
+//check for CC >= 7.0 because the code depends on __match_all_sync
+#if __CUDA_ARCH__ >= 700
+    constexpr unsigned int full_warp = 0xffffffffu;
+    const unsigned int amask = __activemask();
+    unsigned int laneId;
+    asm ("mov.u32 %0, %%laneid;" : "=r"(laneId) );
+    int pred_pe = 0;
+    int pred_contigous = 0;
 
-    /* wait until elemet can be used */
-    while(elem->flag < flag);
+    //check if warp is coalesced, if all lanes put to the same PE and if buffer is contigous
+    if ( full_warp == amask &&
+         full_warp == __match_all_sync(full_warp,pe,&pred_pe) &&
+         full_warp == __match_all_sync(full_warp,reinterpret_cast<uintptr_t>(reinterpret_cast<char*>(source)-(laneId*sizeof(T))),&pred_contigous) )
+    {
+        assert(pred_pe && pred_contigous);
 
-    nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_G>(source, (void *)elem, sizeof(T), pe);
-    nvshmemi_proxy_quiet_no_membar();
+        g_elem_t *elem = nullptr;
+        int coalescing_buf_byte_offset = -1;
+        if ( 0 == laneId )
+        {
+            uint64_t counter = atomicAdd((unsigned long long int *) &proxy_channel_g_buf_head_d, 1);
+            uint64_t idx = counter*sizeof(g_elem_t);
+            uint64_t idx_in_buf = idx & (proxy_channel_g_buf_size_d - 1);
+            elem = (g_elem_t *)(proxy_channel_g_buf_d + idx_in_buf);
+            coalescing_buf_byte_offset = (idx_in_buf/sizeof(g_elem_t)) * NVSHMEMI_WARP_SIZE * sizeof(uint64_t);
+            //Using a g_elem_t as to for a coalescing buffer at the same index
+            uint64_t flag = (idx >> proxy_channel_g_buf_log_size_d)*2;
 
-    T return_val = *(T *)(&(elem->data));
-    __threadfence();
-    /* release the element for the next thread */
-    elem->flag += 2;
+            /* wait until element can be used */
+            nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag, NVSHMEMI_CALL_SITE_G_WAIT_FLAG); 
+            static_assert(sizeof(T) <= sizeof(uint64_t), "sizeof(T) exceeds sizeof(uint64_t)");
+            nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_G>(source, (void *) (proxy_channel_g_coalescing_buf_d + coalescing_buf_byte_offset), NVSHMEMI_WARP_SIZE*sizeof(T), pe);
+            nvshmemi_proxy_quiet(false);
+        }
+        coalescing_buf_byte_offset = __shfl_sync(amask, coalescing_buf_byte_offset, 0);
+        T* __restrict__ coalescing_buf = reinterpret_cast<T*>(proxy_channel_g_coalescing_buf_d + coalescing_buf_byte_offset);
+        T return_val = coalescing_buf[laneId];
+        __syncwarp(amask);
+        if ( 0 == laneId )
+        {
+            __threadfence();
+            /* release the element for the next thread */
+            elem->flag += 2;
+        }
 
-    return return_val;
+        return return_val;
+    }
+    else
+#endif //__CUDA_ARCH__ >= 700
+    {
+        uint64_t counter = atomicAdd((unsigned long long int *) &proxy_channel_g_buf_head_d, 1);
+        uint64_t idx = counter*sizeof(g_elem_t);
+        uint64_t idx_in_buf = idx & (proxy_channel_g_buf_size_d - 1);
+        g_elem_t *elem = (g_elem_t *)(proxy_channel_g_buf_d + idx_in_buf);
+        uint64_t flag = (idx >> proxy_channel_g_buf_log_size_d)*2;
+
+        /* wait until element can be used */
+        nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag, NVSHMEMI_CALL_SITE_G_WAIT_FLAG);
+
+        nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_G>(source, (void *)elem, sizeof(T), pe);
+        nvshmemi_proxy_quiet(false);
+
+        T return_val = *(T *)(&(elem->data));
+        __threadfence();
+        /* release the element for the next thread */
+        elem->flag += 2;
+
+        return return_val;
+    }
 }
 template __device__ char nvshmemi_proxy_rma_g<char>(void* source, int pe);
 template __device__ unsigned char nvshmemi_proxy_rma_g<unsigned char>(void *source, int pe);
@@ -226,11 +304,40 @@ template __device__ void nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>(void *rptr, voi
 template __device__ void nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_G>(void *rptr, void *lptr, size_t bytes,
                                                             int pe);
 
+__forceinline__ __device__ void convert_val_to_uint64(uint64_t *dest, void *value, size_t size)
+{
+    uint8_t byte_buffer_1;
+    uint16_t byte_buffer_2;
+    uint32_t byte_buffer_4;
+    uint64_t byte_buffer_8;
+
+    switch(size) {
+        case 1:
+            memcpy(&byte_buffer_1, value, size);
+            *dest = byte_buffer_1;
+            break;
+        case 2:
+            memcpy(&byte_buffer_2, value, size);
+            *dest = byte_buffer_2;
+            break;
+        case 4:
+            memcpy(&byte_buffer_4, value, size);
+            *dest = byte_buffer_4;
+            break;
+        case 8:
+            memcpy(&byte_buffer_8, value, size);
+            *dest = byte_buffer_8;
+            break;
+        default:
+            printf("Invalid size value provided to convert_val_to_uint64 in proxy_device.cu.\n");
+    }
+}
+
 template <typename T>
 __forceinline__ __device__ void transfer_inline(void *rptr, T value, int pe,
                                                 nvshmemi_op_t optype) {
     uint64_t idx, tail_idx, *req;
-    int size = sizeof(channel_request_t);
+    int size = PROXY_INLINE_REQ_BYTES;
     int group_size = 1;
     void *buf_ptr = proxy_channels_buf_d;
     void *base_ptr = nvshmemi_heap_base_d;
@@ -241,12 +348,17 @@ __forceinline__ __device__ void transfer_inline(void *rptr, T value, int pe,
     // flow-control
     check_channel_availability(tail_idx);
 
-    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (proxy_channel_buf_size_d - 1)));
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
     uint64_t curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
     uint64_t roffset = (uint64_t)((char *)rptr - (char *)base_ptr);
     uint64_t op = optype;
     uint16_t pe_u16 = pe;
     uint64_t size_u64 = sizeof(T);
+
+    uint64_t lvalue_buffer = 0;
+    const uint64_t mask_4_bytes = 0x00000000ffffffff;
+
+    convert_val_to_uint64(&lvalue_buffer, &value, sizeof(T));
 
     // assumption that wrap around does not occur in the middle of the request,
     // issue is always incremenet in multiples of sizeof(channel_request_t)
@@ -260,20 +372,21 @@ __forceinline__ __device__ void transfer_inline(void *rptr, T value, int pe,
     /* put_inline_request_0
      * 32 | 16 | 8 | 8
      * lvalue (low) | pe | resv | flag */
-    req++;
-    uint64_t lvalue_low = *((uint32_t *)&value);
+    idx += CHANNEL_ENTRY_BYTES;
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
+    curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
+    /* mask lower four bytes. */
+    const uint64_t lvalue_low = lvalue_buffer & mask_4_bytes;
     *((volatile uint64_t *)req) = (lvalue_low << 32 | ((uint64_t)pe_u16 << 16) | curr_flag);
 
     /* put_inline_request_1
      * 32 | 16 | 8 | 8
      * lvalue(high) | size | resv | flag */
-    req++;
-    uint64_t lvalue_high = (size_u64 > 4) ? ((*((uint64_t *)&value)) >> 32) : 0;
-    *((volatile uint64_t *)req) = (lvalue_high << 32 | size_u64 << 16 | curr_flag);
-
-    /* update flags on all 64bit chunks of the channel request size */
-    req++;
-    *((volatile uint64_t *)req) = (uint64_t)(curr_flag);
+    idx += CHANNEL_ENTRY_BYTES;
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
+    curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
+    const uint64_t lvalue_high = lvalue_buffer & ~mask_4_bytes;
+    *((volatile uint64_t *)req) = (lvalue_high | size_u64 << 16 | curr_flag);
 }
 
 template <typename T>
@@ -309,7 +422,7 @@ template __device__ void nvshmemi_proxy_rma_p<double>(void *rptr,
 template <typename T>
 __device__ void amo (void *rptr, T swap_add, T compare, int pe, nvshmemi_amo_t amo_op) {
     uint64_t idx, tail_idx, *req;
-    int size = sizeof(channel_request_t);
+    int size = PROXY_AMO_REQ_BYTES;
     int group_size = 1;
     void *buf_ptr = proxy_channels_buf_d;
     void *base_ptr = nvshmemi_heap_base_d;
@@ -320,13 +433,20 @@ __device__ void amo (void *rptr, T swap_add, T compare, int pe, nvshmemi_amo_t a
     // flow-control
     check_channel_availability(tail_idx);
 
-    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (proxy_channel_buf_size_d - 1)));
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
     uint64_t curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
     uint64_t roffset = (uint64_t)((char *)rptr - (char *)base_ptr);
     uint64_t op = NVSHMEMI_OP_AMO;
     uint64_t amo = amo_op;
     uint16_t pe_u16 = pe;
     uint64_t size_u64 = sizeof(T);
+    uint64_t swap_add_buffer;
+    uint64_t compare_buffer;
+    const uint64_t mask_4_bytes = 0x00000000FFFFFFFF;
+    const uint64_t mask_7_bytes = 0x00000000000000FF;
+
+    convert_val_to_uint64(&swap_add_buffer, &swap_add, sizeof(T));
+    convert_val_to_uint64(&compare_buffer, &compare, sizeof(T));
 
     // assumption that wrap around does not occur in the middle of the request,
     // issue is always incremenet in multiples of sizeof(channel_request_t)
@@ -340,24 +460,31 @@ __device__ void amo (void *rptr, T swap_add, T compare, int pe, nvshmemi_amo_t a
     /* amo_request_0
      * 32 | 16 | 8 | 8
      * swap_add_low | pe | amo | flag */
-    req++;
-    uint64_t swap_add_low = *((uint32_t *)&swap_add);
+    idx += CHANNEL_ENTRY_BYTES;
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
+    curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
+    const uint64_t swap_add_low = swap_add_buffer & mask_4_bytes;
     *((volatile uint64_t *)req) = (swap_add_low << 32 | ((uint64_t)pe_u16 << 16) | (amo << 8)| curr_flag);
 
     /* amo_request_1
      * 32 | 16 | 8 | 8
      * swap_add_high | size | compare_low | flag */
-    req++;
-    uint64_t swap_add_high = (size_u64 > 4) ? ((*((uint64_t *)&swap_add)) >> 32) : 0;
-    uint64_t compare_low = *((uint8_t *)&compare);
-    *((volatile uint64_t *)req) = (swap_add_high << 32 | size_u64 << 16 | compare_low << 8 | curr_flag);
+    idx += CHANNEL_ENTRY_BYTES;
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
+    curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
+    const uint64_t swap_add_high = swap_add_buffer & ~mask_4_bytes;
+    const uint64_t compare_low = compare_buffer & mask_7_bytes;
+    *((volatile uint64_t *)req) = (swap_add_high | size_u64 << 16 | compare_low << 8 | curr_flag);
 
     /* amo_request_2
      * 32 | 16 | 8 | 8
      * comapare_high | flag */
-    req++;
-    uint64_t compare_high = (size_u64 > 4) ? ((*((uint64_t *)&compare)) >> 32) : 0;
-    *((volatile uint64_t *)req) = (compare_high << 8 | curr_flag);
+    idx += CHANNEL_ENTRY_BYTES;
+    req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
+    curr_flag = !((idx >> proxy_channel_buf_logsize_d) & 1);
+    /* only mask the low byte for */
+    const uint64_t compare_high = compare_buffer & ~mask_7_bytes;
+    *((volatile uint64_t *)req) = (compare_high | curr_flag);
 }
 
 #define NVSHMEMI_REPT_FOR_STANDARD_AMO_TYPES(NVSHMEMI_FN_TEMPLATE) \
@@ -394,12 +521,12 @@ __device__ void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T swap_add,
     g_elem_t *elem = (g_elem_t *)(proxy_channel_g_buf_d + idx_in_buf);
     uint64_t flag = (idx >> proxy_channel_g_buf_log_size_d)*2;
 
-    /* wait until elemet can be used */
-    nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&elem->flag, flag, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_FLAG);
+    /* wait until element can be used */
+    nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_FLAG);
 
     amo<T>(rptr, swap_add, compare, pe, op);
 
-    nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&elem->flag, flag + 1, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_DATA);
+    nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag + 1, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_DATA);
     __threadfence();
 
     T return_val = *(T *)(&(elem->data));
@@ -426,7 +553,7 @@ NVSHMEMI_REPT_FOR_EXTENDED_AMO_TYPES(NVSHMEMI_DECL_PROXY_AMO_FETCH)
 __device__ void nvshmemi_proxy_fence() {
     // making it a no-op as it is a no-op for IB RC, the only transport
     uint64_t idx, tail_idx, *req;
-    int size = sizeof(channel_request_t);
+    int size = sizeof(uint64_t);
 
     // assumption that wrap around does not occur in the middle of the request,
     // issue is always incremenet in multiples of sizeof(channel_request_t)
@@ -445,14 +572,6 @@ __device__ void nvshmemi_proxy_fence() {
      * 32 | 8 | 8 | 8 | 8
      * resv | resv | op | resv | flag */
     *((volatile uint64_t *)req) = (uint64_t)((op << 16) | curr_flag);
-
-    /* update flags on all 64bit chunks of the channel request size */
-    req++;
-    *((volatile uint64_t *)req) = (uint64_t)(curr_flag);
-    req++;
-    *((volatile uint64_t *)req) = (uint64_t)(curr_flag);
-    req++;
-    *((volatile uint64_t *)req) = (uint64_t)(curr_flag);
 
     return;
 }
@@ -525,11 +644,15 @@ int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
     proxy_channel_g_buf = (char *)nvshmemi_malloc(proxy_channel_g_buf_size);
     NULL_ERROR_JMP(proxy_channel_g_buf, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, 
 		    out, "failed allocating proxy_channel_g_buf");
+    proxy_channel_g_coalescing_buf = (char *)nvshmemi_malloc(G_COALESCING_BUF_SIZE);
+    NULL_ERROR_JMP(proxy_channel_g_coalescing_buf, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, 
+            out, "failed allocating proxy_channel_g_coalescing_buf");
 
     CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(proxy_channel_g_buf_size_d, &proxy_channel_g_buf_size, sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
     CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(proxy_channel_g_buf_log_size_d, &proxy_channel_g_buf_log_size, sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
     CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(proxy_channel_g_buf_head_d, &proxy_channel_g_buf_head, sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
     CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(proxy_channel_g_buf_d, &proxy_channel_g_buf, sizeof(char *), 0, cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(proxy_channel_g_coalescing_buf_d, &proxy_channel_g_coalescing_buf, sizeof(char *), 0, cudaMemcpyHostToDevice));
 
     assert(proxy_channel_g_buf_size % sizeof(g_elem_t) == 0);
 

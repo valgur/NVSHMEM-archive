@@ -18,50 +18,6 @@
 
 #ifdef __CUDA_ARCH__
 template <typename T>
-__device__ inline void put_warp(T *dest, const T *source, size_t nelems, int pe) {
-    nvshmemi_warp_sync();
-    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
-    int myIdx = nvshmemi_thread_id_in_warp();
-    int groupSize = nvshmemi_warp_size();
-    if (peer_base_addr) {
-        volatile T *dest_actual = (volatile T *)((char *)(peer_base_addr) +
-                                                 ((char *)dest - (char *)(nvshmemi_heap_base_d)));
-        for (size_t i = myIdx; i < nelems; i += groupSize) {
-            *(dest_actual + i) = *(source + i);
-        }
-    } else {
-        if (!myIdx) {
-            nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, nelems * sizeof(T),
-                                               pe);
-            nvshmemi_proxy_quiet();
-        }
-    }
-    nvshmemi_warp_sync();
-}
-
-template <typename T>
-__device__ inline void put_threadblock(T *dest, const T *source, size_t nelems, int pe) {
-    nvshmemi_block_sync();
-    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
-    int myIdx = nvshmemi_thread_id_in_block();
-    int groupSize = nvshmemi_block_size();
-    if (peer_base_addr) {
-        volatile T *dest_actual = (volatile T *)((char *)(peer_base_addr) +
-                                                 ((char *)dest - (char *)(nvshmemi_heap_base_d)));
-        for (size_t i = myIdx; i < nelems; i += groupSize) {
-            *(dest_actual + i) = *(source + i);
-        }
-    } else {
-        if (!myIdx) {
-            nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, nelems * sizeof(T),
-                                               pe);
-            nvshmemi_proxy_quiet();
-        }
-    }
-    nvshmemi_block_sync();
-}
-
-template <typename T>
 __device__ inline void signal(T *dest, const T value, int pe) {
    const void *peer_base_addr =
        (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
@@ -74,6 +30,37 @@ __device__ inline void signal(T *dest, const T value, int pe) {
    }
 }
 
+#define NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE(SCOPE, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE)     \
+    __device__ inline void nvshmemi_##TYPENAME##_put_signal##SC_SUFFIX(                     \
+        TYPE *dest, const TYPE *source, size_t nelems, uint64_t *sig_addr, uint64_t signal, \
+        int sig_op, int pe, bool is_nbi) {                                                  \
+        NVSHMEMI_DECL_THREAD_IDX##SC_SUFFIX();                                              \
+        void *peer_base_addr =                                                              \
+            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);      \
+        if (peer_base_addr) {                                                               \
+            nvshmemx_##TYPENAME##_put##SC_SUFFIX(dest, source, nelems, pe);                 \
+            if (myIdx == 0) {                                                               \
+                __threadfence_system();                                                     \
+                nvshmemx_signal_op(sig_addr, signal, sig_op, pe);                           \
+            }                                                                               \
+            NVSHMEMI_SYNC##SC_SUFFIX();                                                     \
+        } else {                                                                            \
+            NVSHMEMI_SYNC##SC_SUFFIX();                                                     \
+            if (myIdx == 0) {                                                               \
+                nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source,       \
+                                                        nelems * sizeof(TYPE), pe);         \
+                nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe,         \
+                                                      (nvshmemi_amo_t)sig_op);              \
+                if (is_nbi == 0) nvshmemi_proxy_quiet(true);                                \
+            }                                                                               \
+            NVSHMEMI_SYNC##SC_SUFFIX();                                                     \
+        }                                                                                   \
+    }
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE, warp, _warp, x)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE, block, _block,
+                                                 x)
+#undef NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE
 #endif
 
 #ifdef __cplusplus
@@ -101,7 +88,7 @@ extern "C" {
             if (!myIdx) {                                                                \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source,         \
                                                    nelems * sizeof(Type), pe);           \
-                nvshmemi_proxy_quiet();                                                  \
+                nvshmemi_proxy_quiet(true);                                              \
             }                                                                            \
         }                                                                                \
         NVSHMEMI_SYNC_##Group();                                                         \
@@ -113,6 +100,85 @@ extern "C" {
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_PUT_THREADGROUP)
 #undef DEFINE_NVSHMEM_TYPE_PUT_THREADGROUP
+
+/* __device__ nvshmem_<typename>_put_signal_scope */
+#define NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE_IMPL(SCOPE, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE) \
+    __device__ inline void nvshmemx_##TYPENAME##_put_signal##SC_SUFFIX(                      \
+        TYPE *dest, const TYPE *source, size_t nelems, uint64_t *sig_addr, uint64_t signal,  \
+        int sig_op, int pe) {                                                                \
+        nvshmemi_##TYPENAME##_put_signal##SC_SUFFIX(dest, source, nelems, sig_addr, signal,  \
+                                                    sig_op, pe, 0);                          \
+    }
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE_IMPL, warp,
+                                                 _warp, x)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE_IMPL, block,
+                                                 _block, x)
+#undef NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE_IMPL
+
+/* __device__ nvshmem_putmem_signal_scope */
+#define NVSHMEMI_PUTMEM_SIGNAL_SCOPE_IMPL(SCOPE, SC_SUFFIX, SC_PREFIX)                            \
+    __device__ inline void nvshmemx_putmem_signal##SC_SUFFIX(                                     \
+        void *dest, const void *source, size_t nelems, uint64_t *sig_addr, uint64_t signal,       \
+        int sig_op, int pe) {                                                                     \
+        nvshmemi_char_put_signal##SC_SUFFIX((char *)dest, (const char *)source, nelems, sig_addr, \
+                                            signal, sig_op, pe, 0);                               \
+    }
+
+NVSHMEMI_PUTMEM_SIGNAL_SCOPE_IMPL(warp, _warp, x)
+NVSHMEMI_PUTMEM_SIGNAL_SCOPE_IMPL(block, _block, x)
+#undef NVSHMEMI_PUTMEM_SIGNAL_SCOPE_IMPL
+
+/* __device__ nvshmem_putsize_signal_scope */
+#define NVSHMEMI_PUTSIZE_SIGNAL_SCOPE_IMPL(SCOPE, SC_SUFFIX, SC_PREFIX, BITS)                 \
+    __device__ inline void nvshmemx_put##BITS##_signal##SC_SUFFIX(                            \
+        void *dest, const void *source, size_t nelems, uint64_t *sig_addr, uint64_t signal,   \
+        int sig_op, int pe) {                                                                 \
+        nvshmemx_putmem_signal##SC_SUFFIX(dest, source, nelems *(BITS / 8), sig_addr, signal, \
+                                          sig_op, pe);                                        \
+    }
+
+NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_SCOPE_IMPL, warp, _warp, x)
+NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_SCOPE_IMPL, block, _block, x)
+#undef NVSHMEMI_REPT_PUTSIZE_SIGNAL_FOR_SCOPE
+
+/* __device__ nvshmem_<typename>_put_signal_nbi_scope */
+#define NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_SCOPE_IMPL(SCOPE, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE) \
+    __device__ inline void nvshmemx_##TYPENAME##_put_signal_nbi##SC_SUFFIX(                      \
+        TYPE *dest, const TYPE *source, size_t nelems, uint64_t *sig_addr, uint64_t signal,      \
+        int sig_op, int pe) {                                                                    \
+        nvshmemi_##TYPENAME##_put_signal##SC_SUFFIX(dest, source, nelems, sig_addr, signal,      \
+                                                    sig_op, pe, 1);                              \
+    }
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_SCOPE_IMPL, warp,
+                                                 _warp, x)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_SCOPE_IMPL, block,
+                                                 _block, x)
+#undef NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_SCOPE_IMPL
+
+/* __device__ nvshmem_putmem_signal_nbi_scope */
+#define NVSHMEMI_PUTMEM_SIGNAL_NBI_SCOPE_IMPL(SCOPE, SC_SUFFIX, SC_PREFIX)                        \
+    __device__ inline void nvshmemx_putmem_signal_nbi##SC_SUFFIX(                                 \
+        void *dest, const void *source, size_t nelems, uint64_t *sig_addr, uint64_t signal,       \
+        int sig_op, int pe) {                                                                     \
+        nvshmemi_char_put_signal##SC_SUFFIX((char *)dest, (const char *)source, nelems, sig_addr, \
+                                            signal, sig_op, pe, 1);                               \
+    }
+
+NVSHMEMI_PUTMEM_SIGNAL_NBI_SCOPE_IMPL(warp, _warp, x)
+NVSHMEMI_PUTMEM_SIGNAL_NBI_SCOPE_IMPL(block, _block, x)
+#undef NVSHMEMI_PUTMEM_SIGNAL_NBI_SCOPE_IMPL
+
+#define NVSHMEMI_PUTSIZE_SIGNAL_NBI_SCOPE_IMPL(SCOPE, SC_SUFFIX, SC_PREFIX, BITS)             \
+    __device__ inline void nvshmemx_put##BITS##_signal_nbi##SC_SUFFIX(                        \
+        void *dest, const void *source, size_t nelems, uint64_t *sig_addr, uint64_t signal,   \
+        int sig_op, int pe) {                                                                 \
+        nvshmemx_putmem_signal##SC_SUFFIX(dest, source, nelems *(BITS / 8), sig_addr, signal, \
+                                          sig_op, pe);                                        \
+    }
+
+NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_NBI_SCOPE_IMPL, warp, _warp, x)
+NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_NBI_SCOPE_IMPL, block, _block, x)
+#undef NVSHMEMI_REPT_PUTSIZE_SIGNAL_NBI_FOR_SCOPE
 
 #define NVSHMEM_TYPE_GET_THREADGROUP(Name, Type, Group)                                  \
     __device__ inline void nvshmemx_##Name##_get_##Group(Type *dest, const Type *source, \
@@ -133,7 +199,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_PUT_THREADGROUP)
             if (!myIdx) {                                                                \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest,         \
                                                    nelems * sizeof(Type), pe);           \
-                nvshmemi_proxy_quiet();                                                  \
+                nvshmemi_proxy_quiet(true);                                              \
             }                                                                            \
         }                                                                                \
         NVSHMEMI_SYNC_##Group();                                                         \
@@ -165,7 +231,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_GET)
             if (!myIdx) {                                                               \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source,        \
                                                    nelems * sizeof(Type), pe);          \
-                nvshmemi_proxy_quiet();                                                 \
+                nvshmemi_proxy_quiet(true);                                             \
             }                                                                           \
         }                                                                               \
         NVSHMEMI_SYNC_##Group();                                                        \
@@ -196,7 +262,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_PUTSIZE_THREADGROUP)
             if (!myIdx) {                                                                      \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest,               \
                                                    nelems * sizeof(Type), pe);                 \
-                nvshmemi_proxy_quiet();                                                        \
+                nvshmemi_proxy_quiet(true);                                                    \
             }                                                                                  \
         }                                                                                      \
         NVSHMEMI_SYNC_##Group();                                                               \
@@ -226,7 +292,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_GETSIZE_THREADGROUP)
         } else {                                                                                 \
             if (!myIdx) {                                                                        \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, bytes, pe);     \
-                nvshmemi_proxy_quiet();                                                          \
+                nvshmemi_proxy_quiet(true);                                                      \
             }                                                                                    \
         }                                                                                        \
         NVSHMEMI_SYNC_##Group();                                                                 \
@@ -252,7 +318,7 @@ DEFINE_NVSHMEM_PUTMEM_THREADGROUP(block)
         } else {                                                                                 \
             if (!myIdx) {                                                                        \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, bytes, pe);     \
-                nvshmemi_proxy_quiet();                                                          \
+                nvshmemi_proxy_quiet(true);                                                      \
             }                                                                                    \
         }                                                                                        \
         NVSHMEMI_SYNC_##Group();                                                                 \
@@ -445,24 +511,28 @@ DEFINE_NVSHMEM_GETMEM_NBI_THREADGROUP(block)
 NVSHMEMX_REPT_FOR_SIGNAL_TYPES(DEFINE_NVSHMEMX_TYPE_SIGNAL)
 #undef DEFINE_NVSHMEMX_TYPE_SIGNAL
 
-__device__ inline void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
-   const void *peer_base_addr =
-       (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
-   if (sig_op == NVSHMEM_SIGNAL_SET && peer_base_addr != NULL) {
-       volatile uint64_t *dest_actual = (volatile uint64_t *)((char *)(peer_base_addr) +
-                              ((char *)sig_addr - (char *)(nvshmemi_heap_base_d)));
-       *dest_actual = signal;
-   }
-   else if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {
-       volatile uint64_t *dest_actual = (volatile uint64_t *)((char *)(peer_base_addr) +
-                              ((char *)sig_addr - (char *)(nvshmemi_heap_base_d)));
+__device__ inline void nvshmemi_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
+    const void *peer_base_addr =
+        (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+    if (sig_op == NVSHMEM_SIGNAL_SET && peer_base_addr != NULL) {
+        volatile uint64_t *dest_actual =
+            (volatile uint64_t *)((char *)(peer_base_addr) +
+                                  ((char *)sig_addr - (char *)(nvshmemi_heap_base_d)));
+        *dest_actual = signal;
+    } else if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {
+        volatile uint64_t *dest_actual =
+            (volatile uint64_t *)((char *)(peer_base_addr) +
+                                  ((char *)sig_addr - (char *)(nvshmemi_heap_base_d)));
         /* sig_op == NVSHMEM_SIGNAL_ADD */
         atomicAdd((unsigned long long *)dest_actual, signal);
-   } else {
+    } else {
         nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe, (nvshmemi_amo_t)sig_op);
-   }
+    }
 }
 
+__device__ inline void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
+    nvshmemi_signal_op(sig_addr, signal, sig_op, pe);
+}
 
 #endif /* __CUDA_ARCH__ */
 

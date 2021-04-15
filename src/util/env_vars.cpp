@@ -1,5 +1,5 @@
 /****
- * Copyright (c) 2016-2020, NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2016-2021, NVIDIA Corporation.  All rights reserved.
  *
  * Copyright 2011 Sandia Corporation. Under the terms of Contract
  * DE-AC04-94AL85000 with Sandia Corporation, the U.S.  Government
@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <math.h>
 
+#include "nvshmem_nvtx.hpp"
 #include "util.h"
 
 struct nvshmemi_options_s nvshmemi_options;
@@ -83,7 +84,7 @@ static const char *nvshmemi_getenv_helper(const char *prefix, const char *name) 
     int ret;
 
     len = strlen(prefix) + 1 /* '_' */ + strlen(name) + 1 /* '\0' */;
-    env_name = alloca(len);
+    env_name = (char *)alloca(len);
     ret = snprintf(env_name, len, "%s_%s", prefix, name);
     if (ret < 0)
         WARN_PRINT("Error in sprintf: %s_%s\n", prefix, name);
@@ -218,6 +219,19 @@ void nvshmemi_options_print(void) {
 #include "env_defs.h"
 #undef NVSHMEMI_ENV_DEF
     }
+
+#ifndef NVTX_DISABLE
+    if (nvshmemi_options.NVTX) {
+        printf("\nNVTX options:\n");
+#define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)                                         \
+        if (CATEGORY == NVSHMEMI_ENV_CAT_NVTX)                                                              \
+            printf("  NVSHMEM_%-20s " NVSHPRI_##KIND " (type: %s, default: " NVSHPRI_##KIND ")\n\t%s\n",    \
+                   #NAME, NVSHFMT_##KIND(nvshmemi_options.NAME), #KIND, NVSHFMT_##KIND(DEFAULT), SHORT_DESC);
+#include "env_defs.h"
+        nvshmem_nvtx_print_options();
+#undef NVSHMEMI_ENV_DEF
+    }
+#endif /* !NVTX_DISABLE */
 
     printf("\n");
 }

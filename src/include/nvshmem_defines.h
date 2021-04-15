@@ -31,10 +31,8 @@ __device__ void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T value, T comp
 template<typename T>
 __device__ T nvshmemi_proxy_rma_g(void *source, int pe);
 __device__ void nvshmemi_proxy_fence();
-__device__ void nvshmemi_proxy_quiet();
-__device__ void nvshmemi_proxy_quiet_no_membar();
-__device__ void nvshmemi_proxy_enforce_consistency_at_target();
-__device__ void nvshmemi_proxy_enforce_consistency_at_target_no_membar();
+__device__ void nvshmemi_proxy_quiet(bool use_membar);
+__device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar);
 
 #ifdef __CUDA_ARCH__
 template <typename T>
@@ -68,14 +66,12 @@ template <typename T>
 __device__ inline void put(T *dest, const T *source, size_t nelems, int pe) {
     void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
     if (peer_base_addr) {
-        T *dest_actual = (T *)((char *)(peer_base_addr) +
-                               ((char *)dest - (char *)(nvshmemi_heap_base_d)));
-        for (size_t i = 0; i < nelems; i++) {
-            *((T *)dest_actual + i) = *((T *)source + i);
-        }
+        char *dest_actual = (char *)(peer_base_addr) +
+                               ((char *)dest - (char *)(nvshmemi_heap_base_d));
+        nvshmemi_memcpy_thread((void *)dest_actual, (const void *) source, nelems * sizeof(T));
     } else {
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, nelems * sizeof(T), pe);
-        nvshmemi_proxy_quiet();
+        nvshmemi_proxy_quiet(true);
     }
 }
 
@@ -92,7 +88,7 @@ __device__ inline void put_signal(T *dest, const T *source, size_t nelems,
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, nelems * sizeof(T), pe);
         nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe, (nvshmemi_amo_t)sig_op);
         if (is_nbi == 0)
-            nvshmemi_proxy_quiet();
+            nvshmemi_proxy_quiet(true);
     }
 }
 
@@ -100,15 +96,12 @@ template <typename T>
 __device__ inline void get(T *dest, const T *source, size_t nelems, int pe) {
     void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
     if (peer_base_addr) {
-        T *source_actual =
-            (T *)((char *)(peer_base_addr) +
-                  ((char *)source - (char *)(nvshmemi_heap_base_d)));
-        for (size_t i = 0; i < nelems; i++) {
-            *((T *)dest + i) = *((T *)source_actual + i);
-        }
+        char *source_actual =
+            (char *)(peer_base_addr) + ((char *)source - (char *)(nvshmemi_heap_base_d));
+        nvshmemi_memcpy_thread((void *)dest, (const void *)source_actual, nelems * sizeof(T));
     } else {
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, nelems * sizeof(T), pe);
-        nvshmemi_proxy_quiet();
+        nvshmemi_proxy_quiet(true);
     }
 }
 
@@ -116,11 +109,9 @@ template <typename T>
 __device__ inline void put_nbi(T *dest, const T *source, size_t nelems, int pe) {
     void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
     if (peer_base_addr) {
-        T *dest_actual = (T *)((char *)(peer_base_addr) +
-                               ((char *)dest - (char *)(nvshmemi_heap_base_d)));
-        for (size_t i = 0; i < nelems; i++) {
-            *((T *)dest_actual + i) = *((T *)source + i);
-        }
+        char *dest_actual =
+            (char *)(peer_base_addr) + ((char *)dest - (char *)(nvshmemi_heap_base_d));
+        nvshmemi_memcpy_thread((void *)dest_actual, (const void *)source, nelems * sizeof(T));
     } else {
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, nelems * sizeof(T), pe);
     }
@@ -130,12 +121,10 @@ template <typename T>
 __device__ inline void get_nbi(T *dest, const T *source, size_t nelems, int pe) {
     void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
     if (peer_base_addr) {
-        T *source_actual =
-            (T *)((char *)(peer_base_addr) +
-                  ((char *)source - (char *)(nvshmemi_heap_base_d)));
-        for (size_t i = 0; i < nelems; i++) {
-            *((T *)dest + i) = *((T *)source_actual + i);
-        }
+        char *source_actual =
+            (char *)(peer_base_addr) +
+                  ((char *)source - (char *)(nvshmemi_heap_base_d));
+        nvshmemi_memcpy_thread((void *)dest, (const void *)source_actual, nelems * sizeof(T));
     } else {
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, nelems * sizeof(T), pe);
     }
@@ -315,6 +304,23 @@ __device__ inline void nvshmem_get128_nbi(void *dest, const void *source, size_t
 __device__ inline void nvshmem_putmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
     put_nbi<char>((char *)dest, (const char *)source, bytes, pe);
 }
+
+/*__device__ nvshmem_put<bits>_signal*/
+#define NVSHMEMI_SIZE_PUT_SIGNAL_NBI_IMPL(BITS)                                                            \
+    __device__ inline void nvshmem_put##BITS##_signal_nbi(void *dest, const void *source, size_t nelems,   \
+                                                          uint64_t *sig_addr, uint64_t signal, int sig_op, \
+                                                          int pe) {                                        \
+        nvshmem_putmem_signal_nbi(dest, source, nelems*(BITS/8), sig_addr, signal, sig_op, pe);            \
+    }
+NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_SIZE_PUT_SIGNAL_NBI_IMPL)
+
+/*__device__ nvshmem_putmem_signal_nbi*/
+__device__ inline void nvshmem_putmem_signal_nbi(void *dest, const void *source, size_t bytes,
+                                                 uint64_t *sig_addr, uint64_t signal, int sig_op,
+                                                 int pe) {
+    put_signal<char>((char *)dest, (const char *)source, bytes, sig_addr, signal, sig_op, pe, 1);
+}
+
 /*__device__ nvshmem_getmem_nbi*/
 __device__ inline void nvshmem_getmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
     get_nbi<char>((char *)dest, (const char *)source, bytes, pe);
@@ -464,25 +470,9 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TEST_SOME_VECTOR)
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL)
 #undef NVSHMEM_WAIT_UNTIL
 
-__device__ inline void nvshmem_wait_until(long *ivar, int cmp, long cmp_value) {
-    nvshmem_long_wait_until(ivar, cmp, cmp_value);
-}
-
 __device__ inline uint64_t nvshmem_signal_wait_until(uint64_t *sig_addr, int cmp, uint64_t cmp_val) {
     return nvshmemi_signal_wait_until(sig_addr, cmp, cmp_val);
 }
-
-#define NVSHMEM_WAIT(Name, Type)                                                \
-    __device__ inline void nvshmem_##Name##_wait(Type *ivar, Type cmp_value) {  \
-        nvshmemi_wait_until_not_equals<Type>(ivar, cmp_value, NVSHMEMI_CALL_SITE_WAIT_NE);        \
-                                                                                \
-        nvshmemi_syncapi_update_mem();                                          \
-    }
-
-NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT)
-#undef NVSHMEM_WAIT
-
-__device__ inline void nvshmem_wait(long *ivar, long cmp_value) { nvshmem_long_wait(ivar, cmp_value); }
 
 #define NVSHMEM_WAIT_UNTIL_ALL(Name, Type)                                                                \
     __device__ inline void nvshmem_##Name##_wait_until_all(Type *ivars, size_t nelems, const int *status, \
@@ -633,7 +623,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_SOME_VECTOR)
 /* nvshmem_quiet and nvshmem_fence API */
 __device__ inline void nvshmem_quiet() {
     if (nvshmemi_proxy_d && (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_LDST_ATOMICS)) { 
-        nvshmemi_proxy_quiet();
+        nvshmemi_proxy_quiet(true);
     } else {
         __threadfence_system(); /* Use __threadfence_system instead of __threadfence
                                  for data visibility in case of intra-node GPU transfers */
@@ -806,6 +796,18 @@ NVSHMEM_TYPE_ATOMIC_INC_EMULATE(size, size_t)
  * int64_t
  */
 #undef NVSHMEM_TYPE_ATOMIC_INC_EMULATE
+
+__device__ inline void *nvshmem_ptr(const void *ptr, int pe) {
+    ptrdiff_t offset = (char *)ptr - (char *)nvshmemi_heap_base_d;
+
+    if (ptr >= nvshmemi_heap_base_d && offset < nvshmemi_heap_size_d) {
+        void *peer_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+        if (peer_addr != NULL) peer_addr = (void *)((char *)peer_addr + offset);
+        return peer_addr;
+    } else
+        return NULL;
+}
+
 #endif /* __CUDA_ARCH__ */
 
 #ifdef __cplusplus

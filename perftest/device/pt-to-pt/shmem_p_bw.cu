@@ -24,8 +24,8 @@
 #define MAX_MSG_SIZE 64 * 1024
 #define UNROLL 2
 
-__global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, int len, int pe,
-                   int iter, int skip, double *bw_result) {
+__global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, int pe, int iter,
+                   int skip, double *bw_result) {
     int u, i, j, peer, tid, slice;
     unsigned int counter;
     long long int start = 0, stop = 0;
@@ -45,14 +45,14 @@ __global__ void bw(volatile double *data_d, volatile unsigned int *counter_d, in
         for (j = 0; j < len - slice; j += slice) {
             for (u = 0; u < UNROLL; ++u) {
                 int idx = j + u * threads + tid;
-                nvshmem_double_p((double *)data_d + idx, *(data_d + idx), peer);
+                nvshmem_double_p(data_d + idx, *(data_d + idx), peer);
             }
             __syncthreads();
         }
 
         for (u = 0; u < UNROLL; ++u) {
             int idx = j + u * threads + tid;
-            if (idx < len) nvshmem_double_p((double *)data_d + idx, *(data_d + idx), peer);
+            if (idx < len) nvshmem_double_p(data_d + idx, *(data_d + idx), peer);
         }
 
         // synchronizing across blocks

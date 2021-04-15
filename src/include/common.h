@@ -17,21 +17,14 @@
 #define CHECK_RMA_PRESENT 1
 #define CHECK_RMA_AMO_PRESENT 1
 
-#define NVSHMEM_MEM_HANDLE_SIZE 64
+#define NVSHMEM_MEM_HANDLE_SIZE 512
 #define NVSHMEM_EP_HANDLE_SIZE 128
 
 #define MAX_P2P_ACCESSIBLE_GPUS 128
 
-/*TODO:generates warning for P2P transport when arguments of this type are specified but not used*/
-typedef void *nvshmemt_ep_t;
-
 typedef struct nvshmem_mem_handle {
     char reserved[NVSHMEM_MEM_HANDLE_SIZE];
 } nvshmem_mem_handle_t;
-
-typedef struct {
-    char reserved[NVSHMEM_EP_HANDLE_SIZE];
-} nvshmemt_ep_handle_t;
 
 enum {
     NO_NBI = 0,
@@ -129,14 +122,5 @@ typedef struct amo_bytesdesc {
     int name_type;
     int elembytes;
 } amo_bytesdesc_t;
-
-typedef int (*rma_handle)(nvshmemt_ep_t tep, rma_verb_t verb, rma_memdesc_t dest, rma_memdesc_t src,
-                          rma_bytesdesc_t bytesdesc);
-typedef int (*amo_handle)(nvshmemt_ep_t, void *curetptr, amo_verb_t verb, amo_memdesc_t target,
-                          amo_bytesdesc_t bytesdesc);
-typedef int (*fence_handle)(nvshmemt_ep_t tep);
-typedef int (*quiet_handle)(nvshmemt_ep_t tep);
-typedef int (*wait_until_handle)(volatile unsigned int *ptr, unsigned int value, int cond,
-                                 int flush);
 
 #endif

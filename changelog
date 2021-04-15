@@ -1,5 +1,45 @@
 ===============================================================================
+				Changes in 2.1.2
+===============================================================================
+
+# Added a new, experimental UCX internode communication transport layer
+# Added support for automatic warp-level coalescing of nvshmem_g operations
+# Added support for put-with-signal operations on CUDA streams
+# Added support for mapping the symmetric heap using the cuMem APIs
+# Improved performance of single-threaded NVSHMEM put/get device API
+# Added the NVSHMEM_MAX_TEAMS environment variable to specify maximum number
+of teams that can be created
+# Improved the host and on-stream Alltoall performance by using NCCL
+# Fixed a bug in the compare-and-swap operation that caused several bytes of the
+compare operand to be lost
+# Added CPU core affinity to debugging output
+# Added support for the CUDA 11.3 cudaDeviceFlushGPUDirectRDMAWrites API for consistency
+# Improved support for the NVIDIA Tools Extension (NVTX) to enable performance
+analysis through NVIDIA NSight
+# Removed support for nvshmem_wait API that has been deprecated in OpenSHMEM 1.5
+# Removed NVSHMEM_IS_P2P_RUN environment variable, runtime automatically determines it
+# Made improvements to NVSHMEM example codes
+# Added NVSHMEM_REMOTE_TRANSPORT environment variable for selecting the networking
+layer used for communication between nodes
+# Set maxrregcount to 32 for non-inlined device functions to ensure that calling
+these NVSHMEM functions does not negatively affect kernel occupancy
+
+===============================================================================
 				Changes in 2.0.3
+===============================================================================
+
+# Added work-around to avoid deadlocks due to CUDA context resource reconfiguration
+on Power systems
+# Added environment variable NVSHMEM_CUDA_LIMIT_STACK_SIZE to set GPU thread stack size
+on Power systems
+# Use of NCCL for stream and host NVSHMEM collectives is now supported on Power systems
+# Updated threading level support reported for host and stream-based APIs
+to NVSHMEM_THREAD_SERIALIZED. Device-side APIs support NVSHMEM_THREAD_MULTIPLE
+# Fixed a bug that could lead to incorrect behavior for atomic compare-and-swap
+# Fixed an issue that was observed to lead to incorrect results when using GDRCopy
+
+===============================================================================
+				Changes in 2.0.2 EA
 ===============================================================================
 
 # Added the teams and team-based collectives APIs from OpenSHMEM 1.5.

@@ -7,8 +7,10 @@
 #include "nvshmem.h"
 #include "nvshmemx_error.h"
 #include "nvshmem_internal.h"
+#include "nvshmem_nvtx.hpp"
 
 void nvshmem_quiet(void) {
+    NVTX_FUNC_RANGE_IN_GROUP(MEMORDER);
     NVSHMEM_CHECK_STATE_AND_INIT();
 
     int status = 0;
@@ -24,19 +26,14 @@ void nvshmem_quiet(void) {
 
     for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
         if (tbitmap & 1) {
-            if (j == NVSHMEM_TRANSPORT_ID_IBRC) {
                 struct nvshmem_transport *tcurr =
                     ((nvshmem_transport_t *)nvshmemi_state->transports)[j];
-                int ep_count = 1;
-                if (tcurr->attr & NVSHMEM_TRANSPORT_ATTR_CONNECTED) {
-                    ep_count = tcurr->ep_count * nvshmemi_state->npes;
-                }
-                for (int k = 0; k < ep_count; k++) {
-                    if (!tcurr->ep[k]) continue;
-                    status = nvshmemi_state->quiet[j](tcurr->ep[k]);
+                for (int k = 0; k < nvshmemi_state->npes; k++) {
+                    if (nvshmemi_state->quiet[j]) {
+                        status = nvshmemi_state->quiet[j](tcurr, k, 0);
+                    }
                     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_quiet() failed \n");
                 }
-            }
             tbitmap >>= 1;
         }
     }

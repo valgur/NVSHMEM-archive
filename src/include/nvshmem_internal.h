@@ -29,6 +29,8 @@
 
 #define NUM_G_BUF_ELEMENTS 1024 * 1024
 
+#define G_COALESCING_BUF_SIZE NUM_G_BUF_ELEMENTS * NVSHMEMI_WARP_SIZE * sizeof(uint64_t)
+
 #define NVSHMEM_CHECK_STATE_AND_INIT()                                               \
     do {                                                                             \
         if (!nvshmemi_state) ERROR_EXIT("nvshmem API called before nvshmem_init \n"); \
@@ -60,6 +62,7 @@ typedef struct nvshmemi_state_dec {
     char *prefix;
     /*device state*/
     CUdevice cudevice;
+    int device_id;
     CUcontext cucontext;
     /*symmetric heap state*/
     size_t heap_size;
@@ -69,9 +72,15 @@ typedef struct nvshmemi_state_dec {
     void **peer_heap_base;
     void *heap_mspace;
     struct nvshmem_mem_handle *handles;
+    /* variables for VMM */
+#if CUDART_VERSION >= 11000
+    size_t global_heap_base;
+    CUmemGenericAllocationHandle heap_handle;
+#else
+    nvshmem_mem_handle_t heap_handle;
+#endif
     bootstrap_handle_t boot_handle;
     /*transport info*/
-    int transport_count;
     int transport_bitmap;
     int *transport_map;
     struct nvshmem_transport_pe_info *pe_info;
@@ -111,7 +120,10 @@ extern nvshmemi_state_t *nvshmemi_state;
 extern nvshmem_options_t nvshmem_options;
 extern __device__ unsigned long long test_wait_any_start_idx_d;
 extern int nvshmemi_job_connectivity;
+extern int nvshmemi_cuda_driver_version;
 extern int nvshmemi_use_nccl;
+extern int nccl_version;
+extern long nvshmemi_max_teams;
 #ifdef NVSHMEM_USE_NCCL
 /* Reduction operation types */
 #define NCCL_REDOP_sum ncclSum
@@ -210,12 +222,19 @@ struct nccl_function_table {
                               ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream);
     ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount,
                               ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
+    ncclResult_t (*GroupStart)();
+    ncclResult_t (*GroupEnd)();
+    ncclResult_t (*Send)(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer,
+                         ncclComm_t comm, cudaStream_t stream);
+    ncclResult_t (*Recv)(void* recvbuff, size_t count, ncclDataType_t datatype, int peer,
+                         ncclComm_t comm, cudaStream_t stream);
 };
 
 extern struct nccl_function_table nccl_ftable;
 
 #include "nvshmemi_team.h"
 
+bool nvshmemi_need_proxy(nvshmemi_state_t *state);
 int nvshmemi_common_init(nvshmemi_state_t *state);
 int nvshmemi_init_g_buffer();
 int nvshmemi_init_device_state(nvshmemi_state_t *state);
@@ -230,11 +249,13 @@ void *nvshmemi_malloc(size_t size);
 void *nvshmemi_calloc(size_t count, size_t size);
 void *nvshmemi_align(size_t alignment, size_t size);
 void nvshmemi_free(void *ptr);
+void nvshmemi_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
+                                  cudaStream_t cstrm);
+__device__ void nvshmemi_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe);
 
 void nvshmemi_barrier_all();
 
 int nvshmemi_proxy_init(nvshmemi_state_t *state);
 int nvshmemi_proxy_finalize(nvshmemi_state_t *state);
-
 
 #endif

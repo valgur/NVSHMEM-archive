@@ -20,8 +20,8 @@
 #define MAX_MSG_SIZE 1 * 1024 * 1024
 #define UNROLL 8
 
-__global__ void ping_pong(volatile int *data_d, uint64_t *flag_d,
-                          int len, int pe, int iter, int skip, int *hflag, double *lat_result) {
+__global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int iter, int skip,
+                          int *hflag, double *lat_result) {
     long long int start, stop;
     double time;
     int i, tid, peer;
@@ -34,9 +34,9 @@ __global__ void ping_pong(volatile int *data_d, uint64_t *flag_d,
 
         if (pe) {
             nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
-            nvshmem_int_put_signal_nbi((int *)data_d, (int *)data_d, len, flag_d, 1, NVSHMEM_SIGNAL_ADD, peer);
+            nvshmem_int_put_signal_nbi(data_d, data_d, len, flag_d, 1, NVSHMEM_SIGNAL_ADD, peer);
         } else {
-            nvshmem_int_put_signal_nbi((int *)data_d, (int *)data_d, len, flag_d, 1, NVSHMEM_SIGNAL_ADD, peer);
+            nvshmem_int_put_signal_nbi(data_d, data_d, len, flag_d, 1, NVSHMEM_SIGNAL_ADD, peer);
             nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
         }
     }

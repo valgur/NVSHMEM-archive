@@ -6,6 +6,7 @@
 
 #include "nvshmem.h"
 #include "nvshmemi_coll.h"
+#include "nvshmem_nvtx.hpp"
 #include "cpu_coll.h"
 
 #define DEFN_NVSHMEMI_TYPENAME_OP_REDUCE(TYPENAME, TYPE, OP)                                     \
@@ -30,6 +31,7 @@ NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(DEFN_NVSHMEMI_TYPENAME_OP_REDUCE, prod)
 
 #define DEFN_NVSHMEM_TYPENAME_OP_REDUCE(TYPENAME, TYPE, OP)                                                                 \
     int nvshmem_##TYPENAME##_##OP##_reduce(nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce) {           \
+        NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                                                     \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                                         \
         nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                                                  \
         if (nvshmemi_use_nccl && NCCL_REDOP_##OP != -1 && NCCL_DT_##TYPENAME != -1) {                                       \

@@ -2505,7 +2505,7 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
     do {                                                                                        \
         CUdeviceptr ptr = (CUdeviceptr)(p->nvshmem_info.ptr +                                   \
                                         align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t))); \
-        INFO(NVSHMEM_MEM, "nvshmem_adjust_mchunk %p %x %x \n", p->nvshmem_info.ptr,             \
+        INFO(NVSHMEM_MEM, "nvshmem_adjust_mchunk %p %x %x", p->nvshmem_info.ptr,                \
              align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)), adjust_bytes);              \
         CUDA_CHECK(                                                                             \
             cuMemcpyDtoDAsync(ptr + adjust_bytes, ptr, sizeof(uintptr_t), nvshmemi_state->my_stream));  \
@@ -2531,7 +2531,7 @@ char* tbase_global = 0;
         if (r->nvshmem_info.next) ((mchunkptr)r->nvshmem_info.next)->nvshmem_info.prev = (void*)r; \
         void* dest =                                                                               \
             (void*)(p->nvshmem_info.ptr + align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)));  \
-        INFO(NVSHMEM_MEM, "nvshmem_suballocate_mchunk %p %lld\n", dest,                            \
+        INFO(NVSHMEM_MEM, "nvshmem_suballocate_mchunk %p %lld", dest,                              \
              (char*)dest - tbase_global);                                                          \
         /*XXX:this can advance the ptr by another 511 bytes*/                                      \
         CUDA_CHECK(cuMemcpyHtoDAsync(                                                              \
@@ -4978,7 +4978,6 @@ static void* internal_memalign(mstate m, size_t alignment, size_t bytes) {
 #if NVSHMEM_SINGLE_HEAP
             /*just realigns chunk rather than adding */
             if ((((size_t)(mem)) & (alignment - 1)) != 0) { /* misaligned */
-                mchunkptr newp;
                 size_t off = ((size_t)(mem) & (alignment - 1));
                 size_t bytes = (size_t)alignment - off;
                 INFO(NVSHMEM_MEM, "internal_memalign %p %x %x %x", mem, alignment, off, bytes);

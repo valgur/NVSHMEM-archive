@@ -67,6 +67,8 @@ NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI, string, NVSHMEMI_ENV_BOOTSTRAP_DEFAULT, NVSHMEMI
 
 #undef NVSHMEMI_ENV_BOOTSTRAP_DEFAULT
 
+NVSHMEMI_ENV_DEF(MAX_TEAMS, long, 20l, NVSHMEMI_ENV_CAT_OTHER,
+                 "Maximum number of simultaneous teams allowed")
 NVSHMEMI_ENV_DEF(MPI_LIB_NAME, string, "libmpi.so", NVSHMEMI_ENV_CAT_OTHER,
                  "Name of the MPI shared library to be used for bootstrap")
 NVSHMEMI_ENV_DEF(SHMEM_LIB_NAME, string, "liboshmem.so", NVSHMEMI_ENV_CAT_OTHER,
@@ -100,6 +102,8 @@ NVSHMEMI_ENV_DEF(RDX_NUM_TPB, int, 32, NVSHMEMI_ENV_CAT_HIDDEN,
 
 NVSHMEMI_ENV_DEF(ASSERT_ATOMICS_SYNC, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass flush on wait_until at target")
+NVSHMEMI_ENV_DEF(REMOTE_TRANSPORT, string, "default", NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Selected transport for remote operations: default (resolves to ibrc), ibrc, ucx, none")
 NVSHMEMI_ENV_DEF(DISABLE_IB_NATIVE_ATOMICS, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "disable use of InfiniBand native atomics")
 NVSHMEMI_ENV_DEF(DISABLE_GDRCOPY, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
@@ -138,7 +142,7 @@ NVSHMEMI_ENV_DEF(SRQ_DEPTH, int, 16384, NVSHMEMI_ENV_CAT_HIDDEN,
 
 /** Runtime optimimzations **/
 
-NVSHMEMI_ENV_DEF(IS_P2P_RUN, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
-                 "Tells whether all GPUs are p2p connected. NVSHMEM can use this information\n"
-                 "\tfor runtime optimizations. Results can be erroneous if this env variable is\n"
-                 "\tset to 1 but all the GPUs are not p2p connected.")
+/** NVTX instrumentation **/
+NVSHMEMI_ENV_DEF(NVTX, string, "off", NVSHMEMI_ENV_CAT_NVTX,
+                 "Set to enable NVTX instrumentation. Accepts a comma separated list of\n"
+                 "\tinstrumentation groups. By default the NVTX instrumentation is disabled.")

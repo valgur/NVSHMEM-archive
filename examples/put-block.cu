@@ -15,7 +15,7 @@
 #include "nvshmem.h"
 #include "nvshmemx.h"
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
 #include "mpi.h"
 #endif
 
@@ -54,18 +54,18 @@ __global__ void set_and_shift_kernel(float *send_data, float *recv_data, int num
 }
 
 int main(int c, char *v[]) {
-    int mype, npes;
+    int mype, npes, mype_node, num_devices;
     float *send_data, *recv_data;
     int num_elems = 8192;
     int num_blocks;
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     bool use_mpi = false;
     char *value = getenv("NVSHMEMTEST_USE_MPI_LAUNCHER");
     if (value) use_mpi = atoi(value);
 #endif
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     if (use_mpi) {
         MPI_Init(&c, &v);
         int rank, nranks;
@@ -84,9 +84,11 @@ int main(int c, char *v[]) {
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
+    mype_node = nvshmem_team_n_pes(NVSHMEMX_TEAM_NODE);
 
     // application picks the device each PE will use
-    CUDA_CHECK(cudaSetDevice(mype));
+    CUDA_CHECK(cudaGetDeviceCount(&num_devices));
+    CUDA_CHECK(cudaSetDevice(mype_node % num_devices));
     send_data = (float *)nvshmem_malloc(sizeof(float) * num_elems);
     recv_data = (float *)nvshmem_malloc(sizeof(float) * num_elems);
     assert(send_data != NULL && recv_data != NULL);
@@ -123,7 +125,7 @@ int main(int c, char *v[]) {
 
     nvshmem_finalize();
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     if (use_mpi) MPI_Finalize();
 #endif
     return 0;

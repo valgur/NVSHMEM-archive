@@ -65,7 +65,7 @@ extern "C" int init_shm_kernel_shm_ptr() {
 
     nvshmemi_recexchalgo_get_neighbors(nvshmemi_state->mype, nvshmemi_state->npes);
 
-    CUDA_CHECK(cuStreamSynchronize(0));
+    CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
     goto fn_out;
 out:

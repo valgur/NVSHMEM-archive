@@ -11,6 +11,11 @@
 #include "cuda.h"
 #include "common.h"
 
+#define TRANSPORT_STRING_MAX_LENGTH 8
+#define IB_TRANSPORT_STRING "ibrc"
+#define UCX_TRANSPORT_STRING "ucx"
+#define DEFAULT_TRANSPORT_STRING "default"
+
 #define NVSHMEM_TRANSPORT_DEVICE_SCORE_MAX 7
 
 enum { NVSHMEM_TRANSPORT_WAIT_EQ = 0 };
@@ -18,12 +23,14 @@ enum { NVSHMEM_TRANSPORT_WAIT_EQ = 0 };
 enum {
     NVSHMEM_TRANSPORT_ID_P2P = 0,
     NVSHMEM_TRANSPORT_ID_IBRC,
+    NVSHMEM_TRANSPORT_ID_UCX,
     NVSHMEM_TRANSPORT_COUNT,
 };
 
 enum {
     NVSHMEM_TRANSPORT_MASK_P2P = 1 << NVSHMEM_TRANSPORT_ID_P2P,
     NVSHMEM_TRANSPORT_MASK_IBRC = 1 << NVSHMEM_TRANSPORT_ID_IBRC,
+    NVSHMEM_TRANSPORT_MASK_UCX = 1 << NVSHMEM_TRANSPORT_ID_UCX,
 };
 
 enum {
@@ -107,32 +114,35 @@ typedef struct nvshmem_transport_pe_info {
     TRANSPORT_TYPE_##OPNAME(float, float, opname)                       \
     TRANSPORT_TYPE_##OPNAME(double, double, opname)
 
+typedef int (*rma_handle)(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, rma_memdesc_t dest,
+                          rma_memdesc_t src, rma_bytesdesc_t bytesdesc, int is_proxy);
+typedef int (*amo_handle)(struct nvshmem_transport *tcurr, int pe, void *curetptr, amo_verb_t verb,
+                          amo_memdesc_t target, amo_bytesdesc_t bytesdesc, int is_proxy);
+typedef int (*fence_handle)(struct nvshmem_transport *tcurr, int pe, int is_proxy);
+typedef int (*quiet_handle)(struct nvshmem_transport *tcurr, int pe, int is_proxy);
+
 struct nvshmem_transport_host_ops {
     int (*get_device_count)(int *ndev, struct nvshmem_transport *transport);
     int (*get_pci_path)(int dev, char **pcipath, struct nvshmem_transport *transport);
     int (*can_reach_peer)(int *access, nvshmem_transport_pe_info_t *peer_info,
                           struct nvshmem_transport *transport);
-    int (*ep_create)(nvshmemt_ep_t *ep, int devid, struct nvshmem_transport *transport);
-    int (*ep_get_handle)(nvshmemt_ep_handle_t *ep_handle, nvshmemt_ep_t tep);
-    int (*ep_connect)(nvshmemt_ep_t tep, nvshmemt_ep_handle_t remote_ep_handle);
-    int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, void *buf, size_t size, int dev_id,
-                          struct nvshmem_transport *transport);
-    int (*release_mem_handle)(nvshmem_mem_handle_t mem_handle);
-    int (*map)(void **buf, nvshmem_mem_handle_t mem_handle);
-    int (*unmap)(void *buf);
-    int (*ep_destroy)(nvshmemt_ep_t ep);
+    int (*connect_endpoints)(struct nvshmem_transport *t);
+    int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t mem_handle_in,
+                          void *buf, size_t size, struct nvshmem_transport *transport);
+    int (*release_mem_handle)(nvshmem_mem_handle_t mem_handle, struct nvshmem_transport *transport);
+    int (*map)(void **buf, size_t size, nvshmem_mem_handle_t mem_handle);
+    int (*unmap)(void *buf, size_t size);
     int (*finalize)(struct nvshmem_transport *transport);
     int (*show_info)(nvshmem_mem_handle_t *mem_handles, int transport_id, int transport_count,
-                     nvshmemt_ep_t *eps, int ep_count, int npes, int mype);
+                     int npes, int mype);
     int (*progress)(struct nvshmem_transport *transport);
 
     rma_handle rma;
     amo_handle amo;
     fence_handle fence;
     quiet_handle quiet;
-    // int (*enforce_consistency) (nvshmemt_ep_t tep);
-    int (*enforce_cst)();
-    int (*enforce_cst_at_target)();
+    int (*enforce_cst)(struct nvshmem_transport *transport);
+    int (*enforce_cst_at_target)(struct nvshmem_transport *transport);
 };
 
 struct nvshmem_transport {
@@ -140,10 +150,6 @@ struct nvshmem_transport {
     struct nvshmem_transport_host_ops host_ops;
     int *cap;
     void *state;
-    int ep_idx;
-    int ep_count;
-    int dev_id;
-    nvshmemt_ep_t *ep;
     bool is_successfully_initialized;
 };
 
@@ -166,11 +172,9 @@ typedef struct {
 } transport_p2p_state_t;
 
 int nvshmemt_p2p_init(nvshmem_transport_t *transport);
-int nvshmemt_p2p_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id, int transport_count,
-                           nvshmemt_ep_t *eps, int ep_count, int npes, int mype);
 
 int nvshmemt_ibrc_init(nvshmem_transport_t *transport);
-int nvshmemt_ibrc_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
-                            int transport_count, nvshmemt_ep_t *eps, int ep_count, int npes,
-                            int mype);
+
+int nvshmemt_ucx_init(nvshmem_transport_t *transport);
+
 #endif

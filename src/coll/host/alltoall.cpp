@@ -5,10 +5,12 @@
  */
 
 #include "nvshmem.h"
+#include "nvshmem_nvtx.hpp"
 #include "cpu_coll.h"
 
 #define DEFN_NVSHMEM_TYPENAME_ALLTOALL(TYPENAME, TYPE)                                                          \
     int nvshmem_##TYPENAME##_alltoall(nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems) {    \
+        NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                               \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                               \
         nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                            \
         nvshmemx_barrier_on_stream(team, nvshmemi_state->my_stream);                                        \

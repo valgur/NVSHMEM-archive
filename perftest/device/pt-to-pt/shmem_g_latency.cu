@@ -21,7 +21,7 @@
 #define MAX_MSG_SIZE 64 * 1024
 #define UNROLL 8
 
-__global__ void pull(volatile int *data_d, int len, int pe, int iter, int skip, double *lat_result) {
+__global__ void pull(int *data_d, int len, int pe, int iter, int skip, double *lat_result) {
     long long int start, stop;
     double time;
     int i, j, tid, peer;
@@ -34,8 +34,7 @@ __global__ void pull(volatile int *data_d, int len, int pe, int iter, int skip, 
 
         if (!pe) {
             for (j = 0; j < len; j += THREADS) {
-                if (j + tid < len)
-                    *(data_d + j + tid) = nvshmem_int_g((int *)data_d + j + tid, peer);
+                if (j + tid < len) *(data_d + j + tid) = nvshmem_int_g(data_d + j + tid, peer);
             }
 
             __syncthreads();

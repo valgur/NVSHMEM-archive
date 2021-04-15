@@ -21,8 +21,8 @@
 #define MAX_MSG_SIZE 16 * 1024
 #define UNROLL 8
 
-__global__ void ping_pong(volatile int *data_d, volatile int *flag_d, int len, int pe, int iter,
-                          int skip, double *lat_result) {
+__global__ void ping_pong(int *data_d, int *flag_d, int len, int pe, int iter, int skip,
+                          double *lat_result) {
     long long int start, stop;
     double time;
     int i, j, tid, peer;
@@ -35,34 +35,34 @@ __global__ void ping_pong(volatile int *data_d, volatile int *flag_d, int len, i
 
         if (pe) {
             if (!tid) {
-                nvshmem_int_wait_until((int *)flag_d, NVSHMEM_CMP_EQ, (i + 1));
+                nvshmem_int_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
             }
             __syncthreads();
 
             for (j = tid; j < len; j += THREADS) {
-                nvshmem_int_p((int *)data_d + j, *(data_d + j), peer);
+                nvshmem_int_p(data_d + j, *(data_d + j), peer);
             }
             __syncthreads();
 
             if (!tid) {
                 nvshmem_fence();
-                nvshmemx_int_signal((int *)flag_d, (i + 1), peer);
+                nvshmemx_int_signal(flag_d, (i + 1), peer);
             }
             __syncthreads();
         } else {
             for (j = tid; j < len; j += THREADS) {
-                nvshmem_int_p((int *)data_d + j, *(data_d + j), peer);
+                nvshmem_int_p(data_d + j, *(data_d + j), peer);
             }
             __syncthreads();
 
             if (!tid) {
                 nvshmem_fence();
-                nvshmemx_int_signal((int *)flag_d, (i + 1), peer);
+                nvshmemx_int_signal(flag_d, (i + 1), peer);
             }
             __syncthreads();
 
             if (!tid) {
-                nvshmem_int_wait_until((int *)flag_d, NVSHMEM_CMP_EQ, (i + 1));
+                nvshmem_int_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
             }
             __syncthreads();
         }

@@ -150,4 +150,5 @@ __host__ void nvshmemi_recexchalgo_get_neighbors(int my_pe, int num_pes) {
         cudaDeviceSynchronize();
     }
     cudaMemcpyToSymbol(reduce_recexch_step2_nphases_d, &step2_nphases, sizeof(int));
+    CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 }

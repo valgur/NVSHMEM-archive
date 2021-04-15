@@ -47,9 +47,8 @@ int nvshmemi_build_transport_map(nvshmemi_state_t *state) {
             if (reach) {
                 int m = 1 << j;
                 local_map[i] |= m;
-                // increment transport count if it has been picked for the first time
+                /* Add transport to the bitmap if this is the first PE to use it. */
                 if ((state->transport_bitmap & m) == 0) {
-                    state->transport_count++;
                     state->transport_bitmap |= m;
                 }
             }
@@ -76,6 +75,24 @@ out:
     return status;
 }
 
+int nvshmemi_get_pcie_attrs(pcie_id_t *pcie_id, CUdevice cudev) {
+    int status = 0;
+
+    status = cuDeviceGetAttribute(&pcie_id->dev_id, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, cudev);
+    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                 "cuDeviceGetAttribute failed \n");
+
+    status = cuDeviceGetAttribute(&pcie_id->bus_id, CU_DEVICE_ATTRIBUTE_PCI_BUS_ID, cudev);
+    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                 "cuDeviceGetAttribute failed \n");
+
+    status = cuDeviceGetAttribute(&pcie_id->domain_id, CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, cudev);
+    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                 "cuDeviceGetAttribute failed \n");
+
+out:
+    return status;
+}
 
 int nvshmemi_detect_same_device(nvshmemi_state_t *state) {
     int status = 0;
@@ -160,7 +177,7 @@ static int get_pci_distance(char *cuda_path, char *mlx_path) {
     int score = 0;
     int depth = 0;
     int same = 1;
-    int i;
+    size_t i;
     for (i = 0; i < strlen(cuda_path); i++) {
         if (cuda_path[i] != mlx_path[i]) same = 0;
         if (cuda_path[i] == '/') {
@@ -181,7 +198,7 @@ static int get_pci_distance(char *cuda_path, char *mlx_path) {
 
 int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_transport *tcurr) {
     int status = NVSHMEMX_SUCCESS;
-    int dev_id, distance;
+    int dev_id = 0, distance = 0;
     int ndev = 0;
     struct dev_info {
         char *dev_path; 
@@ -251,11 +268,11 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
         dev_info_all[dev_id].use_count++;
     }
 
-    INFO(NVSHMEM_TOPO, "Total net devices found: %d Net device selected: %d Distance from GPU: %d Is net device shared: %d \n", 
+    INFO(NVSHMEM_TOPO, "Total net devices found: %d Net device selected: %d Distance from GPU: %d Is net device shared: %d",
                 ndev, dev_id, distance, dev_info_all[dev_id].use_count);
 
     if (distance > PATH_PXB) {
-        INFO(NVSHMEM_TOPO, "WARNING!! IB HCA and GPU are not connected by PCIe switch, so IB performance can be limited \n");
+        INFO(NVSHMEM_TOPO, "WARNING!! IB HCA and GPU are not connected by PCIe switch, so IB performance can be limited");
     }
     *device = dev_id;
 

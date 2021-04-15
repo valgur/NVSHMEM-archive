@@ -11,6 +11,7 @@
 #include <stdio.h>
 
 #ifdef __CUDA_ARCH__
+
 __device__ inline int nvshmemi_thread_id_in_warp() {
     int myIdx;
     asm volatile("mov.u32  %0, %laneid;" : "=r"(myIdx));
@@ -42,8 +43,6 @@ __device__ inline int nvshmemi_thread_id_in_thread() {
 __device__ inline int nvshmemi_thread_size() { return 1; }
 
 __device__ inline void nvshmemi_thread_sync() {}
-
-
 
 #endif
 

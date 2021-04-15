@@ -5,6 +5,7 @@
  */
 
 #include "nvshmem.h"
+#include "nvshmem_nvtx.hpp"
 #include "nvshmemi_coll.h"
 #include "cpu_coll.h"
 
@@ -85,6 +86,7 @@ void nvshmemi_barrier(int start, int stride, int size, long *pSync, long *counte
 }
 
 int nvshmem_barrier(nvshmem_team_t team) {
+    NVTX_FUNC_RANGE_IN_GROUP(COLL);
     NVSHMEM_CHECK_STATE_AND_INIT();
     
     nvshmemi_team_t *teami = nvshmemi_team_pool[team];
@@ -104,6 +106,7 @@ void nvshmemi_barrier_all() {
 }
 
 void nvshmem_barrier_all() {
+    NVTX_FUNC_RANGE_IN_GROUP(COLL);
     NVSHMEM_CHECK_STATE_AND_INIT();
 
     nvshmemi_barrier_all();
@@ -116,6 +119,7 @@ void nvshmemi_sync(int start, int stride, int size, long *pSync, long *counter) 
 }
 
 int nvshmem_team_sync(nvshmem_team_t team) {
+    NVTX_FUNC_RANGE_IN_GROUP(COLL);
     NVSHMEM_CHECK_STATE_AND_INIT();
     
     nvshmemi_team_t *teami = nvshmemi_team_pool[team];
@@ -126,6 +130,7 @@ int nvshmem_team_sync(nvshmem_team_t team) {
 }
 
 void nvshmem_sync_all() {
+    NVTX_FUNC_RANGE_IN_GROUP(COLL);
     NVSHMEM_CHECK_STATE_AND_INIT();
 
     nvshmemi_team_t *teami = nvshmemi_team_pool[NVSHMEM_TEAM_WORLD];

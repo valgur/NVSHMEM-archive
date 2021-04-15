@@ -14,7 +14,7 @@
 #include "nvshmem.h"
 #include "nvshmemx.h"
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
 #include "mpi.h"
 #endif
 
@@ -50,7 +50,7 @@ __global__ void correct_accumulate(int *input, int *partial_sum, int *full_sum) 
 }
 
 int main(int c, char *v[]) {
-    int mype, npes;
+    int mype, npes, mype_node, num_devices;
     int *input;
     int *partial_sum;
     int *full_sum;
@@ -58,13 +58,13 @@ int main(int c, char *v[]) {
     int to_all_nelems = 1;
     cudaStream_t stream;
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     bool use_mpi = false;
     char *value = getenv("NVSHMEMTEST_USE_MPI_LAUNCHER");
     if (value) use_mpi = atoi(value);
 #endif
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     if (use_mpi) {
         MPI_Init(&c, &v);
         int rank, nranks;
@@ -83,8 +83,9 @@ int main(int c, char *v[]) {
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
-
-    CUDA_CHECK(cudaSetDevice(mype));
+    mype_node = nvshmem_team_n_pes(NVSHMEMX_TEAM_NODE);
+    CUDA_CHECK(cudaGetDeviceCount(&num_devices));
+    CUDA_CHECK(cudaSetDevice(mype_node % num_devices));
     CUDA_CHECK(cudaStreamCreate(&stream));
 
     input = (int *)nvshmem_malloc(sizeof(int) * input_nelems);
@@ -106,7 +107,7 @@ int main(int c, char *v[]) {
 
     nvshmem_finalize();
 
-#ifdef ENABLE_MPI_SUPPORT
+#ifdef NVSHMEM_MPI_SUPPORT
     if (use_mpi) MPI_Finalize();
 #endif
     return 0;

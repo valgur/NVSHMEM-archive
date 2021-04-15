@@ -92,6 +92,46 @@ NVSHMEMI_REPT_FOR_SIZES(NVSHMEMX_DECL_SIZE_PUT_ON_STREAM)
 void nvshmemx_putmem_on_stream(void *dest, const void *source, size_t bytes, int pe,
                                cudaStream_t cstrm);
 
+#define NVSHMEMX_DECL_TYPE_PUT_SIGNAL_ON_STREAM(NAME, TYPE)                                      \
+    void nvshmemx_##NAME##_put_signal_on_stream(TYPE *dest, const TYPE *source, size_t nelems,   \
+                                                uint64_t *sig_addr, uint64_t signal, int sig_op, \
+                                                int pe, cudaStream_t cstrm);
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_DECL_TYPE_PUT_SIGNAL_ON_STREAM)
+#undef NVSHMEMX_DECL_TYPE_PUT_SIGNAL_ON_STREAM
+
+#define NVSHMEMX_DECL_SIZE_PUT_SIGNAL_ON_STREAM(NAME)                                           \
+    void nvshmemx_put##NAME##_signal_on_stream(void *dest, const void *source, size_t nelems,   \
+                                               uint64_t *sig_addr, uint64_t signal, int sig_op, \
+                                               int pe, cudaStream_t cstrm);
+
+NVSHMEMI_REPT_FOR_SIZES(NVSHMEMX_DECL_SIZE_PUT_SIGNAL_ON_STREAM)
+#undef NVSHMEMX_DECL_SIZE_PUT_SIGNAL_ON_STREAM
+
+void nvshmemx_putmem_signal_on_stream(void *dest, const void *source, size_t bytes,
+                                      uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
+                                      cudaStream_t cstrm);
+
+#define NVSHMEMX_DECL_TYPE_PUT_SIGNAL_NBI_ON_STREAM(NAME, TYPE)                                    \
+    void nvshmemx_##NAME##_put_signal_nbi_on_stream(TYPE *dest, const TYPE *source, size_t nelems, \
+                                                    uint64_t *sig_addr, uint64_t signal,           \
+                                                    int sig_op, int pe, cudaStream_t cstrm);
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_DECL_TYPE_PUT_SIGNAL_NBI_ON_STREAM)
+#undef NVSHMEMX_DECL_TYPE_PUT_SIGNAL_NBI_ON_STREAM
+
+#define NVSHMEMX_DECL_SIZE_PUT_SIGNAL_NBI_ON_STREAM(NAME)                                         \
+    void nvshmemx_put##NAME##_signal_nbi_on_stream(void *dest, const void *source, size_t nelems, \
+                                                   uint64_t *sig_addr, uint64_t signal,           \
+                                                   int sig_op, int pe, cudaStream_t cstrm);
+
+NVSHMEMI_REPT_FOR_SIZES(NVSHMEMX_DECL_SIZE_PUT_SIGNAL_NBI_ON_STREAM)
+#undef NVSHMEMX_DECL_SIZE_PUT_SIGNAL_NBI_ON_STREAM
+
+void nvshmemx_putmem_signal_nbi_on_stream(void *dest, const void *source, size_t bytes,
+                                          uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
+                                          cudaStream_t cstrm);
+
 #define NVSHMEMX_DECL_TYPE_IPUT_ON_STREAM(NAME, TYPE)                           \
     void nvshmemx_##NAME##_iput_on_stream(TYPE *dest, const TYPE *source,       \
             ptrdiff_t dst, ptrdiff_t sst, size_t nelems, int pe, cudaStream_t cstrm);
@@ -182,24 +222,34 @@ void nvshmemx_getmem_nbi_on_stream(void *dest, const void *source, size_t bytes,
 
 //////////////////// Synchronization On Stream ////////////////////
 
+void nvshmemx_fence_on_stream(cudaStream_t cstrm);
 void nvshmemx_quiet_on_stream(cudaStream_t cstrm);
-void nvshmemx_wait_on_stream(long *ivar, long cmp_value, cudaStream_t cstream);
-void nvshmemx_wait_until_on_stream(long *ivar, int cmp, long cmp_value,
-                                   cudaStream_t cstream);
 
-#define NVSHMEMX_DECL_WAIT_ON_STREAM(NAME, Type) \
-    void nvshmemx_##NAME##_wait_on_stream(Type *ivar, Type cmp_value, cudaStream_t cstream);
-
-NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_DECL_WAIT_ON_STREAM)
-#undef NVSHMEMX_DECL_WAIT_ON_STREAM
+void nvshmemx_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
+                                  cudaStream_t cstrm);
 
 #define NVSHMEMX_DECL_WAIT_UNTIL_ON_STREAM(NAME, Type)                                        \
     void nvshmemx_##NAME##_wait_until_on_stream(Type *ivar, int cmp, Type cmp_value, \
                                                 cudaStream_t cstream);
-
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_DECL_WAIT_UNTIL_ON_STREAM)
 #undef NVSHMEMX_DECL_WAIT_UNTIL_ON_STREAM
 
+#define NVSHMEMX_DECL_WAIT_UNTIL_ALL_ON_STREAM(NAME, Type)                                         \
+    void nvshmemx_##NAME##_wait_until_all_on_stream(Type *ivars, size_t nelems, const int *status, \
+                                                    int cmp, Type cmp_value,                       \
+                                                    cudaStream_t cstream);
+NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_DECL_WAIT_UNTIL_ALL_ON_STREAM)
+#undef NVSHMEMX_DECL_WAIT_UNTIL_ALL_ON_STREAM
+
+#define NVSHMEMX_DECL_WAIT_UNTIL_ALL_VECTOR_ON_STREAM(NAME, Type)                      \
+    void nvshmemx_##NAME##_wait_until_all_vector_on_stream(Type *ivars, size_t nelems, \
+                                                           const int *status, int cmp, \
+                                                           Type *cmp_value, cudaStream_t cstream);
+NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_DECL_WAIT_UNTIL_ALL_VECTOR_ON_STREAM)
+#undef NVSHMEMX_DECL_WAIT_UNTIL_ALL_VECTOR_ON_STREAM
+
+void nvshmemx_signal_wait_until_on_stream(uint64_t *sig_addr, int cmp, uint64_t cmp_value,
+                                          cudaStream_t cstream);
 //////////////////// Put on Thread Group ////////////////////
 
 
@@ -223,6 +273,68 @@ NVSHMEMI_REPT_FOR_SIZES(NVSHMEMX_DECL_SIZE_PUT_THREADGROUP)
 
 __device__ void nvshmemx_putmem_warp(void *dest, const void *source, size_t bytes, int pe);
 __device__ void nvshmemx_putmem_block(void *dest, const void *source, size_t bytes, int pe);
+
+/* __device__ nvshmem_<typename>_put_signal_scope */
+#define NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE_DECL(SCOPE, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE) \
+    __device__ void nvshmemx_##TYPENAME##_put_signal##SC_SUFFIX(                             \
+        TYPE *dest, const TYPE *source, size_t nelems, uint64_t *sig_addr, uint64_t signal,  \
+        int sig_op, int pe);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE_DECL, warp,
+                                                 _warp, x)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE_DECL, block,
+                                                 _block, x)
+#undef NVSHMEMI_TYPENAME_PUT_SIGNAL_SCOPE_DECL
+
+/* __device__ nvshmem_putmem_signal_scope */
+#define NVSHMEMI_PUTMEM_SIGNAL_SCOPE_DECL(SCOPE, SC_SUFFIX, SC_PREFIX)                   \
+    __device__ void nvshmemx_putmem_signal##SC_SUFFIX(void *dest, const void *source,    \
+                                                      size_t nelems, uint64_t *sig_addr, \
+                                                      uint64_t signal, int sig_op, int pe);
+
+NVSHMEMI_PUTMEM_SIGNAL_SCOPE_DECL(warp, _warp, x)
+NVSHMEMI_PUTMEM_SIGNAL_SCOPE_DECL(block, _block, x)
+#undef NVSHMEMI_PUTMEM_SIGNAL_SCOPE_DECL
+
+/* __device__ nvshmem_putsize_signal_scope */
+#define NVSHMEMI_PUTSIZE_SIGNAL_SCOPE_DECL(SCOPE, SC_SUFFIX, SC_PREFIX, BITS)                 \
+    __device__ void nvshmemx_put##BITS##_signal##SC_SUFFIX(void *dest, const void *source,    \
+                                                           size_t nelems, uint64_t *sig_addr, \
+                                                           uint64_t signal, int sig_op, int pe);
+
+NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_SCOPE_DECL, warp, _warp, x)
+NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_SCOPE_DECL, block, _block, x)
+#undef NVSHMEMI_REPT_PUTSIZE_SIGNAL_FOR_SCOPE
+
+/* __device__ nvshmem_<typename>_put_signal_nbi_scope */
+#define NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_SCOPE_DECL(SCOPE, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE) \
+    __device__ void nvshmemx_##TYPENAME##_put_signal_nbi##SC_SUFFIX(                             \
+        TYPE *dest, const TYPE *source, size_t nelems, uint64_t *sig_addr, uint64_t signal,      \
+        int sig_op, int pe);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_SCOPE_DECL, warp,
+                                                 _warp, x)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_SCOPE_DECL, block,
+                                                 _block, x)
+#undef NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_SCOPE_DECL
+
+/* __device__ nvshmem_putmem_signal_nbi_scope */
+#define NVSHMEMI_PUTMEM_SIGNAL_NBI_SCOPE_DECL(SCOPE, SC_SUFFIX, SC_PREFIX)                   \
+    __device__ void nvshmemx_putmem_signal_nbi##SC_SUFFIX(void *dest, const void *source,    \
+                                                          size_t nelems, uint64_t *sig_addr, \
+                                                          uint64_t signal, int sig_op, int pe);
+
+NVSHMEMI_PUTMEM_SIGNAL_NBI_SCOPE_DECL(warp, _warp, x)
+NVSHMEMI_PUTMEM_SIGNAL_NBI_SCOPE_DECL(block, _block, x)
+#undef NVSHMEMI_PUTMEM_SIGNAL_NBI_SCOPE_DECL
+
+/* __device__ nvshmem_putsize_signal_nbi_scope */
+#define NVSHMEMI_PUTSIZE_SIGNAL_NBI_SCOPE_DECL(SCOPE, SC_SUFFIX, SC_PREFIX, BITS)           \
+    __device__ void nvshmemx_put##BITS##_signal_nbi##SC_SUFFIX(                             \
+        void *dest, const void *source, size_t nelems, uint64_t *sig_addr, uint64_t signal, \
+        int sig_op, int pe);
+
+NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_NBI_SCOPE_DECL, warp, _warp, x)
+NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_NBI_SCOPE_DECL, block, _block, x)
+#undef NVSHMEMI_REPT_PUTSIZE_SIGNAL_NBI_FOR_SCOPE
 
 #define NVSHMEMX_DECL_TYPE_IPUT_THREADGROUP(NAME, TYPE)                                         \
     __device__ void nvshmemx_##NAME##_iput_warp(TYPE *dest, const TYPE *source, ptrdiff_t dst,  \

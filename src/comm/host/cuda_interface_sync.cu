@@ -5,94 +5,84 @@
  */
 
 #include "nvshmem.h"
+#include "nvshmemx.h"
 #include "nvshmem_internal.h"
 
-#include "sync_kernel_entrypoints.cuh"
+#define NVSHMEMI_TYPENAME_WAIT_UNTIL_ON_STREAM_KERNEL(TYPENAME, TYPE)                            \
+    __global__ void nvshmemi_##TYPENAME##_wait_until_on_stream_kernel(volatile TYPE *ivar,       \
+                                                                      int cmp, TYPE cmp_value) { \
+        nvshmem_##TYPENAME##_wait_until((TYPE *)ivar, cmp, cmp_value);                           \
+    }
+NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_TYPENAME_WAIT_UNTIL_ON_STREAM_KERNEL)
+#undef NVSHMEMI_TYPENAME_WAIT_UNTIL_ON_STREAM_KERNEL
 
-#define CUDA_INTERFACE_TYPE_WAIT(type, TYPE)                                        \
-    cudaError_t cuda_interface_##type##_wait(volatile TYPE *ivar, TYPE cmp_value) { \
-        void *kernelParams[] = {&ivar, &cmp_value};                                 \
-        dim3 gdim(1), bdim(1);                                                      \
-        void (*funcPtr)(TYPE *, TYPE) = WaitKernel<TYPE>;                           \
-        return cudaLaunchKernel((const void *)funcPtr, gdim, bdim, kernelParams, 0, \
-                                nvshmemi_state->my_stream);                          \
+#define CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ON_STREAM_KERNEL(TYPENAME, TYPE)                  \
+    void call_nvshmemi_##TYPENAME##_wait_until_on_stream_kernel(                            \
+        volatile TYPE *ivar, int cmp, TYPE cmp_value, cudaStream_t cstream) {               \
+        nvshmemi_##TYPENAME##_wait_until_on_stream_kernel<<<1, 1, 0, cstream>>>(ivar, cmp,  \
+                                                                                cmp_value); \
+        CUDA_RUNTIME_CHECK(cudaGetLastError());                                             \
+    }
+NVSHMEMI_REPT_FOR_WAIT_TYPES(CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ON_STREAM_KERNEL)
+#undef CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ON_STREAM_KERNEL
+
+#define NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_ON_STREAM_KERNEL(TYPENAME, TYPE)                   \
+    __global__ void nvshmemi_##TYPENAME##_wait_until_all_on_stream_kernel(                  \
+        volatile TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE cmp_value) {  \
+        nvshmem_##TYPENAME##_wait_until_all((TYPE *)ivars, nelems, status, cmp, cmp_value); \
+    }
+NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_ON_STREAM_KERNEL)
+#undef NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_ON_STREAM_KERNEL
+
+#define CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_ON_STREAM_KERNEL(TYPENAME, TYPE)           \
+    void call_nvshmemi_##TYPENAME##_wait_until_all_on_stream_kernel(                     \
+        volatile TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE cmp_value, \
+        cudaStream_t cstream) {                                                          \
+        nvshmemi_##TYPENAME##_wait_until_all_on_stream_kernel<<<1, 1, 0, cstream>>>(     \
+            ivars, nelems, status, cmp, cmp_value);                                      \
+        CUDA_RUNTIME_CHECK(cudaGetLastError());                                          \
     }
 
-NVSHMEMI_REPT_FOR_WAIT_TYPES(CUDA_INTERFACE_TYPE_WAIT)
-#undef CUDA_INTERFACE_TYPE_WAIT
+NVSHMEMI_REPT_FOR_WAIT_TYPES(CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_ON_STREAM_KERNEL)
+#undef CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_ON_STREAM_KERNEL
 
-#define CUDA_INTERFACE_TYPE_WAIT_ON_STREAM(type, TYPE)                                        \
-    cudaError_t cuda_interface_##type##_wait_on_stream(volatile TYPE *ivar, TYPE cmp_value,   \
-                                                       cudaStream_t cstream) {                \
-        void *kernelParams[] = {&ivar, &cmp_value};                                           \
-        dim3 gdim(1), bdim(1);                                                                \
-        void (*funcPtr)(TYPE *, TYPE) = WaitKernel<TYPE>;                                     \
-        return cudaLaunchKernel((const void *)funcPtr, gdim, bdim, kernelParams, 0, cstream); \
+#define NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_VECTOR_ON_STREAM_KERNEL(TYPENAME, TYPE)                   \
+    __global__ void nvshmemi_##TYPENAME##_wait_until_all_vector_on_stream_kernel(                  \
+        volatile TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_value) {        \
+        nvshmem_##TYPENAME##_wait_until_all_vector((TYPE *)ivars, nelems, status, cmp, cmp_value); \
+    }
+NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_VECTOR_ON_STREAM_KERNEL)
+#undef NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_VECTOR_ON_STREAM_KERNEL
+
+#define CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_VECTOR_ON_STREAM_KERNEL(TYPENAME, TYPE)       \
+    void call_nvshmemi_##TYPENAME##_wait_until_all_vector_on_stream_kernel(                 \
+        volatile TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_value,   \
+        cudaStream_t cstream) {                                                             \
+        nvshmemi_##TYPENAME##_wait_until_all_vector_on_stream_kernel<<<1, 1, 0, cstream>>>( \
+            ivars, nelems, status, cmp, cmp_value);                                         \
+        CUDA_RUNTIME_CHECK(cudaGetLastError());                                             \
     }
 
-NVSHMEMI_REPT_FOR_WAIT_TYPES(CUDA_INTERFACE_TYPE_WAIT_ON_STREAM)
-#undef CUDA_INTERFACE_TYPE_WAIT_ON_STREAM
+NVSHMEMI_REPT_FOR_WAIT_TYPES(CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_VECTOR_ON_STREAM_KERNEL)
+#undef CALL_NVSHMEMI_TYPENAME_WAIT_UNTIL_ALL_VECTOR_ON_STREAM_KERNEL
 
-#define CUDA_INTERFACE_TYPE_WAIT_UNTIL(type, TYPE)                                                 \
-    cudaError_t cuda_interface_##type##_wait_until(volatile TYPE *ivar, int cmp, TYPE cmp_value) { \
-        void *kernelParams[] = {&ivar, &cmp_value};                                                \
-        dim3 gdim(1), bdim(1);                                                                     \
-        void (*funcPtr)(TYPE *, TYPE);                                                             \
-        switch (cmp) {                                                                             \
-            case NVSHMEM_CMP_EQ:                                                                   \
-                funcPtr = WaitUntilKernel<TYPE, equal_to<TYPE> >;                                  \
-                break;                                                                             \
-            case NVSHMEM_CMP_NE:                                                                   \
-                funcPtr = WaitUntilKernel<TYPE, not_equal_to<TYPE> >;                              \
-                break;                                                                             \
-            case NVSHMEM_CMP_GT:                                                                   \
-                funcPtr = WaitUntilKernel<TYPE, greater_than<TYPE> >;                              \
-                break;                                                                             \
-            case NVSHMEM_CMP_LE:                                                                   \
-                funcPtr = WaitUntilKernel<TYPE, less_equal_to<TYPE> >;                             \
-                break;                                                                             \
-            case NVSHMEM_CMP_LT:                                                                   \
-                funcPtr = WaitUntilKernel<TYPE, less_than<TYPE> >;                                 \
-                break;                                                                             \
-            case NVSHMEM_CMP_GE:                                                                   \
-                funcPtr = WaitUntilKernel<TYPE, greater_equal_to<TYPE> >;                          \
-                break;                                                                             \
-        }                                                                                          \
-        return cudaLaunchKernel((const void *)funcPtr, gdim, bdim, kernelParams, 0,                \
-                                nvshmemi_state->my_stream);                                         \
-    }
+__global__ void nvshmemi_signal_wait_until_on_stream_kernel(volatile uint64_t *sig_addr, int cmp,
+                                                            uint64_t cmp_value) {
+    nvshmemi_signal_wait_until(sig_addr, cmp, cmp_value);
+}
 
-NVSHMEMI_REPT_FOR_WAIT_TYPES(CUDA_INTERFACE_TYPE_WAIT_UNTIL)
-#undef CUDA_INTERFACE_TYPE_WAIT_UNTIL
+void call_nvshmemi_signal_wait_until_on_stream_kernel(volatile uint64_t *sig_addr, int cmp,
+                                                      uint64_t cmp_value, cudaStream_t cstream) {
+    nvshmemi_signal_wait_until_on_stream_kernel<<<1, 1, 0, cstream>>>(sig_addr, cmp, cmp_value);
+    CUDA_RUNTIME_CHECK(cudaGetLastError());
+}
 
-#define CUDA_INTERFACE_TYPE_WAIT_UNTIL_ON_STREAM(type, TYPE)                                  \
-    cudaError_t cuda_interface_##type##_wait_until_on_stream(                                 \
-        volatile TYPE *ivar, int cmp, TYPE cmp_value, cudaStream_t cstream) {                 \
-        void *kernelParams[] = {&ivar, &cmp_value};                                           \
-        dim3 gdim(1), bdim(1);                                                                \
-        void (*funcPtr)(TYPE *, TYPE);                                                        \
-        switch (cmp) {                                                                        \
-            case NVSHMEM_CMP_EQ:                                                              \
-                funcPtr = WaitUntilKernel<TYPE, equal_to<TYPE> >;                             \
-                break;                                                                        \
-            case NVSHMEM_CMP_NE:                                                              \
-                funcPtr = WaitUntilKernel<TYPE, not_equal_to<TYPE> >;                         \
-                break;                                                                        \
-            case NVSHMEM_CMP_GT:                                                              \
-                funcPtr = WaitUntilKernel<TYPE, greater_than<TYPE> >;                         \
-                break;                                                                        \
-            case NVSHMEM_CMP_LE:                                                              \
-                funcPtr = WaitUntilKernel<TYPE, less_equal_to<TYPE> >;                        \
-                break;                                                                        \
-            case NVSHMEM_CMP_LT:                                                              \
-                funcPtr = WaitUntilKernel<TYPE, less_than<TYPE> >;                            \
-                break;                                                                        \
-            case NVSHMEM_CMP_GE:                                                              \
-                funcPtr = WaitUntilKernel<TYPE, greater_equal_to<TYPE> >;                     \
-                break;                                                                        \
-        }                                                                                     \
-        return cudaLaunchKernel((const void *)funcPtr, gdim, bdim, kernelParams, 0, cstream); \
-    }
+__global__ void nvshmemi_signal_op_kernel(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
+    nvshmemi_signal_op(sig_addr, signal, sig_op, pe);
+}
 
-NVSHMEMI_REPT_FOR_WAIT_TYPES(CUDA_INTERFACE_TYPE_WAIT_UNTIL_ON_STREAM)
-#undef CUDA_INTERFACE_TYPE_WAIT_UNTIL_ON_STREAM
+void call_nvshmemi_signal_op_kernel(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
+                                    cudaStream_t cstrm) {
+    nvshmemi_signal_op_kernel<<<1, 1, 0, cstrm>>>(sig_addr, signal, sig_op, pe);
+    CUDA_RUNTIME_CHECK(cudaGetLastError());
+}

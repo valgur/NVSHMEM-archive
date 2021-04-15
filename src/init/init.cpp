@@ -4,9 +4,15 @@
  * See COPYRIGHT for license information
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <sched.h>
+
 #include "nvshmem.h"
 #include "nvshmemx.h"
 #include "nvshmem_internal.h"
+#include "nvshmem_nvtx.hpp"
 
 #include <stdlib.h>
 #include <string.h>
@@ -17,8 +23,12 @@
 #include "unistd.h"
 #include "debug.h"
 
+static void nvshmemi_init_debug(void);
+static void nvshmemi_init_msg(void);
+
 nvshmemi_state_t *nvshmemi_state;
 nvshmem_options_t nvshmem_options;
+int nvshmemi_cuda_driver_version;
 const char *p_err_str;
 int nvshmem_debug_level;
 uint64_t nvshmem_debug_mask = NVSHMEM_INIT;  // Default debug sub-system mask is INIT
@@ -48,6 +58,8 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr, nvshmemi_s
 
     state->mype = state->boot_handle.pg_rank;
     state->npes = state->boot_handle.pg_size;
+
+    nvshmem_nvtx_set_thread_name(state->mype);
 
     myHostHash = getHostHash();
     hostHash = (uint64_t *)malloc(sizeof(uint64_t) * state->npes);
@@ -108,6 +120,24 @@ int nvshmemi_get_cucontext(nvshmemi_state_t *state) {
             NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                          "get context failed \n");
         }
+
+        // identify device id
+        int count;
+        CUdevice curr_device;
+        status = cuDeviceGetCount(&count);
+        NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                     "cudaDeviceGetCount failed \n");
+
+        for (int i = 0; i < count; i++) {
+            status = cuDeviceGet(&curr_device, i);
+            NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                         "cudaDeviceGet failed \n");
+            if (curr_device == state->cudevice) {
+                state->device_id = i;
+                break;
+            }
+        }
+
         status = cuCtxGetStreamPriorityRange(&leastPriority, &greatestPriority);
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                      "cudaDeviceGetStreamPriorityRange failed \n");
@@ -195,7 +225,7 @@ static int nvshmemi_setup_nvshmem_handles(nvshmemi_state_t *state) {
         for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
             if (!(state->transports[j])) continue;
 
-	    if ((tbitmap & 1)) {
+            if ((tbitmap & 1)) {
                 if (!rma_initialized &&
                     (state->transports[j]->cap[i] &
                      (NVSHMEM_TRANSPORT_CAP_CPU_READ | NVSHMEM_TRANSPORT_CAP_CPU_WRITE))) {
@@ -211,9 +241,9 @@ static int nvshmemi_setup_nvshmem_handles(nvshmemi_state_t *state) {
                     state->selected_transport_for_amo[i] = j;
                 }
 
-		if (((state->selected_transport_for_amo[i] == j) ||
+            if (((state->selected_transport_for_amo[i] == j) ||
                      (state->selected_transport_for_rma[i] == j)) &&
-                    !(memory_ordering_initialized && (1 << j))) {
+                    !(memory_ordering_initialized & (1 << j))) {
                     nvshmemi_setup_memory_ordering(state, j);
                     memory_ordering_initialized |= 1 << j;
                 }
@@ -221,7 +251,6 @@ static int nvshmemi_setup_nvshmem_handles(nvshmemi_state_t *state) {
             tbitmap >>= 1;
         }
     }
-out:
     return status;
 }
 
@@ -253,9 +282,10 @@ out:
 
 int nvshmemi_common_init(nvshmemi_state_t *state) {
     int status = 0;
-    char *value;
 
     if (state->initialized) return 0;
+    
+    CUDA_CHECK(cuDriverGetVersion(&nvshmemi_cuda_driver_version));
 
     status = nvshmemi_get_cucontext(state);
     NZ_DEBUG_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem get cucontext failed \n");
@@ -304,9 +334,26 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gpu collective setup failed \n");
 
     // enable proxy only if IB transport is initialized
-    if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST &&
-        state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
-        state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized) {
+    if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST && nvshmemi_need_proxy(state)) {
+
+        cpu_set_t my_set;
+        CPU_ZERO(&my_set);
+
+        int ret = sched_getaffinity(0, sizeof(my_set), &my_set);
+
+        if (ret == 0) {
+            int core_count = 0;
+
+            for (int i = 0; i < CPU_SETSIZE; i++) {
+                if (CPU_ISSET(i, &my_set))
+                    core_count++;
+            }
+
+            if (core_count == 1) {
+                WARN("Proxy thread shares a core with the main PE, performance may be impacted");
+            }
+        }
+
         status = nvshmemi_proxy_init(state);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy initialization failed \n");
     }
@@ -338,8 +385,7 @@ int nvshmemi_init_thread(int requested, int *provided) {
 
     NVSHMEMU_THREAD_CS_INIT();
 
-    nvshmemi_options_init();
-    init_debug();
+    nvshmemi_init_debug();
 
     nvshmemi_state = (nvshmemi_state_t *)calloc(1, sizeof(nvshmemi_state_t));
     NULL_ERROR_JMP(nvshmemi_state, status, NVSHMEMX_ERROR_INTERNAL, out,
@@ -348,77 +394,7 @@ int nvshmemi_init_thread(int requested, int *provided) {
     status = nvshmemi_bootstrap(0, NULL, nvshmemi_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_bootstrap failed \n");
 
-    if (0 == nvshmemi_state->mype) {
-        if (nvshmemi_options.VERSION)
-            printf("%s\n", NVSHMEM_VENDOR_STRING);
-
-        if (nvshmemi_options.DEBUG_provided) {
-            int runtimeVersion, driverVersion;
-            cudaError_t err;
-
-            printf("NVSHMEM configuration:\n");
-
-            printf("  %-28s %d\n", "CUDA API", CUDA_VERSION);
-
-            err = cudaRuntimeGetVersion(&runtimeVersion);
-            if (err != cudaSuccess) runtimeVersion = -1;
-            printf("  %-28s %d\n", "CUDA Runtime", runtimeVersion);
-
-            err = cudaDriverGetVersion(&driverVersion);
-            if (err != cudaSuccess) driverVersion = -1;
-            printf("  %-28s %d\n", "CUDA Driver", driverVersion);
-
-            printf("  %-28s %s %s\n", "Build Timestamp", __DATE__, __TIME__);
-            printf("  %-28s%s", "Build Options",
-#ifdef NVSHMEM_X86_64
-                    " NVSHMEM_X86_64"
-#endif
-#ifdef NVSHMEM_PPC64LE
-                    " NVSHMEM_PPC64LE"
-#endif
-#ifdef NVSHMEM_MPI_SUPPORT
-                    " NVSHMEM_MPI_SUPPORT"
-#endif
-#ifdef NVSHMEM_SHMEM_SUPPORT
-                    " NVSHMEM_SHMEM_SUPPORT"
-#endif
-#ifdef NVSHMEM_PMIX_SUPPORT
-                    " NVSHMEM_PMIX_SUPPORT"
-#endif
-#ifdef NVSHMEM_DEFAULT_PMIX
-                    " NVSHMEM_DEFAULT_PMIX"
-#endif
-#ifdef NVSHMEM_DEFAULT_PMI2
-                    " NVSHMEM_DEFAULT_PMI2"
-#endif
-#ifdef NVSHMEM_USE_GDRCOPY
-                    " NVSHMEM_USE_GDRCOPY"
-#endif
-#ifdef NVSHMEM_COMPLEX_SUPPORT
-                    " NVSHMEM_COMPLEX_SUPPORT"
-#endif
-#ifdef NVSHMEM_MPI_IS_OMPI
-                    " NVSHMEM_MPI_IS_OMPI"
-#endif
-#ifdef NVSHMEM_DISABLE_COLL_POLL
-                    " NVSHMEM_DISABLE_COLL_POLL"
-#endif
-#ifdef NVSHMEM_GPU_COLL_USE_LDST
-                    " NVSHMEM_GPU_COLL_USE_LDST"
-#endif
-#ifdef NVSHMEM_TIMEOUT_DEVICE_POLLING
-                    " NVSHMEM_TIMEOUT_DEVICE_POLLING"
-#endif
-#ifdef NVSHMEM_ENABLE_TRACE
-                    " NVSHMEM_ENABLE_TRACE"
-#endif
-                    "\n");
-
-            printf("\n");
-        }
-        if (nvshmemi_options.INFO)
-            nvshmemi_options_print();
-    }
+    nvshmemi_init_msg();
 
     nvshmemi_state->scratch = (int *)calloc(
         nvshmemi_state->npes, sizeof(int)); /*XXX:scratch used by nvshmemi_try_common_init*/
@@ -435,15 +411,21 @@ out:
 }
 
 void nvshmem_init() {
-    int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
+    nvshmemi_options_init();
+    nvshmem_nvtx_init();
+    NVTX_FUNC_RANGE_IN_GROUP(INIT);
 
+    int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
     status = nvshmemi_init_thread(requested, &provided);
     NZ_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
 }
 
 int nvshmem_init_thread(int requested, int *provided) {
-    int status = 0;
+    nvshmemi_options_init();
+    nvshmem_nvtx_init();
+    NVTX_FUNC_RANGE_IN_GROUP(INIT);
 
+    int status = 0;
     status = nvshmemi_init_thread(requested, provided);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_init_thread failed \n");
 out:
@@ -459,12 +441,14 @@ void nvshmem_query_thread(int *provided) { *provided = NVSHMEM_THREAD_SERIALIZED
 void nvshmemx_query_thread(int *provided) { nvshmem_query_thread(provided); }
 
 int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attr) {
+    nvshmemi_options_init();
+    nvshmem_nvtx_init();
+    NVTX_FUNC_RANGE_IN_GROUP(INIT);
     int status;
 
     NVSHMEMU_THREAD_CS_INIT();
 
-    nvshmemi_options_init();
-    init_debug();
+    nvshmemi_init_debug();
 
     nvshmemi_state = (nvshmemi_state_t *)calloc(1, sizeof(nvshmemi_state_t));
     p_err_str = (char *)malloc(MAX_LENGTH_ERROR_STRING);
@@ -472,13 +456,7 @@ int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attr) {
     status = nvshmemi_bootstrap(flags, attr, nvshmemi_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_bootstrap failed \n");
 
-    if (0 == nvshmemi_state->mype) {
-        if (nvshmemi_options.VERSION)
-            printf("%s\n", NVSHMEM_VENDOR_STRING);
-
-        if (nvshmemi_options.INFO)
-            nvshmemi_options_print();
-    }
+    nvshmemi_init_msg();
 
     status = nvshmemi_try_common_init(nvshmemi_state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem topo init failed \n");
@@ -490,6 +468,7 @@ out:
 }
 
 void nvshmem_finalize() {
+    NVTX_FUNC_RANGE_IN_GROUP(INIT);
     int status = 0;
     int pid = getpid();
 
@@ -505,9 +484,7 @@ void nvshmem_finalize() {
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Teams cleanup failed \n");
 
         /*cleaning up proxy*/
-        if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST &&
-            nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
-            nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized) {
+        if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST && nvshmemi_need_proxy(nvshmemi_state)) {
             status = nvshmemi_proxy_finalize(nvshmemi_state);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy cleanup failed \n");
         }
@@ -551,7 +528,7 @@ out:
     }
 }
 
-void init_debug() {
+static void nvshmemi_init_debug() {
     const char *nvshmem_debug = nvshmemi_options.DEBUG;
     if (!nvshmemi_options.DEBUG_provided && !nvshmemi_options.DEBUG_SUBSYS_provided) {
         nvshmem_debug_level = NVSHMEM_LOG_NONE;
@@ -643,7 +620,7 @@ void init_debug() {
                     break;
                 case 'h':  // %h = hostname
                     char hostname[1024];
-                    getHostName(hostname, 1024);
+                    nvshmemu_gethostname(hostname, 1024);
                     dfn += snprintf(dfn, PATH_MAX, "%s", hostname);
                     break;
                 case 'p':  // %p = pid
@@ -669,4 +646,81 @@ void init_debug() {
 #ifdef ENABLE_TRACE
     nvshmem_epoch = std::chrono::high_resolution_clock::now();
 #endif
+}
+
+static void nvshmemi_init_msg(void) {
+    if (0 == nvshmemi_state->mype) {
+        if (nvshmemi_options.VERSION)
+            printf("%s\n", NVSHMEM_VENDOR_STRING);
+
+        if (nvshmemi_options.DEBUG_provided) {
+            int runtimeVersion, driverVersion;
+            cudaError_t err;
+
+            printf("NVSHMEM configuration:\n");
+
+            printf("  %-28s %d\n", "CUDA API", CUDA_VERSION);
+
+            err = cudaRuntimeGetVersion(&runtimeVersion);
+            if (err != cudaSuccess) runtimeVersion = -1;
+            printf("  %-28s %d\n", "CUDA Runtime", runtimeVersion);
+
+            err = cudaDriverGetVersion(&driverVersion);
+            if (err != cudaSuccess) driverVersion = -1;
+            printf("  %-28s %d\n", "CUDA Driver", driverVersion);
+
+            printf("  %-28s %s %s\n", "Build Timestamp", __DATE__, __TIME__);
+            printf("  %-28s%s", "Build Options",
+#ifdef NVSHMEM_X86_64
+                    " NVSHMEM_X86_64"
+#endif
+#ifdef NVSHMEM_PPC64LE
+                    " NVSHMEM_PPC64LE"
+#endif
+#ifdef NVSHMEM_MPI_SUPPORT
+                    " NVSHMEM_MPI_SUPPORT"
+#endif
+#ifdef NVSHMEM_SHMEM_SUPPORT
+                    " NVSHMEM_SHMEM_SUPPORT"
+#endif
+#ifdef NVSHMEM_PMIX_SUPPORT
+                    " NVSHMEM_PMIX_SUPPORT"
+#endif
+#ifdef NVSHMEM_DEFAULT_PMIX
+                    " NVSHMEM_DEFAULT_PMIX"
+#endif
+#ifdef NVSHMEM_DEFAULT_PMI2
+                    " NVSHMEM_DEFAULT_PMI2"
+#endif
+#ifdef NVSHMEM_USE_GDRCOPY
+                    " NVSHMEM_USE_GDRCOPY"
+#endif
+#ifdef NVSHMEM_COMPLEX_SUPPORT
+                    " NVSHMEM_COMPLEX_SUPPORT"
+#endif
+#ifdef NVSHMEM_MPI_IS_OMPI
+                    " NVSHMEM_MPI_IS_OMPI"
+#endif
+#ifdef NVSHMEM_DISABLE_COLL_POLL
+                    " NVSHMEM_DISABLE_COLL_POLL"
+#endif
+#ifdef NVSHMEM_GPU_COLL_USE_LDST
+                    " NVSHMEM_GPU_COLL_USE_LDST"
+#endif
+#ifdef NVSHMEM_TIMEOUT_DEVICE_POLLING
+                    " NVSHMEM_TIMEOUT_DEVICE_POLLING"
+#endif
+#ifdef NVSHMEM_ENABLE_TRACE
+                    " NVSHMEM_ENABLE_TRACE"
+#endif
+                    "\n");
+
+            printf("\n");
+        }
+        if (nvshmemi_options.INFO)
+            nvshmemi_options_print();
+    }
+
+    if (nvshmemi_options.DEBUG_provided || nvshmemi_options.DEBUG_SUBSYS_provided)
+        nvshmemu_debug_log_cpuset(NVSHMEM_INIT, "process");
 }

@@ -5,12 +5,14 @@
  */
 
 #include "nvshmem.h"
+#include "nvshmem_nvtx.hpp"
 #include "cpu_coll.h"
 #include "nvshmemi_coll.h"
 
 #define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_ON_STREAM(TYPENAME, TYPE, OP)                          \
     int nvshmemx_##TYPENAME##_##OP##_reduce_on_stream(nvshmem_team_t team, TYPE *dest,          \
                                         const TYPE *source, int nreduce, cudaStream_t stream) { \
+        NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                         \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                         \
         nvshmemi_team_t * teami = nvshmemi_team_pool[team];                                     \
         if (nvshmemi_use_nccl && NCCL_REDOP_##OP != -1 && NCCL_DT_##TYPENAME != -1) {           \

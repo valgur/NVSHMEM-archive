@@ -278,13 +278,13 @@ NVSHMEM_TYPE_SWAP_CAST(size, size_t, unsigned long long int)
 NVSHMEM_TYPE_SWAP_CAST(ptrdiff, ptrdiff_t, unsigned long long int)
 
 #define NVSHMEM_TYPE_FETCH_EMULATE(Name, Type)                     \
-    __device__ Type nvshmem_##Name##_atomic_fetch(Type *target, int pe) { \
-        return nvshmem_##Name##_atomic_fetch_or(target, (Type)0, pe);     \
+    __device__ Type nvshmem_##Name##_atomic_fetch(const Type *target, int pe) { \
+        return nvshmem_##Name##_atomic_fetch_or(const_cast<Type *>(target), (Type)0, pe);     \
     }
 
 #define NVSHMEM_TYPE_FETCH_EMULATE_CAST(Name, Type, subName, subType)                   \
-    __device__ Type nvshmem_##Name##_atomic_fetch(Type *target, int pe) {                      \
-        subType temp = nvshmem_##subName##_atomic_fetch_or((subType *)target, (subType)0, pe); \
+    __device__ Type nvshmem_##Name##_atomic_fetch(const Type *target, int pe) {                      \
+        subType temp = nvshmem_##subName##_atomic_fetch_or(const_cast<subType *>((const subType *)target), (subType)0, pe); \
         return *((Type *)&temp);                                                        \
     }
 

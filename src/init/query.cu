@@ -7,6 +7,7 @@
 #include "nvshmem.h"
 #include "nvshmemx.h"
 #include "nvshmem_internal.h"
+#include "nvshmem_nvtx.hpp"
 
 __host__ __device__ int nvshmem_my_pe(void) {
 #ifdef __CUDA_ARCH__

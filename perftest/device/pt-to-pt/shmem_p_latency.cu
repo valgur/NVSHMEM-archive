@@ -21,8 +21,7 @@
 #define MAX_MSG_SIZE 64 * 1024
 #define UNROLL 8
 
-__global__ void p_latency(volatile int *data_d, volatile int *flag_d, int len, int pe, int iter,
-                          int skip, double *lat_result) {
+__global__ void p_latency(int *data_d, int len, int pe, int iter, int skip, double *lat_result) {
     long long int start, stop;
     double time;
     int i, j, tid, peer;
@@ -34,7 +33,7 @@ __global__ void p_latency(volatile int *data_d, volatile int *flag_d, int len, i
         if (i == skip) start = clock64();
 
         for (j = tid; j < len; j += THREADS) {
-            nvshmem_int_p((int *)data_d + j, *(data_d + j), peer);
+            nvshmem_int_p(data_d + j, *(data_d + j), peer);
         }
         __syncthreads();
         if (!tid) {
@@ -52,7 +51,7 @@ __global__ void p_latency(volatile int *data_d, volatile int *flag_d, int len, i
 
 int main(int c, char *v[]) {
     int mype, npes, size;
-    int *flag_d = NULL, *data_d = NULL;
+    int *data_d = NULL;
 
     int iter = 50;
     int skip = 5;
@@ -79,9 +78,7 @@ int main(int c, char *v[]) {
     h_lat = (double *)h_tables[1];
 
     data_d = (int *)nvshmem_malloc(max_msg_size);
-    flag_d = (int *)nvshmem_malloc(sizeof(int));
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
-    CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(int)));
 
     nvshmem_barrier_all();
 
@@ -94,7 +91,7 @@ int main(int c, char *v[]) {
             h_size_arr[i] = size;
             nelems = size / sizeof(int);
 
-            p_latency<<<1, THREADS>>>(data_d, flag_d, nelems, mype, iter, skip, &h_lat[i]);
+            p_latency<<<1, THREADS>>>(data_d, nelems, mype, iter, skip, &h_lat[i]);
 
             CUDA_CHECK(cudaGetLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
@@ -111,7 +108,6 @@ int main(int c, char *v[]) {
 finalize:
 
     if (data_d) nvshmem_free(data_d);
-    if (flag_d) nvshmem_free(flag_d);
     free_tables(h_tables, 2);
     finalize_wrapper();
 

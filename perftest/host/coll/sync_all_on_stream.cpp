@@ -15,7 +15,7 @@
 int main(int c, char *v[]) {
     int status = 0;
     int mype, npes;
-    size_t size = 128 * 1024;
+    size_t size = 1;
     double latency_value;
     int iters = MAX_ITERS;
     int skip = MAX_SKIP;

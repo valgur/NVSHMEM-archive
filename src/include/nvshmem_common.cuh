@@ -13,6 +13,7 @@
 #ifndef _NVSHMEM_COMMON_H_
 #define _NVSHMEM_COMMON_H_
 
+#include <stdint.h>
 #include <cuda_runtime.h>
 #ifdef NVSHMEM_COMPLEX_SUPPORT
 #include <complex.h>
@@ -173,6 +174,12 @@
     NVSHMEMI_FN_TEMPLATE(64, int64_t)                                   \
     NVSHMEMI_FN_TEMPLATE(128, int4)
 
+#define NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_FN_TEMPLATE, SCOPE, SC_SUFFIX, SC_PREFIX)  \
+    NVSHMEMI_FN_TEMPLATE(SCOPE, SC_SUFFIX, SC_PREFIX, 8)                                        \
+    NVSHMEMI_FN_TEMPLATE(SCOPE, SC_SUFFIX, SC_PREFIX, 6)                                        \
+    NVSHMEMI_FN_TEMPLATE(SCOPE, SC_SUFFIX, SC_PREFIX, 32)                                       \
+    NVSHMEMI_FN_TEMPLATE(SCOPE, SC_SUFFIX, SC_PREFIX, 64)                                       \
+    NVSHMEMI_FN_TEMPLATE(SCOPE, SC_SUFFIX, SC_PREFIX, 128)
 
 #define NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_FN_TEMPLATE)              \
     NVSHMEMI_FN_TEMPLATE(short, short)                                  \
@@ -419,6 +426,7 @@ enum nvshmemi_call_site_id {
     NVSHMEMI_CALL_SITE_SIGNAL_WAIT_UNTIL_LE,
     NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_FLAG,
     NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_DATA,
+    NVSHMEMI_CALL_SITE_G_WAIT_FLAG,
 };
 
 #define TIMEOUT_NCYCLES 1e10
@@ -446,7 +454,7 @@ extern __constant__ void **nvshmemi_peer_heap_base_d;
 
 extern __device__ nvshmemi_timeout_t *nvshmemi_timeout_d;
 extern __device__ unsigned long long test_wait_any_start_idx_d;
-__device__ void nvshmemi_proxy_enforce_consistency_at_target();
+__device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar);
 
 template <typename T>
 __device__ inline void nvshmemi_check_timeout_and_log(long long int start, int caller, uintptr_t signal_addr,
@@ -648,8 +656,82 @@ __device__ inline void nvshmemi_syncapi_update_mem() {
     __threadfence(); /* 1. Ensures consitency op is not called before the prior test/wait condition has been met
                         2. Needed to prevent reorder of instructions after sync api (when the following if condition is false) */
     if (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_PROXY) { 
-       nvshmemi_proxy_enforce_consistency_at_target();
+       nvshmemi_proxy_enforce_consistency_at_target(true);
     }	
 }
 #endif
+
+__device__ inline void nvshmemi_memcpy_thread(void *dst, const void *src, size_t len) {
+
+    /*
+     * If src and dst are 16B aligned copy as much as possible using 16B chunks
+     */
+    if ((uintptr_t) dst % 16 == 0 && (uintptr_t) src % 16 == 0) {
+              int4 *dst_p =       (int4 *) dst;
+        const int4 *src_p = (const int4 *) src;
+
+        for ( ; len >= 16; len -= 16)
+            *dst_p++ = *src_p++;
+
+        if (0 == len) return;
+
+        dst = (void *) dst_p;
+        src = (void *) src_p;
+    }
+
+    /*
+     * If src and dst are 8B aligned copy as much as possible using 8B chunks
+     */
+    if ((uintptr_t) dst % 8 == 0 && (uintptr_t) src % 8 == 0) {
+              uint64_t *dst_p =       (uint64_t *) dst;
+        const uint64_t *src_p = (const uint64_t *) src;
+
+        for ( ; len >= 8; len -= 8)
+            *dst_p++ = *src_p++;
+
+        if (0 == len) return;
+
+        dst = (void *) dst_p;
+        src = (void *) src_p;
+    }
+
+    /*
+     * If src and dst are 4B aligned copy as much as possible using 4B chunks
+     */
+    if ((uintptr_t) dst % 4 == 0 && (uintptr_t) src % 4 == 0) {
+              uint32_t *dst_p =       (uint32_t *) dst;
+        const uint32_t *src_p = (const uint32_t *) src;
+
+        for ( ; len >= 4; len -= 4)
+            *dst_p++ = *src_p++;
+
+        if (0 == len) return;
+
+        dst = (void *) dst_p;
+        src = (void *) src_p;
+    }
+
+    /*
+     * If src and dst are 2B aligned copy as much as possible using 2B chunks
+     */
+    if ((uintptr_t) dst % 2 == 0 && (uintptr_t) src % 2 == 0) {
+              uint16_t *dst_p =       (uint16_t *) dst;
+        const uint16_t *src_p = (const uint16_t *) src;
+
+        for ( ; len >= 2; len -= 2)
+            *dst_p++ = *src_p++;
+
+        if (0 == len) return;
+
+        dst = (void *) dst_p;
+        src = (void *) src_p;
+    }
+
+          unsigned char *dst_c =       (unsigned char *) dst;
+    const unsigned char *src_c = (const unsigned char *) src;
+
+    for ( ; len > 0; len--)
+        *dst_c++ = *src_c++;
+}
+
 #endif

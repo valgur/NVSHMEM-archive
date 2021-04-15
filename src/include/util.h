@@ -244,8 +244,11 @@ int cuCheck(CUresult res);
 int cudaCheck(cudaError_t res);
 
 uint64_t getHostHash();
+nvshmemResult_t nvshmemu_gethostname(char* hostname, int maxlen);
 void setup_sig_handler();
 char * nvshmemu_hexdump(void *ptr, size_t len);
+void nvshmemu_debug_log_cpuset(int category, const char *thread_name);
+char * nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent);
 
 extern const char *p_err_str;
 
@@ -265,7 +268,7 @@ typedef const char* nvshmemi_env_string;
 enum nvshmemi_env_categories {
     NVSHMEMI_ENV_CAT_OPENSHMEM, NVSHMEMI_ENV_CAT_OTHER,
     NVSHMEMI_ENV_CAT_COLLECTIVES, NVSHMEMI_ENV_CAT_TRANSPORT,
-    NVSHMEMI_ENV_CAT_HIDDEN
+    NVSHMEMI_ENV_CAT_HIDDEN, NVSHMEMI_ENV_CAT_NVTX
 };
 
 

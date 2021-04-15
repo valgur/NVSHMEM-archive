@@ -53,6 +53,7 @@ int main (int argc, char *argv[]) {
     int *destination = (int *) nvshmem_malloc (sizeof(int));
 
     simple_shift<<<1, 1, 0, stream>>>(destination);
+    nvshmemx_barrier_all_on_stream(stream);
     CUDA_CHECK(cudaMemcpyAsync(&msg, destination, sizeof(int),
                 cudaMemcpyDeviceToHost, stream));
 

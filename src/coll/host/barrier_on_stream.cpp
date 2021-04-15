@@ -6,10 +6,13 @@
 
 #include "nvshmem.h"
 #include "nvshmemx.h"
+#include "nvshmem_nvtx.hpp"
 #include "cpu_coll.h"
 #include "nvshmemi_coll.h"
 
 void nvshmemx_barrier_all_on_stream(cudaStream_t stream) {
+    NVTX_FUNC_RANGE_IN_GROUP(COLL);
+
     NVSHMEM_CHECK_STATE_AND_INIT();
     nvshmemx_barrier_on_stream(NVSHMEM_TEAM_WORLD, stream);
 }
@@ -20,6 +23,7 @@ void nvshmemxi_barrier_on_stream(int PE_start, int PE_stride, int PE_size, long 
 }
 
 int nvshmemx_barrier_on_stream(nvshmem_team_t team, cudaStream_t stream) {
+    NVTX_FUNC_RANGE_IN_GROUP(COLL);
     NVSHMEM_CHECK_STATE_AND_INIT();
     nvshmemi_team_t *teami = nvshmemi_team_pool[team];
     nvshmemxi_barrier_on_stream(teami->start, teami->stride, teami->size,
@@ -33,6 +37,7 @@ void nvshmemx_sync_all_on_stream(cudaStream_t stream) {
 }
 
 int nvshmemx_team_sync_on_stream(nvshmem_team_t team, cudaStream_t stream) {
+    NVTX_FUNC_RANGE_IN_GROUP(COLL);
     NVSHMEM_CHECK_STATE_AND_INIT();
     
     nvshmemi_team_t *teami = nvshmemi_team_pool[team];

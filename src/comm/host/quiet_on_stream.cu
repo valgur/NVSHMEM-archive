@@ -7,6 +7,7 @@
 #include "nvshmem.h"
 #include "nvshmemx.h"
 #include "nvshmem_internal.h"
+#include "nvshmem_nvtx.hpp"
 #include "util.h"
 
 #ifdef __cplusplus
@@ -21,6 +22,7 @@ void nvshmemx_quiet_on_stream(cudaStream_t cstrm);
 __global__ void nvshmemi_proxy_quiet_entrypoint() { nvshmem_quiet(); }
 
 void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {
+    NVTX_FUNC_RANGE_IN_GROUP(QUIET_ON_STREAM);
     NVSHMEM_CHECK_STATE_AND_INIT();
     int status = 0;
 

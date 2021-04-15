@@ -21,7 +21,7 @@ enum {
     NVSHMEM_TEAMS_MIN
 };
 
-static long NVSHMEMI_TEAMS_MAX=20;
+long nvshmemi_max_teams;
 #define PSYNC_SIZE_PER_TEAM (NVSHMEMI_SYNC_SIZE +                \
                              NVSHMEMI_ALLTOALL_SYNC_SIZE +       \
                              NVSHMEMI_BCAST_SYNC_SIZE +          \
@@ -80,14 +80,14 @@ static inline int check_for_linear_stride(int pe, int *start, int *stride, int *
 }
 
 size_t nvshmemi_get_teams_mem_requirement() {
-    return sizeof(long) * NVSHMEMI_TEAMS_MAX * PSYNC_SIZE_PER_TEAM + /* psync's */
-           2 * N_PSYNC_BYTES +  /* psync_pool_avail */
-           2 * sizeof(int) +    /* team_ret_val */
-           sizeof(long) * NVSHMEMI_TEAMS_MAX /* storing counters */
+    return sizeof(long) * nvshmemi_max_teams * PSYNC_SIZE_PER_TEAM + /* psync's */
+           2 * N_PSYNC_BYTES +                                       /* psync_pool_avail */
+           2 * sizeof(int) +                                         /* team_ret_val */
+           sizeof(long) * nvshmemi_max_teams                         /* storing counters */
 #ifdef NVSHMEM_USE_NCCL
            + sizeof(ncclUniqueId)
 #endif
-           ;
+        ;
             
 }
 
@@ -101,6 +101,7 @@ void nvshmemi_team_init_nccl_comm(nvshmemi_team_t *teami) {
     if (teami->my_pe == 0) {
         NCCL_CHECK(nccl_ftable.GetUniqueId(&Id));
         CUDA_RUNTIME_CHECK(cudaMemcpy(pWrk, &Id, sizeof(ncclUniqueId), cudaMemcpyHostToDevice));
+        CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
         for (int i = 0; i < size; i++) {
             nvshmem_char_put_nbi((char *)pWrk, (const char *)pWrk,
                                  sizeof(ncclUniqueId), start + i * stride);
@@ -114,7 +115,7 @@ void nvshmemi_team_init_nccl_comm(nvshmemi_team_t *teami) {
                          nvshmemi_team_get_sync_counter(teami)); /* assumes barrier does not use NCCL */
         CUDA_RUNTIME_CHECK(cudaMemcpy(&Id, pWrk, sizeof(ncclUniqueId), cudaMemcpyDeviceToHost));
     }
-    INFO(NVSHMEM_TEAM, "Calling ncclCommInitRank, teami->size = %d, teami->my_pe = %d\n", teami->size, teami->my_pe);
+    INFO(NVSHMEM_TEAM, "Calling ncclCommInitRank, teami->size = %d, teami->my_pe = %d", teami->size, teami->my_pe);
     NCCL_CHECK(nccl_ftable.CommInitRank(&teami->nccl_comm, teami->size, Id, teami->my_pe));
 }
 #endif  /* NVSHMEM_USE_NCCL */
@@ -127,6 +128,7 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_t *team_addr;
     int status = 0;
 
+    nvshmemi_max_teams = nvshmemi_options.MAX_TEAMS;
     /* Initialize NVSHMEM_TEAM_WORLD */
     nvshmemi_team_world.psync_idx = NVSHMEM_TEAM_WORLD_INDEX;
     nvshmemi_team_world.start = 0;
@@ -148,7 +150,7 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_shared.size = 1;
 
     cudaMemcpyToSymbol(nvshmemi_team_shared_d, &nvshmemi_team_shared, sizeof(nvshmemi_team_t), 0);
-    INFO(NVSHMEM_INIT, "NVSHMEM_TEAM_SHARED: start=%d, stride=%d, size=%d\n",
+    INFO(NVSHMEM_INIT, "NVSHMEM_TEAM_SHARED: start=%d, stride=%d, size=%d",
          nvshmemi_team_shared.start, nvshmemi_team_shared.stride, nvshmemi_team_shared.size);
 
     /* Initialize NVSHMEM_TEAM_NODE */
@@ -186,28 +188,29 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_node.size = size;
     cudaMemcpyToSymbol(nvshmemi_team_node_d, &nvshmemi_team_node, sizeof(nvshmemi_team_t), 0);
 
-    INFO(NVSHMEM_INIT, "NVSHMEMX_TEAM_NODE: start=%d, stride=%d, size=%d\n",
+    INFO(NVSHMEM_INIT, "NVSHMEMX_TEAM_NODE: start=%d, stride=%d, size=%d",
          nvshmemi_team_node.start, nvshmemi_team_node.stride, nvshmemi_team_node.size);
 
-    if (NVSHMEMI_TEAMS_MAX < NVSHMEM_TEAMS_MIN) NVSHMEMI_TEAMS_MAX = NVSHMEM_TEAMS_MIN;
+    if (nvshmemi_max_teams < NVSHMEM_TEAMS_MIN) nvshmemi_max_teams = NVSHMEM_TEAMS_MIN;
 
-    if (NVSHMEMI_TEAMS_MAX > N_PSYNC_BYTES * CHAR_BIT) {
-        ERROR_EXIT("Requested %ld teams, but only %d are supported\n", NVSHMEMI_TEAMS_MAX,
+    if (nvshmemi_max_teams > N_PSYNC_BYTES * CHAR_BIT) {
+        ERROR_EXIT("Requested %ld teams, but only %d are supported\n", nvshmemi_max_teams,
                    N_PSYNC_BYTES * CHAR_BIT);
         goto cleanup;
     }
 
-
-    nvshmemi_team_pool = (nvshmemi_team_t **) malloc(NVSHMEMI_TEAMS_MAX * sizeof(nvshmemi_team_t *));
+    nvshmemi_team_pool = (nvshmemi_team_t **)malloc(nvshmemi_max_teams * sizeof(nvshmemi_team_t *));
     NULL_ERROR_JMP(nvshmemi_team_pool, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "nvshmemi_team_pool allocation failed \n");
-    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_pool, NVSHMEMI_TEAMS_MAX * sizeof(nvshmemi_team_t *)));
-    CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(nvshmemi_team_pool_d, &nvshmemi_device_team_pool, sizeof(nvshmemi_team_t **), 0));    
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_pool,
+                                  nvshmemi_max_teams * sizeof(nvshmemi_team_t *)));
+    CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(nvshmemi_team_pool_d, &nvshmemi_device_team_pool, sizeof(nvshmemi_team_t **), 0));
 
-    for (long i = 0; i < NVSHMEMI_TEAMS_MAX; i++) {
+    for (long i = 0; i < nvshmemi_max_teams; i++) {
         nvshmemi_team_pool[i] = NULL;
     }
 
-    nvshmemi_init_array_kernel<nvshmemi_team_t *><<<1, 1>>>(nvshmemi_device_team_pool, NVSHMEMI_TEAMS_MAX, NULL);
+    nvshmemi_init_array_kernel<nvshmemi_team_t *>
+        <<<1, 1>>>(nvshmemi_device_team_pool, nvshmemi_max_teams, NULL);
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
     nvshmemi_team_pool[NVSHMEM_TEAM_WORLD_INDEX] = &nvshmemi_team_world;
@@ -222,7 +225,7 @@ int nvshmemi_team_init(void) {
      *  <----------- groups 1 & 2-------------->|<------------- group 3 ---------------->
      *  <--- (bcast, collect, reduce, etc.) --->|<------ (barriers and syncs) ---------->
      * */
-    psync_len = NVSHMEMI_TEAMS_MAX * PSYNC_SIZE_PER_TEAM;
+    psync_len = nvshmemi_max_teams * PSYNC_SIZE_PER_TEAM;
     nvshmemi_psync_pool = (long *)nvshmemi_malloc(sizeof(long) * psync_len);
     NULL_ERROR_JMP(nvshmemi_psync_pool, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "nvshmemi_psync_pool allocation failed \n");
 
@@ -231,12 +234,12 @@ int nvshmemi_team_init(void) {
     nvshmemi_init_array_kernel<long><<<1, 1>>>(nvshmemi_psync_pool, psync_len, NVSHMEMI_SYNC_VALUE);
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
-    nvshmemi_sync_counter = (long *)nvshmemi_malloc(NVSHMEMI_TEAMS_MAX * sizeof(long));
+    nvshmemi_sync_counter = (long *)nvshmemi_malloc(nvshmemi_max_teams * sizeof(long));
     NULL_ERROR_JMP(nvshmemi_sync_counter, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "nvshmemi_sync_counter allocation failed \n");
 
     CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(nvshmemi_sync_counter_d, &nvshmemi_sync_counter, sizeof(long *)));
 
-    nvshmemi_init_array_kernel<long><<<1, 1>>>(nvshmemi_sync_counter, NVSHMEMI_TEAMS_MAX, 1);
+    nvshmemi_init_array_kernel<long><<<1, 1>>>(nvshmemi_sync_counter, nvshmemi_max_teams, 1);
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
     /* Convenience pointer to the group-3 pSync array (for barriers and syncs): */
@@ -249,7 +252,7 @@ int nvshmemi_team_init(void) {
     device_psync_pool_avail_reduced = &device_psync_pool_avail[N_PSYNC_BYTES];
     /* Initialize the psync bits to 1, making all slots available: */
     memset(psync_pool_avail, 0, 2 * N_PSYNC_BYTES);
-    for (size_t i = 0; i < (size_t)NVSHMEMI_TEAMS_MAX; i++) {
+    for (size_t i = 0; i < (size_t)nvshmemi_max_teams; i++) {
         nvshmemi_bit_set(psync_pool_avail, N_PSYNC_BYTES, i);
     }
 
@@ -303,7 +306,7 @@ int nvshmemi_team_init(void) {
     CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SHARED_INDEX], &team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
     CUDA_RUNTIME_CHECK(cudaGetSymbolAddress((void **)&team_addr, nvshmemi_team_node_d));
     CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_NODE_INDEX], &team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
-    
+    CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
     return status;
 
 cleanup:
@@ -339,7 +342,7 @@ cleanup:
 
 int nvshmemi_team_finalize(void) {
     /* Destroy all undestroyed teams */
-    for (int32_t i = 0; i < NVSHMEMI_TEAMS_MAX; i++) {
+    for (long i = 0; i < nvshmemi_max_teams; i++) {
         if (nvshmemi_team_pool[i] != NULL) nvshmemi_team_destroy(nvshmemi_team_pool[i]);
     }
 
@@ -442,10 +445,11 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
 
         nvshmemi_bit_to_string(bit_str, NVSHMEMI_DIAG_STRLEN, psync_pool_avail_reduced,
                                N_PSYNC_BYTES);
-        if (myteam->psync_idx == -1 || myteam->psync_idx >= NVSHMEMI_TEAMS_MAX) {
+        if (myteam->psync_idx == -1 || myteam->psync_idx >= (int)nvshmemi_max_teams) {
             WARN_PRINT(
-                "No more teams available (max = %ld), try increasing NVSHMEM_TEAMS_MAX\n",
-                NVSHMEMI_TEAMS_MAX);
+                "No more teams available (max = %ld), try setting NVSHMEM_MAX_TEAMS environment "
+                "variable\n",
+                nvshmemi_max_teams);
             /* No psync was available, but must call barrier across parent team before returning. */
             myteam->psync_idx = -1;
             *team_ret_val = 1;
@@ -457,12 +461,14 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
 
             nvshmemi_team_pool[myteam->psync_idx] = myteam;
 #ifdef NVSHMEM_USE_NCCL
+        if (nvshmemi_use_nccl)
             nvshmemi_team_init_nccl_comm(myteam);
 #endif
             nvshmemi_team_t *device_team_addr;
             CUDA_RUNTIME_CHECK(cudaMalloc((void **)&device_team_addr, sizeof(nvshmemi_team_t)));
             CUDA_RUNTIME_CHECK(cudaMemcpy(device_team_addr, myteam, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
             CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[myteam->psync_idx], &device_team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+            CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
         }
     }
 
@@ -475,6 +481,7 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
 
     /* This OR reduction assures all PEs return the same value.  */
     CUDA_RUNTIME_CHECK(cudaMemcpy(device_team_ret_val, team_ret_val, sizeof(int), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
     nvshmemi_int_max_reduce(device_team_ret_val_reduced, device_team_ret_val, 1, parent_team->start,
                             parent_team->stride, parent_team->size, (int *)psync_reduce, 
                             (long *)(psync_reduce + NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE));
