@@ -21,7 +21,7 @@
 #define MAX_MSG_SIZE 16 * 1024
 #define UNROLL 8
 
-__global__ void ping_pong(int *data_d, int *flag_d, int len, int pe, int iter, int skip,
+__global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int iter, int skip,
                           double *lat_result) {
     long long int start, stop;
     double time;
@@ -35,7 +35,7 @@ __global__ void ping_pong(int *data_d, int *flag_d, int len, int pe, int iter, i
 
         if (pe) {
             if (!tid) {
-                nvshmem_int_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
+                nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
             }
             __syncthreads();
 
@@ -46,7 +46,7 @@ __global__ void ping_pong(int *data_d, int *flag_d, int len, int pe, int iter, i
 
             if (!tid) {
                 nvshmem_fence();
-                nvshmemx_int_signal(flag_d, (i + 1), peer);
+                nvshmemx_signal_op(flag_d, (i + 1), NVSHMEM_SIGNAL_SET, peer);
             }
             __syncthreads();
         } else {
@@ -57,12 +57,12 @@ __global__ void ping_pong(int *data_d, int *flag_d, int len, int pe, int iter, i
 
             if (!tid) {
                 nvshmem_fence();
-                nvshmemx_int_signal(flag_d, (i + 1), peer);
+                nvshmemx_signal_op(flag_d, (i + 1), NVSHMEM_SIGNAL_SET, peer);
             }
             __syncthreads();
 
             if (!tid) {
-                nvshmem_int_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
+                nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
             }
             __syncthreads();
         }
@@ -79,7 +79,8 @@ __global__ void ping_pong(int *data_d, int *flag_d, int len, int pe, int iter, i
 
 int main(int c, char *v[]) {
     int mype, npes, size;
-    int *flag_d = NULL, *data_d = NULL;
+    uint64_t *flag_d = NULL;
+    int *data_d = NULL;
     double *cur_lat;
 
     sleep(10);
@@ -109,7 +110,7 @@ int main(int c, char *v[]) {
     h_lat = (double *)h_tables[1];
 
     data_d = (int *)nvshmem_malloc(max_msg_size);
-    flag_d = (int *)nvshmem_malloc(sizeof(int));
+    flag_d = (uint64_t *)nvshmem_malloc(sizeof(uint64_t));
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
 
     nvshmem_barrier_all();
@@ -128,7 +129,7 @@ int main(int c, char *v[]) {
         cur_lat = &h_lat[i];
         void *args[7] = {&data_d, &flag_d, &nelems, &mype, &iter, &skip, &cur_lat};
 
-        CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(int)));
+        CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
         CUDA_CHECK(cudaDeviceSynchronize());
         nvshmem_barrier_all();
 

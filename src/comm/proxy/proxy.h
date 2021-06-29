@@ -21,7 +21,7 @@
 #define WRAPPED_CHANNEL_BUF_(state, buf, counter) (buf + (counter & (state->channel_bufsize - 1)))
 
 #define PROXY_DMA_REQ_BYTES 32
-#define PROXY_AMO_REQ_BYTES 32
+#define PROXY_AMO_REQ_BYTES 40
 #define PROXY_INLINE_REQ_BYTES 24
 #define CHANNEL_ENTRY_BYTES 8
 
@@ -32,10 +32,6 @@ enum {
 };
 
 enum { PROXY_CST_STATUS_CHANNELS_INACTIVE = 0, PROXY_CST_STATUS_CHANNELS_ACTIVE };
-
-typedef struct {
-    uint64_t data[4];
-} channel_request_t;
 
 /* Note that this is only safe because we are using this across a single system
  * that shares the GPUs endianness.
@@ -144,6 +140,12 @@ typedef struct __attribute__ ((packed)) amo_request_2 {
 } amo_request_2_t;
 static_assert(sizeof(amo_request_2) == 8, "request_size must be 8 bytes.");
 
+typedef struct __attribute__ ((packed)) amo_request_3 {
+    volatile uint8_t flag;
+    uint8_t g_buf_counter[7];
+} amo_request_3_t;
+static_assert(sizeof(amo_request_3) == 8, "request_size must be 8 bytes.");
+
 typedef struct {
     struct proxy_state *state;
     int stop;
@@ -194,13 +196,7 @@ typedef struct proxy_state {
 
 int nvshmemi_proxy_setup_device_channels(proxy_state_t *state);
 
-extern __device__ char *proxy_channel_g_buf_d;           /* buffer space for shmem_g requests */
-extern __device__ uint64_t proxy_channel_g_buf_head_d;     /* next location to be assigned to a thread */
-extern __constant__ uint64_t proxy_channel_g_buf_size_d;   /* Total size of g_buf in bytes */
-extern __constant__ uint64_t proxy_channel_g_buf_log_size_d;   /* Total size of g_buf in bytes */
-
 extern char *proxy_channel_g_buf;
-extern uint64_t proxy_channel_g_buf_head;     /* next location to be assigned to a thread */
 extern uint64_t proxy_channel_g_buf_size;   /* Total size of g_buf in bytes */
 extern uint64_t proxy_channel_g_buf_log_size;   /* Total size of g_buf in bytes */
 

@@ -24,14 +24,14 @@ typedef enum rdxn_ops {
 
 template <typename TYPE>
 __device__ static inline void
-gpu_payload_wait_for_ready(TYPE *src, int pe_idx, int , int nelems)
+gpu_payload_wait_for_ready(TYPE *src, int pe_idx, int , size_t nelems)
 {
     TYPE tmp;
     volatile uint32_t *header = NULL;
     uint32_t *tmp_ptr = (uint32_t *)&tmp;
     uint32_t *payload = NULL;
-    int subelems = sizeof(TYPE) / sizeof(uint32_t);
-    int subelem_idx;
+    size_t subelems = sizeof(TYPE) / sizeof(uint32_t);
+    size_t subelem_idx;
 
     for (subelem_idx = 0; i < subelems; subelem_idx++) {
         payload = (uint32_t *)((uint64_t *)src + (elem_idx * subelems) + subelem_idx + (nelems * subelems * pe_idx));
@@ -46,10 +46,11 @@ gpu_payload_wait_for_ready(TYPE *src, int pe_idx, int , int nelems)
 template <typename TYPE>
 __device__ static inline void
 gpu_head_checkall_op(rdxn_ops_t op, TYPE *dest, const TYPE *src, TYPE *actual_src,
-                     int nelems, int start, int stride, int size)
+                     size_t nelems, int start, int stride, int size)
 {
-    int i, j;
-    int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);
+    size_t i;
+    int j;
+    int my_active_set_pe = ((nvshmemi_device_state_d.mype - start) / stride);
     TYPE *src_ptr = (TYPE *)actual_src;
 
     switch (op) {
@@ -170,9 +171,9 @@ gpu_head_checkall_op(rdxn_ops_t op, TYPE *dest, const TYPE *src, TYPE *actual_sr
 
 template <typename TYPE>
 __device__ static inline void
-gpu_linear_reduce(rdxn_ops_t op, TYPE *x, TYPE *y, TYPE *z, int nelems)
+gpu_linear_reduce(rdxn_ops_t op, TYPE *x, TYPE *y, TYPE *z, size_t nelems)
 {
-    int i;
+    size_t i;
 
     switch (op) {
         case RDXN_OPS_AND:
@@ -215,9 +216,9 @@ gpu_linear_reduce(rdxn_ops_t op, TYPE *x, TYPE *y, TYPE *z, int nelems)
 
 template <>
 __device__ inline void
-gpu_linear_reduce<double>(rdxn_ops_t op, double *x, double *y, double *z, int nelems)
+gpu_linear_reduce<double>(rdxn_ops_t op, double *x, double *y, double *z, size_t nelems)
 {
-    int i;
+    size_t i;
 
     switch (op) {
         case RDXN_OPS_MIN:
@@ -245,9 +246,9 @@ gpu_linear_reduce<double>(rdxn_ops_t op, double *x, double *y, double *z, int ne
 
 template <>
 __device__ inline void
-gpu_linear_reduce<float>(rdxn_ops_t op, float *x, float *y, float *z, int nelems)
+gpu_linear_reduce<float>(rdxn_ops_t op, float *x, float *y, float *z, size_t nelems)
 {
-    int i;
+    size_t i;
 
     switch (op) {
         case RDXN_OPS_MIN:
@@ -275,22 +276,22 @@ gpu_linear_reduce<float>(rdxn_ops_t op, float *x, float *y, float *z, int nelems
 
 template <typename TYPE>
 __device__ static inline void
-gpu_rdxn_on_demand(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
-                   int start, int stride, int size, TYPE * pWrk, long *pSync)
+gpu_rdxn_on_demand(rdxn_ops_t op, TYPE *dest, const TYPE *source, size_t nelems,
+                   int start, int stride, int size, TYPE *pWrk, long *pSync)
 {
     int next_rank = -1;
     TYPE *op1 = NULL, *op2 = NULL;
-    int i;
+    size_t i;
     volatile TYPE *tmp_operand;
-    int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);
+    int my_active_set_pe = ((nvshmemi_device_state_d.mype - start) / stride);
 
     tmp_operand = (TYPE *) pWrk;
 
-    put <TYPE> (dest, source, nelems, nvshmemi_mype_d);
+    nvshmemi_put<TYPE>(dest, source, nelems, nvshmemi_device_state_d.mype);
     long counter = NVSHMEMI_SYNC_VALUE + 1;
     for (i = 1; i < size; i++) {
         next_rank = start + ((my_active_set_pe + i) % size) * stride;
-        put_nbi <TYPE> ((TYPE *)tmp_operand, source, nelems, next_rank);
+        nvshmemi_put_nbi <TYPE> ((TYPE *)tmp_operand, source, nelems, next_rank);
         nvshmemi_barrier(start, stride, size, pSync, &counter);
         op1 = (TYPE *)dest;
         op2 = (TYPE *)tmp_operand;
@@ -304,24 +305,25 @@ gpu_rdxn_on_demand(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
 
 template <typename TYPE>
 __device__ static inline void
-gpu_rdxn_segment(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
+gpu_rdxn_segment(rdxn_ops_t op, TYPE *dest, const TYPE *source, size_t nelems,
                    int start, int stride, int size, TYPE * pWrk, long *pSync)
 {
     int type_size = sizeof(TYPE);
     int msg_len = nelems * type_size;
     int next_rank = -1;
     TYPE *op1 = NULL, *op2 = NULL;
-    int i, j;
+    int i;
+    size_t j;
     volatile TYPE *tmp_operand;
-    int remainder = 0;
-    int rnds_floor = 0;
-    int offset = 0;
-    int exchange_size = 0;
-    int nvshm_gpu_rdxn_seg_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE;
-    int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);
+    size_t remainder = 0;
+    size_t rnds_floor = 0;
+    size_t offset = 0;
+    size_t exchange_size = 0;
+    size_t nvshm_gpu_rdxn_seg_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE;
+    int my_active_set_pe = ((nvshmemi_device_state_d.mype - start) / stride);
 
     tmp_operand = pWrk;
-    put <TYPE> (dest, source, nelems, nvshmemi_mype_d);
+    nvshmemi_put<TYPE>(dest, source, nelems, nvshmemi_device_state_d.mype);
 
     rnds_floor = msg_len / nvshm_gpu_rdxn_seg_size;
     remainder = msg_len % nvshm_gpu_rdxn_seg_size;
@@ -330,7 +332,7 @@ gpu_rdxn_segment(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
         exchange_size = nvshm_gpu_rdxn_seg_size;
         for (i = 1; i < size; i++) {
             next_rank = start + ((my_active_set_pe + i) % size) * stride;
-            put_nbi <TYPE> ((TYPE *)tmp_operand, source + offset,
+            nvshmemi_put_nbi <TYPE> ((TYPE *)tmp_operand, source + offset,
                                         (exchange_size / sizeof(TYPE)), next_rank);
             nvshmemi_barrier(start, stride, size, pSync, &counter);
             op1 = dest + offset;
@@ -345,7 +347,7 @@ gpu_rdxn_segment(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
         exchange_size = remainder;
         for (i = 1; i < size; i++) {
             next_rank = start + ((my_active_set_pe + i) % size) * stride;
-            put_nbi <TYPE> ((TYPE *)tmp_operand, source + offset,
+            nvshmemi_put_nbi <TYPE> ((TYPE *)tmp_operand, source + offset,
                                         (exchange_size / sizeof(TYPE)), next_rank);
             nvshmemi_barrier(start, stride, size, pSync, &counter);
             op1 = dest + offset;
@@ -360,32 +362,36 @@ gpu_rdxn_segment(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
 
 template <typename TYPE>
 __device__ static inline void
-gpu_rdxn_zcopy_get_bar(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nreduce,
-                       int start, int stride, int size, TYPE * pWrk, long *pSync)
+gpu_rdxn_zcopy_get_bar(rdxn_ops_t op, TYPE *dest, const TYPE *source, size_t nreduce,
+                       int start, int stride, int size, TYPE *pWrk, long *pSync)
 {
     int next_rank = -1;
-    int src_offset = -1;
-    int next_offset = -1;
+    size_t src_offset;
+    size_t next_offset;
     char *base = NULL;
     char *peer_base = NULL;
     char *peer_source = NULL;
     int i;
 
-    base = (char *)((void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + nvshmemi_mype_d));
+    base =
+        (char *)((void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base +
+                               nvshmemi_device_state_d.mype));
     src_offset = ((char *)source - base);
 
-    next_rank = (nvshmemi_mype_d + (stride)) % (stride * size);
+    next_rank = (nvshmemi_device_state_d.mype + (stride)) % (stride * size);
     next_offset = src_offset;
-    peer_base = (char *)((void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + next_rank));
+    peer_base = (char *)((void *)__ldg(
+        (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + next_rank));
     peer_source = peer_base + next_offset;
     gpu_linear_reduce(op, (void *)source, peer_source, dest, nreduce);
     long counter  = 1;
     nvshmemi_barrier(start, stride, size, pSync, &counter);
 
     for (i = 2; i < size; i++) {
-        next_rank = (nvshmemi_mype_d + (i * stride)) % (stride * size);
+        next_rank = (nvshmemi_device_state_d.mype + (i * stride)) % (stride * size);
         next_offset = src_offset;
-        peer_base = (char *)((void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + next_rank));
+        peer_base = (char *)((void *)__ldg(
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + next_rank));
         peer_source = peer_base + next_offset;
         gpu_linear_reduce(op, dest, peer_source, dest, nreduce);
         nvshmemi_barrier(start, stride, size, pSync, &counter);
@@ -396,29 +402,38 @@ gpu_rdxn_zcopy_get_bar(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nreduc
 
 template <typename TYPE>
 __device__ static inline void
-nvshmem_gpu_rdxn_putall_direct(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
+nvshmem_gpu_rdxn_putall_direct(rdxn_ops_t op, TYPE *dest, const TYPE *source, size_t nelems,
                                 int start, int stride, int size, TYPE * pWrk, long *pSync)
 {
-    int offset;
+    size_t offset;
     char *round_pwrk_dest;
-    int i, j;
+    int i;
+    size_t j;
     int end = start + (stride * size);
     uint32_t tmp[2];
     uint32_t payld;
-    int subelems = sizeof(TYPE) / sizeof(uint32_t);
-    int my_active_set_pe = ((nvshmemi_mype_d - start) / stride);
+    size_t subelems = sizeof(TYPE) / sizeof(uint32_t);
+    int my_active_set_pe = ((nvshmemi_device_state_d.mype - start) / stride);
     tmp[1] = 1;
-    offset = (char *)pWrk - (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + nvshmemi_mype_d));
+    offset = (char *)pWrk -
+             (char *)(__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base +
+                            nvshmemi_device_state_d.mype));
 
     for (j = 0; j < nelems * subelems; j++) {
         payld = *((uint32_t *)source + j);
         tmp[0] = payld;
-        for (i = nvshmemi_mype_d + stride; i < end; i += stride) {
-            round_pwrk_dest = (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + i)) + offset;
+        for (i = nvshmemi_device_state_d.mype + stride; i < end; i += stride) {
+            round_pwrk_dest =
+                (char *)(__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base +
+                               i)) +
+                offset;
             *((uint64_t *)round_pwrk_dest + j + (nelems * subelems * my_active_set_pe)) = *((uint64_t *)tmp);
         }
-        for (i = start; i < nvshmemi_mype_d; i += stride) {
-            round_pwrk_dest = (char *)(__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + i)) + offset;
+        for (i = start; i < nvshmemi_device_state_d.mype; i += stride) {
+            round_pwrk_dest =
+                (char *)(__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base +
+                               i)) +
+                offset;
             *((uint64_t *)round_pwrk_dest + j + (nelems * subelems * my_active_set_pe)) = *((uint64_t *)tmp);
         }
     }
@@ -432,43 +447,43 @@ nvshmem_gpu_rdxn_putall_direct(rdxn_ops_t op, TYPE *dest, const TYPE *source, in
 
 template <typename TYPE>
 __device__ static inline void
-gpu_rdxn_recexch(rdxn_ops_t op, TYPE *dst, const TYPE *source, int nreduce,
-                  int start, int stride, int size, TYPE * pWrk, long *pSync)
+gpu_rdxn_recexch(rdxn_ops_t op, TYPE *dst, const TYPE *source, size_t nreduce,
+                  int start, int stride, int size, TYPE *pWrk, long *pSync)
 {
-    int step1_sendto = reduce_recexch_step1_sendto_d;
-    int step1_nrecvs = reduce_recexch_step1_nrecvs_d;
-    int *step1_recvfrom = reduce_recexch_step1_recvfrom_d;
-    int step2_nphases = reduce_recexch_step2_nphases_d;
-    int **step2_nbrs = reduce_recexch_step2_nbrs_d;
-    int rank = nvshmemi_mype_d;
-    int k = gpu_coll_env_params_var_d.reduce_recexch_kval;
+    const int step1_sendto = nvshmemi_device_state_d.reduce_recexch_step1_sendto;
+    const int step1_nrecvs = nvshmemi_device_state_d.reduce_recexch_step1_nrecvs;
+    const int *step1_recvfrom = nvshmemi_device_state_d.reduce_recexch_step1_recvfrom;
+    const int step2_nphases = nvshmemi_device_state_d.reduce_recexch_step2_nphases;
+    int **step2_nbrs = nvshmemi_device_state_d.reduce_recexch_step2_nbrs;
+    const int rank = nvshmemi_device_state_d.mype;
+    const int k = nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_recexch_kval;
 
     int in_step2 = (step1_sendto == -1); /* whether this rank participates in Step 2 */
 
     if (in_step2 == 1) {
-        for (int i = 0; i < nreduce; i++) {
+        for (size_t i = 0; i < nreduce; i++) {
             dst[i] = source[i];
         }
     }
 
     if (in_step2 == 0) {
-        int offset = (step1_sendto - rank - 1) * nreduce;
-        put_nbi <TYPE> (pWrk + offset, source, nreduce, step1_sendto);
+        size_t offset = (step1_sendto - rank - 1) * nreduce;
+        nvshmemi_put_nbi <TYPE> (pWrk + offset, source, nreduce, step1_sendto);
         nvshmem_fence();
-        nvshmemx_long_signal(pSync + rank, !NVSHMEMI_SYNC_VALUE, step1_sendto);
+        nvshmemx_signal_op((uint64_t *)(pSync + rank), !NVSHMEMI_SYNC_VALUE, NVSHMEM_SIGNAL_SET, step1_sendto);
     } else if (step1_nrecvs != 0) {
         nvshmem_long_wait_until_all(pSync + step1_recvfrom[step1_nrecvs - 1], step1_nrecvs,
                                     NULL, NVSHMEM_CMP_EQ, !NVSHMEMI_SYNC_VALUE);
         for (int i = 0; i < step1_nrecvs; i++) {
-            int offset = (rank - step1_recvfrom[i] - 1) * nreduce;
+            size_t offset = (rank - step1_recvfrom[i] - 1) * nreduce;
             gpu_linear_reduce(op, dst, (pWrk + offset), dst, nreduce);
         }
     }
 
     /* Step 2 */
     if (in_step2) {
-        int send_offset = (k - 1) * nreduce + k * step2_nphases * nreduce;
-        int recv_offset = (k - 1) * nreduce;
+        size_t send_offset = (k - 1) * nreduce + k * step2_nphases * nreduce;
+        size_t recv_offset = (k - 1) * nreduce;
         for (int phase = 0; phase < step2_nphases; phase++) {
             int num_small = k - 1;
             for (int i = 0; i < k - 1; i++) {
@@ -479,21 +494,21 @@ gpu_rdxn_recexch(rdxn_ops_t op, TYPE *dst, const TYPE *source, int nreduce,
             }
             /* copy the data to end of pWrk that can be used as source for puts
                 while we use dst for reduction */
-            for (int i = 0; i < nreduce; i++) {
+            for (size_t i = 0; i < nreduce; i++) {
                 pWrk[send_offset + phase * nreduce + i] = dst[i];
             }
             for (int i = 0; i < k - 1; i++) {
-                int offset = recv_offset + k * phase * nreduce + num_small * nreduce;
-                put_nbi <TYPE> (pWrk + offset, pWrk + send_offset + phase * nreduce,
+                size_t offset = recv_offset + k * phase * nreduce + num_small * nreduce;
+                nvshmemi_put_nbi <TYPE> (pWrk + offset, pWrk + send_offset + phase * nreduce,
                                 nreduce, step2_nbrs[phase][i]);
             }
             nvshmem_fence();
             for (int i = 0; i < k - 1; i++) {
-                nvshmemx_long_signal(pSync + rank, NVSHMEMI_SYNC_VALUE + 1, step2_nbrs[phase][i]);
+                nvshmemx_signal_op((uint64_t *)(pSync + rank), NVSHMEMI_SYNC_VALUE + 1, NVSHMEM_SIGNAL_SET, step2_nbrs[phase][i]);
             }
 
             for (int i = 0; i < k - 1; i++) {
-                nvshmem_long_wait_until(pSync + step2_nbrs[phase][i], NVSHMEM_CMP_EQ,
+                nvshmem_uint64_wait_until((uint64_t *)(pSync + step2_nbrs[phase][i]), NVSHMEM_CMP_EQ,
                                         NVSHMEMI_SYNC_VALUE + 1);
                 int offset = recv_offset + k * phase * nreduce;
                 if (step2_nbrs[phase][i] < rank)
@@ -509,31 +524,31 @@ gpu_rdxn_recexch(rdxn_ops_t op, TYPE *dst, const TYPE *source, int nreduce,
     /* Step 3 */
     if (step1_nrecvs > 0) {
         for (int i = 0; i < step1_nrecvs; i++) {
-            put_nbi <TYPE> (dst, dst, nreduce, step1_recvfrom[i]);
+            nvshmemi_put_nbi <TYPE> (dst, dst, nreduce, step1_recvfrom[i]);
             nvshmem_fence();
-            nvshmemx_long_signal(pSync + rank, NVSHMEMI_SYNC_VALUE + 1, step1_recvfrom[i]);
+            nvshmemx_signal_op((uint64_t *)(pSync + rank), NVSHMEMI_SYNC_VALUE + 1, NVSHMEM_SIGNAL_SET,  step1_recvfrom[i]);
         }
     } else if (step1_sendto != -1) {
-        nvshmem_long_wait_until(pSync + step1_sendto, NVSHMEM_CMP_EQ, NVSHMEMI_SYNC_VALUE + 1);
+        nvshmem_uint64_wait_until((uint64_t *)(pSync + step1_sendto), NVSHMEM_CMP_EQ, NVSHMEMI_SYNC_VALUE + 1);
     }
 
-    for (int i = 0; i < nvshmemi_npes_d; i++)
+    for (int i = 0; i < nvshmemi_device_state_d.npes; i++)
         pSync[i] = NVSHMEMI_SYNC_VALUE; /* should this be a volatile write? */
 }
 
 template <typename TYPE>
 __device__ static inline void
-nvshmemi_gpu_rdxn(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
-                  int start, int stride, int size, TYPE * pWrk, long *pSync)
+nvshmemi_gpu_rdxn(rdxn_ops_t op, TYPE *dest, const TYPE *source, size_t nelems,
+                  int start, int stride, int size, TYPE *pWrk, long *pSync)
 {
 #ifdef NVSHMEM_GPU_COLL_USE_LDST
 #ifdef NVSHMEM_DISABLE_COLL_POLL
     gpu_rdxn_zcopy_get_bar(op, dest, source, nelems, start, stride, size, pWrk, pSync);
 #else
-    int subelems = sizeof(TYPE) / sizeof(uint32_t);
-    int pwrk_req_sz_allgather = ((subelems * nelems) * sizeof(uint64_t)) * size;
+    size_t subelems = sizeof(TYPE) / sizeof(uint32_t);
+    size_t pwrk_req_sz_allgather = ((subelems * nelems) * sizeof(uint64_t)) * size;
     /*int pwrk_req_sz_ring = ((subelems * nelems) * sizeof(uint64_t));*/
-    int wrk_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * sizeof(TYPE);
+    size_t wrk_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * sizeof(TYPE);
     if (subelems && pwrk_req_sz_allgather <= wrk_size) {
         nvshmem_gpu_rdxn_putall_direct(op, dest, source, nelems, start,
                                         stride, size, pWrk, pSync);
@@ -542,10 +557,11 @@ nvshmemi_gpu_rdxn(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
     }
 #endif
 #else
-    int k = gpu_coll_env_params_var_d.reduce_recexch_kval;
-    if (start == 0 && stride == 1 && size == nvshmemi_npes_d &&
+    int k = nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_recexch_kval;
+    if (start == 0 && stride == 1 && size == nvshmemi_device_state_d.npes &&
         NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE >=
-        ((k - 1) * nelems + k * reduce_recexch_step2_nphases_d * nelems + reduce_recexch_step2_nphases_d * nelems)) {
+            ((k - 1) * nelems + k * nvshmemi_device_state_d.reduce_recexch_step2_nphases * nelems +
+             nvshmemi_device_state_d.reduce_recexch_step2_nphases * nelems)) {
         gpu_rdxn_recexch(op, dest, source, nelems, start, stride, size, pWrk, pSync);
     } else {
         if (NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE >= (nelems * sizeof(TYPE))) {
@@ -559,9 +575,9 @@ nvshmemi_gpu_rdxn(rdxn_ops_t op, TYPE *dest, const TYPE *source, int nelems,
 
 #define DEFINE_NVSHMEMI_OP_REDUCE(OP, ENUM)                                                      \
 template <typename TYPE>                                                                         \
-__device__ inline void nvshmemi_##OP##_reduce(TYPE *dest, const TYPE *source, int nreduce,       \
-                                                int start, int stride, int size, TYPE * pWrk,    \
-                                                long *pSync) {                                   \
+__device__ inline void nvshmemi_##OP##_reduce(TYPE *dest, const TYPE *source, size_t nreduce,    \
+                                                int start, int stride, int size,                 \
+                                                TYPE * pWrk, long *pSync) {                      \
     nvshmemi_gpu_rdxn(RDXN_OPS_##ENUM, dest, source, nreduce, start, stride, size, pWrk, pSync); \
 }
 
@@ -576,12 +592,12 @@ DEFINE_NVSHMEMI_OP_REDUCE(prod, PROD);
 #define DEFN_NVSHMEM_TYPENAME_OP_REDUCE(TYPENAME, TYPE, OP)                                 \
     __device__ int nvshmem_##TYPENAME##_##OP##_reduce(nvshmem_team_t team, TYPE *dest,      \
                                                       const TYPE *source, size_t nreduce) { \
-        nvshmemi_team_t *teami = nvshmemi_team_pool_d[team];                                \
+        nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];                   \
         TYPE *pWrk = (TYPE *)nvshmemi_team_get_psync(teami, REDUCE);                        \
-        long *pSync = (long *)((long *)pWrk + NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE);             \
+        long *pSync = (long *)((long *)pWrk + NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE);            \
         nvshmem_barrier(team);                                                              \
-        nvshmemi_##OP##_reduce <TYPE> (dest, source, nreduce, teami->start, teami->stride,  \
-                                       teami->size, pWrk, pSync);                           \
+        nvshmemi_##OP##_reduce<TYPE>(dest, source, nreduce, teami->start, teami->stride,    \
+                                     teami->size, pWrk, pSync);                             \
         return 0;                                                                           \
     }
 

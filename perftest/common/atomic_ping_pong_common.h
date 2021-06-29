@@ -20,6 +20,58 @@
 #include <unistd.h>
 #include "utils.h"
 
+void atomic_op_parse(char *v[], nvshmemi_amo_t *atomic_op) {
+    char *amo = v[1];
+    size_t string_length = strnlen(amo, 20);
+
+    if(strncmp(amo, "inc", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_INC;
+    } else if(strncmp(amo, "fetch_inc", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_FETCH_INC;
+    } else if(strncmp(amo, "set", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_SET;
+    } else if(strncmp(amo, "add", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_ADD;
+    } else if(strncmp(amo, "fetch_add", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_FETCH_ADD;
+    } else if(strncmp(amo, "and", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_AND;
+    } else if(strncmp(amo, "fetch_and", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_FETCH_AND;
+    } else if(strncmp(amo, "or", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_OR;
+    } else if(strncmp(amo, "fetch_or", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_FETCH_OR;
+    } else if(strncmp(amo, "xor", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_XOR;
+    } else if(strncmp(amo, "fetch_xor", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_FETCH_XOR;
+    } else if(strncmp(amo, "swap", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_SWAP;
+    } else if(strncmp(amo, "compare_swap", string_length) == 0) {
+        *atomic_op = NVSHMEMI_AMO_COMPARE_SWAP;
+    } else {
+        *atomic_op = NVSHMEMI_AMO_ACK;
+    }
+}
+
+void atomic_usage(void) {
+    fprintf(stderr, "Please supply an atomic operation to perform. Valid options are: \n");
+    fprintf(stderr, "inc\n");
+    fprintf(stderr, "fetch_inc\n");
+    fprintf(stderr, "set\n");
+    fprintf(stderr, "add\n");
+    fprintf(stderr, "fetch_add\n");
+    fprintf(stderr, "and\n");
+    fprintf(stderr, "fetch_and\n");
+    fprintf(stderr, "or\n");
+    fprintf(stderr, "fetch_or\n");
+    fprintf(stderr, "xor\n");
+    fprintf(stderr, "fetch_xor\n");
+    fprintf(stderr, "swap\n");
+    fprintf(stderr, "compare_swap\n");
+}
+
 #define DEFINE_PING_PONG_TEST_FOR_AMO_NO_ARG(TYPE, TYPE_NAME, AMO, COMPARE_EXPR)               \
 __global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip,        \
                                               double *lat_result) {                            \
@@ -113,9 +165,22 @@ __global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, in
 }
 
 #define MAIN_SETUP(c, v, mype, npes, flag_d, stream, h_size_arr,                               \
-                   h_tables, h_lat)                                                            \
+                   h_tables, h_lat, atomic_op)                                                 \
 do {                                                                                           \
                                                                                                \
+    if (c == 1) {                                                                              \
+        fprintf(stderr, "You must pass a valid atomic operation name to the exeutable.\n");    \
+        atomic_usage();                                                                        \
+    } else {                                                                                   \
+        *atomic_op = NVSHMEMI_AMO_ACK;                                                         \
+        atomic_op_parse(v, atomic_op);                                                         \
+        if (*atomic_op == NVSHMEMI_AMO_ACK) {                                                  \
+            fprintf(stderr, "Error, No valid atomic supplied, exiting.\n");                    \
+        }                                                                                      \
+    }                                                                                          \
+    /* Ignore the initial atomic argument if they pass MPI args. */                            \
+    c--;                                                                                       \
+    v++;                                                                                       \
     init_wrapper(&c, &v);                                                                      \
                                                                                                \
     mype = nvshmem_my_pe();                                                                    \
@@ -206,7 +271,7 @@ do {                                                                            
     nvshmem_barrier_all();                                                                     \
                                                                                                \
     if (mype == 0) {                                                                           \
-        print_table("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)",            \
+        print_table("shmem_at_" #TYPE "_" #AMO "_lat", "None", "size (Bytes)",                 \
         "latency", "us", '-', h_size_arr, h_lat, 1);                                           \
     }                                                                                          \
                                                                                                \

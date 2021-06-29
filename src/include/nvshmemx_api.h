@@ -15,6 +15,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "cuda.h"
 #include "nvshmem_types.h"
 #include "nvshmem_constants.h"
 #include "nvshmem_common.cuh"
@@ -52,6 +53,7 @@ int nvshmemx_init_thread(int requested, int *provided) __attribute__((deprecated
 void nvshmemx_query_thread(int *provided) __attribute__((deprecated));
 
 int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attributes);
+int nvshmemx_cumodule_init(CUmodule module);
 
 /* Replaced by teams API */
 typedef nvshmem_team_t nvshmemx_team_t;
@@ -439,8 +441,8 @@ __device__ void nvshmemx_getmem_nbi_block(void *dest, const void *source, size_t
 
 //////////////////// Signal ////////////////////
 
-#define NVSHMEMX_DECL_TYPE_SIGNAL(NAME, TYPE)                                               \
-    __device__ void nvshmemx_##NAME##_signal(TYPE *dest, const TYPE value, int pe);         \
+#define NVSHMEMX_DECL_TYPE_SIGNAL(NAME, TYPE)                                                                   \
+    __device__ void nvshmemx_##NAME##_signal(TYPE *dest, const TYPE value, int pe) __attribute__((deprecated)); \
 
 NVSHMEMX_REPT_FOR_SIGNAL_TYPES(NVSHMEMX_DECL_TYPE_SIGNAL)
 #undef NVSHMEMX_DECL_TYPE_SIGNAL

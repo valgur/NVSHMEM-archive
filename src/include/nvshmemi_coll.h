@@ -22,7 +22,7 @@ void nvshmemxi_barrier_on_stream(int PE_start, int PE_stride, int PE_size, long 
 
 #define DECL_NVSHMEMI_TYPENAME_OP_REDUCE(TYPENAME, TYPE, OP)                                            \
     NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemi_##TYPENAME##_##OP##_reduce(TYPE *dest, const TYPE *source, \
-                                int nreduce, int start, int stride, int size, TYPE *pWrk, long *pSync);
+                                size_t nreduce, int start, int stride, int size, TYPE *pWrk, long *pSync);
 
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(DECL_NVSHMEMI_TYPENAME_OP_REDUCE, and)
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(DECL_NVSHMEMI_TYPENAME_OP_REDUCE, or)
@@ -37,7 +37,7 @@ NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(DECL_NVSHMEMI_TYPENAME_OP_REDUCE, prod)
 
 #define DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP)                       \
     __device__ void nvshmemxi_##TYPENAME##_##OP##_reduce_##SC(TYPE *dest, const TYPE *source,       \
-                            int nreduce, int start, int stride, int size, TYPE *pWrk, long *pSync);
+                            size_t nreduce, int start, int stride, int size, uint64_t *pWrk, uint64_t *pSync);
 
 #define DECL_NVSHMEMI_REDUCE_THREADGROUP(SC)                                                                 \
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, and)    \
@@ -63,13 +63,13 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_BROADCAS
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP, block)
 #undef DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP
 
-#define DECL_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP(SC, TYPENAME, TYPE)           \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_collect_##SC(TYPE *dest, const TYPE * source, size_t nelems, \
+#define DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP(SC, TYPENAME, TYPE)           \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_fcollect_##SC(TYPE *dest, const TYPE * source, size_t nelems, \
                                                int PE_Start, int PE_stride, int PE_size, long *pSync); 
 
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP, warp)
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP, block)
-#undef DECL_NVSHMEMXI_TYPENAME_COLLECT_THREADGROUP
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP, warp)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP, block)
+#undef DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP
 
 #define DECL_NVSHMEMXI_TYPENAME_ALLTOALL_THREADGROUP(SC, TYPENAME, TYPE)           \
     NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_alltoall_##SC(TYPE *dest, const TYPE * source, size_t nelems, \

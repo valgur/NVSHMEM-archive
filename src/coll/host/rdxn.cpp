@@ -10,7 +10,7 @@
 #include "cpu_coll.h"
 
 #define DEFN_NVSHMEMI_TYPENAME_OP_REDUCE(TYPENAME, TYPE, OP)                                     \
-    void nvshmemi_##TYPENAME##_##OP##_reduce(TYPE *dest, const TYPE *source, int nreduce,        \
+    void nvshmemi_##TYPENAME##_##OP##_reduce(TYPE *dest, const TYPE *source, size_t nreduce,        \
                                       int start, int stride, int size, TYPE *pWrk, long *pSync) { \
         call_rdxn_##TYPENAME##_##OP##_on_stream_kern(dest, source, nreduce, start,              \
                                                  stride, size, pWrk, pSync,                     \

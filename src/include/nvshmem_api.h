@@ -291,104 +291,104 @@ NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_quiet();
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_fence();
 #ifdef __CUDACC__
 __device__ uint64_t nvshmem_signal_wait_until(uint64_t *sig_addr, int cmp, uint64_t cmp_val);
-#endif
 
 #define NVSHMEMI_DECL_WAIT_UNTIL(NAME, TYPE)                                         \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_wait_until(TYPE *ivar, int cmp, \
+    __device__ void nvshmem_##NAME##_wait_until(TYPE *ivar, int cmp,                 \
                                                                 TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL)
 #undef NVSHMEMI_DECL_WAIT_UNTIL
 
 #define NVSHMEMI_DECL_WAIT_UNTIL_ALL(NAME, TYPE)                     \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_wait_until_all( \
+    __device__ void nvshmem_##NAME##_wait_until_all(                 \
         TYPE *ivar, size_t nelems, const int *status, int cmp, TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_ALL)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_ALL
 
 #define NVSHMEMI_DECL_WAIT_UNTIL_ANY(NAME, TYPE)                       \
-    NVSHMEMI_HOSTDEVICE_PREFIX size_t nvshmem_##NAME##_wait_until_any( \
+    __device__ size_t nvshmem_##NAME##_wait_until_any(                 \
         TYPE *ivar, size_t nelems, const int *status, int cmp, TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_ANY)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_ANY
 
 #define NVSHMEMI_DECL_WAIT_UNTIL_SOME(NAME, TYPE)                       \
-    NVSHMEMI_HOSTDEVICE_PREFIX size_t nvshmem_##NAME##_wait_until_some( \
+    __device__ size_t nvshmem_##NAME##_wait_until_some(                 \
         TYPE *ivar, size_t nelems, size_t *indices, const int *status, int cmp, TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_SOME)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_SOME
 
 #define NVSHMEMI_DECL_WAIT_UNTIL_ALL_VECTOR(NAME, TYPE)                     \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_wait_until_all_vector(   \
+    __device__ void nvshmem_##NAME##_wait_until_all_vector(                 \
         TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_ALL_VECTOR)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_ALL_VECTOR
 
 #define NVSHMEMI_DECL_WAIT_UNTIL_ANY_VECTOR(NAME, TYPE)                         \
-    NVSHMEMI_HOSTDEVICE_PREFIX size_t nvshmem_##NAME##_wait_until_any_vector(     \
+    __device__ size_t nvshmem_##NAME##_wait_until_any_vector(                   \
         TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_ANY_VECTOR)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_ANY_VECTOR
 
 #define NVSHMEMI_DECL_WAIT_UNTIL_SOME_VECTOR(NAME, TYPE)                         \
-    NVSHMEMI_HOSTDEVICE_PREFIX size_t nvshmem_##NAME##_wait_until_some_vector(     \
+    __device__ size_t nvshmem_##NAME##_wait_until_some_vector(                   \
         TYPE *ivars, size_t nelems, size_t *indices, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_SOME_VECTOR)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_SOME_VECTOR
 
 #define NVSHMEMI_DECL_TEST(NAME, TYPE) \
-    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##NAME##_test(TYPE *ivar, int cmp, TYPE cmp_value);
+    __device__ int nvshmem_##NAME##_test(TYPE *ivar, int cmp, TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST)
 #undef NVSHMEMI_DECL_TEST
 
 #define NVSHMEMI_DECL_TEST_ALL(Name, Type)                    \
-    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##Name##_test_all( \
+    __device__ int nvshmem_##Name##_test_all(                 \
         Type *ivars, size_t nelems, const int *status, int cmp, Type cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_ALL)
 #undef NVSHMEMI_DECL_TEST_ALL
 
 #define NVSHMEMI_DECL_TEST_ANY(Name, Type)                       \
-    NVSHMEMI_HOSTDEVICE_PREFIX size_t nvshmem_##Name##_test_any( \
+    __device__ size_t nvshmem_##Name##_test_any(                  \
         Type *ivars, size_t nelems, const int *status, int cmp, Type cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_ANY)
 #undef NVSHMEMI_DECL_TEST_ANY
 
-#define NVSHMEMI_DECL_TEST_SOME(Name, Type)                       \
-    NVSHMEMI_HOSTDEVICE_PREFIX size_t nvshmem_##Name##_test_some( \
+#define NVSHMEMI_DECL_TEST_SOME(Name, Type)                         \
+    __device__ size_t nvshmem_##Name##_test_some(                   \
         Type *ivars, size_t nelems, size_t *indices, const int *status, int cmp, Type cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_SOME)
 #undef NVSHMEMI_DECL_TEST_SOME
 
 #define NVSHMEMI_DECL_TEST_ALL_VECTOR(NAME, TYPE)                     \
-    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##NAME##_test_all_vector(   \
+    __device__ int nvshmem_##NAME##_test_all_vector(                  \
         TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_ALL_VECTOR)
 #undef NVSHMEMI_DECL_TEST_ALL_VECTOR
 
 #define NVSHMEMI_DECL_TEST_ANY_VECTOR(NAME, TYPE)                         \
-    NVSHMEMI_HOSTDEVICE_PREFIX size_t nvshmem_##NAME##_test_any_vector(     \
+    __device__ size_t nvshmem_##NAME##_test_any_vector(                    \
         TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_ANY_VECTOR)
 #undef NVSHMEMI_DECL_TEST_ANY_VECTOR
 
 #define NVSHMEMI_DECL_TEST_SOME_VECTOR(NAME, TYPE)                         \
-    NVSHMEMI_HOSTDEVICE_PREFIX size_t nvshmem_##NAME##_test_some_vector(     \
+    __device__ size_t nvshmem_##NAME##_test_some_vector(                    \
         TYPE *ivars, size_t nelems, size_t *indices, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_SOME_VECTOR)
 #undef NVSHMEMI_DECL_TEST_SOME_VECTOR
+#endif /* __CUDACC__ */
 
 //////////////////// Teams API ////////////////////
 

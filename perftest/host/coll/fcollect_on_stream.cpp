@@ -1,4 +1,4 @@
-/*
+/* foo
  * Copyright (c) 2019-2020, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
@@ -16,7 +16,6 @@
 int main(int argc, char **argv) {
     int status = 0;
     int mype, npes;
-    int i = 0;
     size_t size = MAX_ELEMS * (MAX_NPES + 1) * sizeof(DATATYPE);
     size_t alloc_size;
     int num_elems;
@@ -28,6 +27,9 @@ int main(int argc, char **argv) {
     uint64_t size_array[MAX_ELEMS_LOG + 1];
     double latency_array[MAX_ELEMS_LOG + 1];
     cudaStream_t stream;
+
+    memset(size_array, 0, (MAX_ELEMS_LOG + 1) * sizeof(uint64_t));
+    memset(latency_array, 0, (MAX_ELEMS_LOG + 1) * sizeof(double));
 
     DEBUG_PRINT("symmetric size requested %lu\n", size);
     sprintf(size_string, "%lu", size);
@@ -63,14 +65,15 @@ int main(int argc, char **argv) {
     d_source = (DATATYPE *)d_buffer;
     d_dest = (DATATYPE *)&d_source[num_elems];
 
-    RUN_COLL(collect, COLLECT, int32, int32_t, (int32_t *)d_source, (int32_t *)h_source, (int32_t *)d_dest, (int32_t *)h_dest, npes, -1, stream, size_array, latency_array);
+    RUN_COLL_ON_STREAM(fcollect, FCOLLECT, int32, int32_t, (int32_t *)d_source,
+                       (int32_t *)h_source, (int32_t *)d_dest, (int32_t *)h_dest, npes, -1, stream, size_array, latency_array);
     if (!mype) {
-        print_table("collect", "32-bit", "size (bytes)", "latency", "us", '-', size_array, latency_array, MAX_ELEMS_LOG + 1);
+        print_table("fcollect_on_stream", "32-bit", "size (bytes)", "latency", "us", '-', size_array, latency_array, MAX_ELEMS_LOG + 1);
     }
 
-    RUN_COLL(collect, COLLECT, int64, int64_t, d_source, h_source, d_dest, h_dest, npes, -1, stream, size_array, latency_array);
+    RUN_COLL_ON_STREAM(fcollect, FCOLLECT, int64, int64_t, d_source, h_source, d_dest, h_dest, npes, -1, stream, size_array, latency_array);
     if (!mype) {
-        print_table("collect", "64-bit", "size (bytes)", "latency", "us", '-', size_array, latency_array, MAX_ELEMS_LOG + 1);
+        print_table("fcollect_on_stream", "64-bit", "size (bytes)", "latency", "us", '-', size_array, latency_array, MAX_ELEMS_LOG + 1);
     }
 
     nvshmem_barrier_all();

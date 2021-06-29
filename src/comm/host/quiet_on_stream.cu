@@ -42,7 +42,7 @@ void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {
 
     for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
         if (tbitmap & 1) {
-            if (j == NVSHMEM_TRANSPORT_ID_IBRC) {
+            if (j == NVSHMEM_TRANSPORT_ID_IBRC || j == NVSHMEM_TRANSPORT_ID_UCX) {
                 status = cudaLaunchKernel((const void *)nvshmemi_proxy_quiet_entrypoint, 1, 1, NULL,
                                           0, cstrm);
                 if (status) {

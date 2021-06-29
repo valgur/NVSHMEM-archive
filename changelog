@@ -1,4 +1,33 @@
 ===============================================================================
+				Changes in 2.2.0
+===============================================================================
+
+# Implemented dynamic heap memory allocation (requires CUDA version >= 11.3) for
+runs with P2P GPUs. It can be enabled using NVSHMEM_DISABLE_CUDA_VMM=0. Support
+for IB runs will be added in the next release.
+# Improved UCX transport performance for AMO and RMA operations
+# Improved performance for warp and block put/get operations
+# Added atomic support for PCIe connected GPUs over the UCX transport
+# UCX transport now supports non-symmetric buffers for use as local buffers
+in RMA and AMO operations
+# Added support for initializing NVSHMEM in CUmodule
+# Enabled MPI and PMIx bootstrap modules to be compiled externally from the
+NVSHMEM build. This allows multiple builds of these plugins to support various
+MPI and PMIx libraries. They can be selected by setting NVSHMEM_BOOTSTRAP="plugin"
+and NVSHMEM_BOOTSTRAP_PLUGIN="plugin_name.so". Plugin sources are installed along
+with the compiled NVSHMEM library.
+# Enabled MPI bootstrap to be used with nvshmem_init by setting
+NVSHMEM_BOOTSTRAP=MPI or via the bootstrap plugin method.
+# Fixed bugs in nvshmem_<typename>_g and fetch atomics implementation
+# Changed nvshmem_<typename>_collect to nvshmem_<typename>_fcollect to match
+OpenSHMEM specification
+# Fixed type of nreduce argument in reduction API to size_t to match OpenSHMEM
+specification
+# Improved NVSHMEM build times with multi-threaded option in CUDA compiler
+(requires CUDA version >= 11.2)
+# Several fixes to address Coverity reports
+
+===============================================================================
 				Changes in 2.1.2
 ===============================================================================
 

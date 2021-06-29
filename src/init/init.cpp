@@ -29,6 +29,7 @@ static void nvshmemi_init_msg(void);
 nvshmemi_state_t *nvshmemi_state;
 nvshmem_options_t nvshmem_options;
 int nvshmemi_cuda_driver_version;
+bool nvshmemi_use_cuda_vmm = 0;
 const char *p_err_str;
 int nvshmem_debug_level;
 uint64_t nvshmem_debug_mask = NVSHMEM_INIT;  // Default debug sub-system mask is INIT
@@ -38,6 +39,24 @@ FILE *nvshmem_debug_file = stdout;
 #ifdef ENABLE_TRACE
 std::chrono::high_resolution_clock::time_point nvshmem_epoch;
 #endif
+
+static int nvshmemi_transport_cap_support_rma(int cap) {
+    if (cap & (NVSHMEM_TRANSPORT_CAP_CPU_READ   |
+               NVSHMEM_TRANSPORT_CAP_CPU_WRITE  |
+               NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD |
+               NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST)) {
+                   return 1;
+    }
+    return 0;
+}
+
+static int nvshmemi_transport_cap_support_amo(int cap) {
+    if (cap & (NVSHMEM_TRANSPORT_CAP_CPU_ATOMICS |
+               NVSHMEM_TRANSPORT_CAP_MAP_GPU_ATOMICS)) {
+                   return 1;
+    }
+    return 0;
+}
 
 int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr, nvshmemi_state_t *state) {
     int status = 0;
@@ -52,7 +71,24 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr, nvshmemi_s
     } else if (flags & NVSHMEMX_INIT_WITH_SHMEM) {
         status = bootstrap_init(BOOTSTRAP_SHMEM, NULL, &state->boot_handle);
     } else {
-        status = bootstrap_init(BOOTSTRAP_PMI, NULL, &state->boot_handle);
+        /* User called nvshmem_init or supplied no flags to nvshmemx_init_attr */
+        if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "PMI") == 0) {
+            status = bootstrap_init(BOOTSTRAP_PMI, NULL, &state->boot_handle);
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "MPI") == 0) {
+            if (!nvshmemi_options.BOOTSTRAP_PLUGIN_provided)
+                nvshmemi_options.BOOTSTRAP_PLUGIN = BOOTSTRAP_MPI_PLUGIN;
+            status = bootstrap_init(BOOTSTRAP_MPI, NULL, &state->boot_handle);
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "plugin") == 0) {
+            if (!nvshmemi_options.BOOTSTRAP_PLUGIN_provided) {
+                ERROR_PRINT("Plugin bootstrap requires NVSHMEM_BOOTSTRAP_PLUGIN to be set\n");
+                status = 1;
+            } else {
+                status = bootstrap_init(BOOTSTRAP_PLUGIN, NULL, &state->boot_handle);
+            }
+        } else {
+            ERROR_PRINT("Invalid bootstrap '%s'\n", nvshmemi_options.BOOTSTRAP);
+            status = 1;
+        }
     }
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_init failed \n");
 
@@ -76,6 +112,9 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr, nvshmemi_s
     state->npes_node = npes_node;
 
 out:
+    if (hostHash) {
+        free(hostHash);
+    }
     return status;
 }
 
@@ -110,12 +149,12 @@ int nvshmemi_get_cucontext(nvshmemi_state_t *state) {
 
         } else {
             INFO(NVSHMEM_INIT,
-                 "[%d] nvshmemi_get_cucontext->cuCtxSynchronize->CUDA_SUCCESS) my_stream %llu",
-                 state->mype, cres, state->my_stream);
+                 "[%d] nvshmemi_get_cucontext->cuCtxSynchronize->CUDA_SUCCESS) my_stream %p",
+                 state->mype, state->my_stream);
             status = cuCtxGetCurrent(&state->cucontext);
 
             INFO(NVSHMEM_INIT,
-                 "int get_cucontext, queried and saved context for device: %d context: %llu",
+                 "int get_cucontext, queried and saved context for device: %d context: %p",
                  state->cudevice, state->cucontext);
             NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                          "get context failed \n");
@@ -223,19 +262,21 @@ static int nvshmemi_setup_nvshmem_handles(nvshmemi_state_t *state) {
         bool amo_initialized = false, rma_initialized = false;
         tbitmap = state->transport_bitmap;
         for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
-            if (!(state->transports[j])) continue;
+            if (!(state->transports[j])) {
+                tbitmap >>= 1;
+                continue;
+            } 
 
             if ((tbitmap & 1)) {
                 if (!rma_initialized &&
-                    (state->transports[j]->cap[i] &
-                     (NVSHMEM_TRANSPORT_CAP_CPU_READ | NVSHMEM_TRANSPORT_CAP_CPU_WRITE))) {
+                    nvshmemi_transport_cap_support_rma(nvshmemi_state->transports[j]->cap[i])) {
                     state->rma[i] = state->transports[j]->host_ops.rma;
                     rma_initialized = true;
                     state->selected_transport_for_rma[i] = j;
                 }
 
                 if (!amo_initialized &&
-                    (state->transports[j]->cap[i] & NVSHMEM_TRANSPORT_CAP_CPU_ATOMICS)) {
+                    nvshmemi_transport_cap_support_amo(nvshmemi_state->transports[j]->cap[i])) {
                     state->amo[i] = state->transports[j]->host_ops.amo;
                     amo_initialized = true;
                     state->selected_transport_for_amo[i] = j;
@@ -286,6 +327,12 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
     if (state->initialized) return 0;
     
     CUDA_CHECK(cuDriverGetVersion(&nvshmemi_cuda_driver_version));
+#if CUDART_VERSION >= 11030
+    if (nvshmemi_cuda_driver_version >= 11030 && nvshmemi_options.DISABLE_CUDA_VMM == 0)
+        nvshmemi_use_cuda_vmm = 1;
+    else
+        nvshmemi_use_cuda_vmm = 0;
+#endif
 
     status = nvshmemi_get_cucontext(state);
     NZ_DEBUG_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem get cucontext failed \n");
@@ -322,7 +369,7 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
 
     status = nvshmemi_init_device_state(state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem device state setup failed \n");
-
+    
     state->initialized = 1;
 
     // coll init uses nvshmem_malloc directly
@@ -697,9 +744,6 @@ static void nvshmemi_init_msg(void) {
 #endif
 #ifdef NVSHMEM_COMPLEX_SUPPORT
                     " NVSHMEM_COMPLEX_SUPPORT"
-#endif
-#ifdef NVSHMEM_MPI_IS_OMPI
-                    " NVSHMEM_MPI_IS_OMPI"
 #endif
 #ifdef NVSHMEM_DISABLE_COLL_POLL
                     " NVSHMEM_DISABLE_COLL_POLL"

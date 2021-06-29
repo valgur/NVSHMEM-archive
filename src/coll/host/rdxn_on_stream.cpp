@@ -11,7 +11,7 @@
 
 #define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_ON_STREAM(TYPENAME, TYPE, OP)                          \
     int nvshmemx_##TYPENAME##_##OP##_reduce_on_stream(nvshmem_team_t team, TYPE *dest,          \
-                                        const TYPE *source, int nreduce, cudaStream_t stream) { \
+                                        const TYPE *source, size_t nreduce, cudaStream_t stream) { \
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                         \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                         \
         nvshmemi_team_t * teami = nvshmemi_team_pool[team];                                     \

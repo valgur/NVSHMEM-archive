@@ -28,22 +28,22 @@ __global__ void sync_all_on_stream_kernel_block();
 
 #ifdef __CUDA_ARCH__
 
-#define BARRIER_ON_STREAM_KERNEL(SC, SC_SUFFIX, SC_PREFIX)                                                        \
-    __global__ void barrier_on_stream_kernel##SC_SUFFIX (int start, int stride, int size, long *pSync, long *counter) {  \
-        int myidx = nvshmemi_thread_id_in_##SC();                                                                 \
-                                                                                                                  \
-        if (nvshmemi_job_connectivity_d >= NVSHMEMI_JOB_GPU_PROXY) { 					                          \
-            if (!myidx)                                                                                           \
-                nvshmemi_proxy_quiet(false);                                                                      \
-            NVSHMEMI_SYNC_##SC();                                                                                 \
-        }                                                                                                         \
-                                                                                                                  \
-        nvshmemi_sync_algo##SC_SUFFIX(start, stride, size, pSync, counter);                                       \
-                                                                                                                  \
-        if (!myidx) {                                                                                             \
-            if (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_PROXY)						                      \
-                nvshmemi_proxy_enforce_consistency_at_target(false);                                              \
-        }                                                                                                         \
+#define BARRIER_ON_STREAM_KERNEL(SC, SC_SUFFIX, SC_PREFIX)                               \
+    __global__ void barrier_on_stream_kernel##SC_SUFFIX(int start, int stride, int size, \
+                                                        long *pSync, long *counter) {    \
+        int myidx = nvshmemi_thread_id_in_##SC();                                        \
+                                                                                         \
+        if (nvshmemi_device_state_d.job_connectivity >= NVSHMEMI_JOB_GPU_PROXY) {        \
+            if (!myidx) nvshmemi_proxy_quiet(false);                                     \
+            NVSHMEMI_SYNC_##SC();                                                        \
+        }                                                                                \
+                                                                                         \
+        nvshmemi_sync_algo##SC_SUFFIX(start, stride, size, pSync, counter);              \
+                                                                                         \
+        if (!myidx) {                                                                    \
+            if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_PROXY)       \
+                nvshmemi_proxy_enforce_consistency_at_target(false);                     \
+        }                                                                                \
     }
 
 BARRIER_ON_STREAM_KERNEL(thread, , );
@@ -51,24 +51,22 @@ BARRIER_ON_STREAM_KERNEL(warp, _warp, x);
 BARRIER_ON_STREAM_KERNEL(block, _block, x);
 #undef BARRIER_ON_STREAM_KERNEL
 
-#define BARRIER_ALL_ON_STREAM_KERNEL(SCOPE, SC_SUFFIX, SC_PREFIX)                               \
-    __global__ void barrier_all_on_stream_kernel##SC_SUFFIX () {                                \
-        int myidx = nvshmemi_thread_id_in_##SCOPE();                                            \
-                                                                                                \
-        if (nvshmemi_job_connectivity_d >= NVSHMEMI_JOB_GPU_PROXY) {		                    \
-            if (!myidx)                                                                         \
-                nvshmemi_proxy_quiet(false);                                                    \
-            NVSHMEMI_SYNC_##SCOPE();                                                            \
-        }                                                                                       \
-        nvshmemi_team_t *teami = nvshmemi_team_pool_d[NVSHMEM_TEAM_WORLD];                      \
-        long *counter = nvshmemi_team_get_sync_counter(teami);                                  \
-        nvshmemi_sync_algo##SC_SUFFIX(teami->start, teami->stride, teami->size,                 \
-                                      nvshmemi_team_get_psync(teami, SYNC),                     \
-                                      counter);                                                 \
-        if (!myidx) {                                                                           \
-            if (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_PROXY)				            \
-                nvshmemi_proxy_enforce_consistency_at_target(false);                            \
-        }                                                                                       \
+#define BARRIER_ALL_ON_STREAM_KERNEL(SCOPE, SC_SUFFIX, SC_PREFIX)                       \
+    __global__ void barrier_all_on_stream_kernel##SC_SUFFIX() {                         \
+        int myidx = nvshmemi_thread_id_in_##SCOPE();                                    \
+                                                                                        \
+        if (nvshmemi_device_state_d.job_connectivity >= NVSHMEMI_JOB_GPU_PROXY) {       \
+            if (!myidx) nvshmemi_proxy_quiet(false);                                    \
+            NVSHMEMI_SYNC_##SCOPE();                                                    \
+        }                                                                               \
+        nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_WORLD]; \
+        long *counter = nvshmemi_team_get_sync_counter(teami);                          \
+        nvshmemi_sync_algo##SC_SUFFIX(teami->start, teami->stride, teami->size,         \
+                                      nvshmemi_team_get_psync(teami, SYNC), counter);   \
+        if (!myidx) {                                                                   \
+            if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_PROXY)      \
+                nvshmemi_proxy_enforce_consistency_at_target(false);                    \
+        }                                                                               \
     }
 
 BARRIER_ALL_ON_STREAM_KERNEL(thread, , )
@@ -87,14 +85,13 @@ SYNC_ON_STREAM_KERNEL(warp, _warp, x)
 SYNC_ON_STREAM_KERNEL(block, _block, x)
 #undef SYNC_ON_STREAM_KERNEL
 
-#define SYNC_ALL_ON_STREAM_KERNEL(SCOPE, SC_SUFFIX, SC_PREFIX)                                                      \
-    __global__ void sync_all_on_stream_kernel##SC_SUFFIX() {                                                        \
-        int myidx = nvshmemi_thread_id_in_##SCOPE();                                                                \
-        nvshmemi_team_t *teami = nvshmemi_team_pool_d[NVSHMEM_TEAM_WORLD];                                          \
-        long *counter = nvshmemi_team_get_sync_counter(teami);                                                      \
-        nvshmemi_sync_algo##SC_SUFFIX(teami->start, teami->stride, teami->size,                                     \
-                                      nvshmemi_team_get_psync(teami, SYNC),                                         \
-                                      counter);                                                                     \
+#define SYNC_ALL_ON_STREAM_KERNEL(SCOPE, SC_SUFFIX, SC_PREFIX)                          \
+    __global__ void sync_all_on_stream_kernel##SC_SUFFIX() {                            \
+        int myidx = nvshmemi_thread_id_in_##SCOPE();                                    \
+        nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_WORLD]; \
+        long *counter = nvshmemi_team_get_sync_counter(teami);                          \
+        nvshmemi_sync_algo##SC_SUFFIX(teami->start, teami->stride, teami->size,         \
+                                      nvshmemi_team_get_psync(teami, SYNC), counter);   \
     }
 
 SYNC_ALL_ON_STREAM_KERNEL(thread, , )

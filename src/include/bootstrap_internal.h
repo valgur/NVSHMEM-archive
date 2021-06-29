@@ -1,0 +1,40 @@
+/*
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
+
+#ifndef BOOTSTRAP_INTERNAL_H
+#define BOOTSTRAP_INTERNAL_H
+
+#include <cstddef>
+#include "nvshmem_bootstrap.h"
+
+#define MAX_LENGTH_ERROR_STRING 128
+
+enum {
+    BOOTSTRAP_MPI,
+    BOOTSTRAP_SHMEM,
+    BOOTSTRAP_PMI,
+    BOOTSTRAP_PLUGIN
+};
+
+#define BOOTSTRAP_MPI_PLUGIN  "nvshmem_bootstrap_mpi.so"
+#define BOOTSTRAP_PMIX_PLUGIN "nvshmem_bootstrap_pmix.so"
+
+typedef struct bootstrap_attr {
+    bootstrap_attr() : npes(1), mpi_comm(NULL) {}
+    int npes;
+    void *mpi_comm;
+} bootstrap_attr_t;
+
+int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle);
+int bootstrap_finalize(bootstrap_handle_t *handle);
+
+int bootstrap_mpi_init(void *mpi_comm, bootstrap_handle_t *handle);
+int bootstrap_shmem_init(bootstrap_handle_t *handle);
+int bootstrap_pmi_init(bootstrap_handle_t *handle);
+int bootstrap_pmi2_init(bootstrap_handle_t *handle);
+int bootstrap_loader_init(const char *plugin, void *arg, bootstrap_handle_t *handle);
+
+#endif

@@ -587,7 +587,6 @@ static int PMII_Connect_to_pm(char *hostname, int portnum) {
     struct sockaddr_in sa;
     int fd;
     int optval = 1;
-    int q_wait = 1;
 
     hp = gethostbyname(hostname);
     if (!hp) {
@@ -621,7 +620,7 @@ static int PMII_Connect_to_pm(char *hostname, int portnum) {
             case ECONNREFUSED:
                 SPMIU_printf(1, "connect failed with connection refused\n");
                 /* (close socket, get new socket, try again) */
-                if (q_wait) close(fd);
+                close(fd);
                 return -1;
 
             case EINPROGRESS: /*  (nonblocking) - select for writing. */
@@ -632,10 +631,12 @@ static int PMII_Connect_to_pm(char *hostname, int portnum) {
 
             case ETIMEDOUT: /* timed out */
                 SPMIU_printf(1, "connect failed with timeout\n");
+                close(fd);
                 return -1;
 
             default:
                 SPMIU_printf(1, "connect failed with errno %d\n", errno);
+                close(fd);
                 return -1;
         }
     }

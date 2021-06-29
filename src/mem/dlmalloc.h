@@ -28,6 +28,7 @@ extern "C" {
 
 /* API to create and destroy mspace*/
 mspace create_mspace_with_base(void* base, size_t capacity, int locked);
+void mspace_add_new_chunk(mspace msp, void* ptr, size_t bytes);
 size_t destroy_mspace(mspace msp);
 
 /* API that prevents large chunks from being allocated with system alloc*/

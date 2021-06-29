@@ -404,69 +404,69 @@ static int nvshmemi_p2p_amo_fetch_xor(amo_verb_t verb, CUstream custrm, void *ta
 }
 
 static int nvshmemi_p2p_amo(CUstream custrm, CUevent cuev, void *curetptr, amo_verb_t verb,
-                            amo_memdesc_t target, amo_bytesdesc_t bytesdesc) {
+                            amo_memdesc_t *target, amo_bytesdesc_t bytesdesc) {
     int status = 0;
     switch (verb.desc) {
         /*ret NULL*/
         case NVSHMEMI_AMO_SET:
-            status = nvshmemi_p2p_amo_set(verb, custrm, target.ptr, target.retptr, curetptr,
-                                          target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_set(verb, custrm, target->ptr, target->retptr, curetptr,
+                                          target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         case NVSHMEMI_AMO_INC:
             status =
-                nvshmemi_p2p_amo_inc(verb, custrm, target.ptr, target.retptr, curetptr,
-                                     target.valptr, target.cmpptr, bytesdesc); /*val, cmp NULL*/
+                nvshmemi_p2p_amo_inc(verb, custrm, target->ptr, target->retptr, curetptr,
+                                     target->valptr, target->cmpptr, bytesdesc); /*val, cmp NULL*/
             break;
         case NVSHMEMI_AMO_ADD:
-            status = nvshmemi_p2p_amo_add(verb, custrm, target.ptr, target.retptr, curetptr,
-                                          target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_add(verb, custrm, target->ptr, target->retptr, curetptr,
+                                          target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         case NVSHMEMI_AMO_AND:
-            status = nvshmemi_p2p_amo_and(verb, custrm, target.ptr, target.retptr, curetptr,
-                                          target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_and(verb, custrm, target->ptr, target->retptr, curetptr,
+                                          target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         case NVSHMEMI_AMO_OR:
-            status = nvshmemi_p2p_amo_or(verb, custrm, target.ptr, target.retptr, curetptr,
-                                         target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_or(verb, custrm, target->ptr, target->retptr, curetptr,
+                                         target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         case NVSHMEMI_AMO_XOR:
-            status = nvshmemi_p2p_amo_xor(verb, custrm, target.ptr, target.retptr, curetptr,
-                                          target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_xor(verb, custrm, target->ptr, target->retptr, curetptr,
+                                          target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         /*ret !NULL*/
         case NVSHMEMI_AMO_FETCH:
             status =
-                nvshmemi_p2p_amo_fetch(verb, custrm, target.ptr, target.retptr, curetptr,
-                                       target.valptr, target.cmpptr, bytesdesc); /*val, cmp NULL*/
+                nvshmemi_p2p_amo_fetch(verb, custrm, target->ptr, target->retptr, curetptr,
+                                       target->valptr, target->cmpptr, bytesdesc); /*val, cmp NULL*/
             break;
         case NVSHMEMI_AMO_FETCH_INC:
             status =
-                nvshmemi_p2p_amo_fetch_inc(verb, custrm, target.ptr, target.retptr, curetptr,
-                                      target.valptr, target.cmpptr, bytesdesc); /*val, cmp NULL*/
+                nvshmemi_p2p_amo_fetch_inc(verb, custrm, target->ptr, target->retptr, curetptr,
+                                      target->valptr, target->cmpptr, bytesdesc); /*val, cmp NULL*/
             break;
         case NVSHMEMI_AMO_FETCH_ADD:
-            status = nvshmemi_p2p_amo_fetch_add(verb, custrm, target.ptr, target.retptr, curetptr,
-                                           target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_fetch_add(verb, custrm, target->ptr, target->retptr, curetptr,
+                                           target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         case NVSHMEMI_AMO_SWAP:
-            status = nvshmemi_p2p_amo_swap(verb, custrm, target.ptr, target.retptr, curetptr,
-                                           target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_swap(verb, custrm, target->ptr, target->retptr, curetptr,
+                                           target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         case NVSHMEMI_AMO_COMPARE_SWAP:
-            status = nvshmemi_p2p_amo_compare_swap(verb, custrm, target.ptr, target.retptr, curetptr,
-                                            target.valptr, target.cmpptr, bytesdesc);
+            status = nvshmemi_p2p_amo_compare_swap(verb, custrm, target->ptr, target->retptr, curetptr,
+                                            target->valptr, target->cmpptr, bytesdesc);
             break;
         case NVSHMEMI_AMO_FETCH_AND:
-            status = nvshmemi_p2p_amo_fetch_and(verb, custrm, target.ptr, target.retptr, curetptr,
-                                           target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_fetch_and(verb, custrm, target->ptr, target->retptr, curetptr,
+                                           target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         case NVSHMEMI_AMO_FETCH_OR:
-            status = nvshmemi_p2p_amo_fetch_or(verb, custrm, target.ptr, target.retptr, curetptr,
-                                          target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_fetch_or(verb, custrm, target->ptr, target->retptr, curetptr,
+                                          target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         case NVSHMEMI_AMO_FETCH_XOR:
-            status = nvshmemi_p2p_amo_fetch_xor(verb, custrm, target.ptr, target.retptr, curetptr,
-                                           target.valptr, target.cmpptr, bytesdesc); /*cmp NULL*/
+            status = nvshmemi_p2p_amo_fetch_xor(verb, custrm, target->ptr, target->retptr, curetptr,
+                                           target->valptr, target->cmpptr, bytesdesc); /*cmp NULL*/
             break;
         default:
             ERROR_EXIT("[%d] Invalid AMO (%d)\n", nvshmemi_state->mype, verb.desc);
@@ -474,13 +474,43 @@ static int nvshmemi_p2p_amo(CUstream custrm, CUevent cuev, void *curetptr, amo_v
     return status;
 }
 
+/* static __forceinline__ void convert_val_to_uint64(uint64_t *dest, void *value, size_t size)
+{
+    uint8_t byte_buffer_1;
+    uint16_t byte_buffer_2;
+    uint32_t byte_buffer_4;
+    uint64_t byte_buffer_8;
+
+    switch(size) {
+        case 1:
+            memcpy(&byte_buffer_1, value, size);
+            *dest = byte_buffer_1;
+            break;
+        case 2:
+            memcpy(&byte_buffer_2, value, size);
+            *dest = byte_buffer_2;
+            break;
+        case 4:
+            memcpy(&byte_buffer_4, value, size);
+            *dest = byte_buffer_4;
+            break;
+        case 8:
+            memcpy(&byte_buffer_8, value, size);
+            *dest = byte_buffer_8;
+            break;
+        default:
+            ERROR_PRINT("Invalid size value provided to convert_val_to_uint64.\n");
+    }
+} */
+
 static void nvshmemi_prepare_and_post_amo(nvshmemi_amo_t desc, void *targetptr, void *retptr,
                                           void *valptr, void *cmpptr, size_t elembytes, int pe,
                                           int nameoftype, const char *apiname) {
-    int status = 0;
+    int status = 0, t;
     amo_verb_t verb;
     amo_memdesc_t target;
     amo_bytesdesc_t bytesdesc;
+    void *targetptr_actual;
     verb.desc = desc;
     switch (desc) {
         case NVSHMEMI_AMO_INC:
@@ -521,38 +551,46 @@ static void nvshmemi_prepare_and_post_amo(nvshmemi_amo_t desc, void *targetptr, 
             ERROR_EXIT("[%d] amo type %d not supported on transport\n", nvshmemi_state->mype, desc);
             break;
     }
+
+    t = nvshmemi_state->selected_transport_for_amo[pe];
     bytesdesc.elembytes = elembytes;
     bytesdesc.name_type = nameoftype;
-    volatile void *targetptr_actual =
-        (volatile void *)((char *)(nvshmemi_state->peer_heap_base[pe]) +
-                          ((char *)targetptr - (char *)(nvshmemi_state->heap_base)));
-    target.ptr = (void *)targetptr_actual;
     target.retptr = retptr;
     target.valptr = valptr;
     target.cmpptr = cmpptr;
     void *curetptr = (void *)nvshmemi_state->curets[pe];
-    if (targetptr_actual) {
+    /* bypass transport for NVLink P2P */
+    if (nvshmemi_state->peer_heap_base[pe] && t == NVSHMEM_TRANSPORT_ID_P2P) {
+        NVSHMEMU_MAPPED_PTR_TRANSLATE(targetptr_actual, targetptr, pe);
+        target.ptr = (void *)targetptr_actual;
         CUstream custrm = nvshmemi_state->custreams[pe % MAX_PEER_STREAMS];
         CUevent cuev = nvshmemi_state->cuevents[pe % MAX_PEER_STREAMS];
-        if (nvshmemi_state
-                ->p2p_attrib_native_atomic_support[pe]) { /*AMO not supported for P2P over PCIE*/
-            status = nvshmemi_p2p_amo(custrm, cuev, curetptr, verb, target,
-                                      bytesdesc); /*bypass transport for P2P*/
-        } else {
-            ERROR_PRINT("[%d] %s to PE %d does not have P2P path\n", nvshmemi_state->mype, apiname,
-                        pe);
-        }
+        status = nvshmemi_p2p_amo(custrm, cuev, curetptr, verb, &target, bytesdesc);
     } else {
-        int t = nvshmemi_state->selected_transport_for_amo[pe];
-        if (t < 0) {
-            ERROR_EXIT("[%d] amo not supported on transport to pe: %d \n", nvshmemi_state->mype, pe);
+        /* TODO: If we ever want to enable host-side remote transport atomics, start here.
+         * This code is valid, but the infrastructure below does not appear to be properly
+         * implemented. 
+         * Current State of host-side atomics:
+         * Non-fetch - work intermittently with occasional hangs.
+         * Fetch - Do not work, main problem being that the pointer we pass in for return is in
+         * stack allocated host memory.
+         */
+        ERROR_EXIT("Host-side amo not supported on remote transports.\n");
+
+        /* NVSHMEMU_UNMAPPED_PTR_TRANSLATE(targetptr_actual, targetptr, pe);
+        if (valptr) {
+            convert_val_to_uint64(&target.val, valptr, elembytes);
+        }
+        if (cmpptr) {
+            convert_val_to_uint64(&target.cmp, cmpptr, elembytes);
         }
 
+        target.ptr = (void *)targetptr_actual;
         int tcount = NVSHMEM_TRANSPORT_COUNT;
         struct nvshmem_transport *tcurr = nvshmemi_state->transports[t];
         nvshmem_mem_handle_t *handles = nvshmemi_state->handles;
         target.handle = handles[pe * tcount + t];
-        status = nvshmemi_state->amo[pe](tcurr, pe, curetptr, verb, target, bytesdesc, 0);
+        status = nvshmemi_state->amo[pe](tcurr, pe, curetptr, verb, &target, bytesdesc, 0); */
     }
     if (status) {
         ERROR_EXIT("[%d] aborting due to error in %s \n", nvshmemi_state->mype, apiname);

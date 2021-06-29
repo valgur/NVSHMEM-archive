@@ -10,18 +10,6 @@
 #include "gpu_coll.h"
 #include "nvshmem_internal.h"
 
-__device__ gpu_coll_env_params_t gpu_coll_env_params_var_d;
-
-
-__device__ int reduce_recexch_step1_sendto_d;
-__device__ int *reduce_recexch_step1_recvfrom_d;
-__device__ int reduce_recexch_step1_nrecvs_d;
-__device__ int **reduce_recexch_step2_nbrs_d;
-__device__ int reduce_recexch_step2_nphases_d;
-__device__ int reduce_recexch_p_of_k_d;
-__device__ int reduce_recexch_reduce_recexch_digit_d;
-__device__ int *digit_d;
-
 extern "C" int init_shm_kernel_shm_ptr() {
     int status = 0;
 
@@ -29,9 +17,7 @@ extern "C" int init_shm_kernel_shm_ptr() {
     int *digit = NULL;
     int k, max_phases;
 
-    status = cudaMemcpyToSymbol(gpu_coll_env_params_var_d, &gpu_coll_env_params_var,
-                                sizeof(gpu_coll_env_params_t));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "memcopy to symbol failed \n");
+    nvshmemi_device_state.gpu_coll_env_params_var = gpu_coll_env_params_var;
 
     /* Allocate memory for performing reduce recursive exchange algorithm */
     k = gpu_coll_env_params_var.reduce_recexch_kval;
@@ -40,8 +26,7 @@ extern "C" int init_shm_kernel_shm_ptr() {
     status = cuMemAlloc((CUdeviceptr *) &step1_recvfrom, sizeof(int) * (k - 1));
     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cudaMalloc failed\n");
 
-    status = cudaMemcpyToSymbol(reduce_recexch_step1_recvfrom_d, &step1_recvfrom, sizeof(void *));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "memcopy to symbol failed \n");
+    nvshmemi_device_state.reduce_recexch_step1_recvfrom = step1_recvfrom;
 
     max_phases = log(nvshmemi_state->npes) / log(k) + 1; /* The '+ 1' makes it a conservative calculation, max_pahses >= 1 */
 
@@ -58,13 +43,10 @@ extern "C" int init_shm_kernel_shm_ptr() {
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyHtoD failed\n");
     }
 
-    status = cudaMemcpyToSymbol(reduce_recexch_step2_nbrs_d, &step2_nbrs, sizeof(void**));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "memcopy to symbol failed \n");
-    status = cudaMemcpyToSymbol(digit_d, &digit, sizeof(int *));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "memcopy to symbol failed \n");
-
+    nvshmemi_device_state.reduce_recexch_step2_nbrs = step2_nbrs;
+    nvshmemi_device_state.digit = digit;
     nvshmemi_recexchalgo_get_neighbors(nvshmemi_state->mype, nvshmemi_state->npes);
-
+    nvshmemi_set_device_state();
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
     goto fn_out;

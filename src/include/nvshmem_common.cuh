@@ -439,21 +439,70 @@ typedef struct {
     uint64_t signal_val_expected;
 } nvshmemi_timeout_t;
 
-extern __constant__ int nvshmemi_mype_d;
-extern __constant__ int nvshmemi_npes_d;
-extern __constant__ int nvshmemi_node_mype_d;
-extern __constant__ int nvshmemi_node_npes_d;
-extern __constant__ int *nvshmemi_p2p_attrib_native_atomic_support_d;
-extern __constant__ int nvshmemi_proxy_d;
-extern __constant__ int nvshmemi_atomics_sync_d;
-extern __constant__ int nvshmemi_job_connectivity_d;
-extern __constant__ bool nvshmemi_proxy_ops_are_ordered_d;
-extern __constant__ void *nvshmemi_heap_base_d;
-extern __constant__ size_t nvshmemi_heap_size_d;
-extern __constant__ void **nvshmemi_peer_heap_base_d;
+typedef struct {
+    int mype;
+    int npes;
+    int node_mype;
+    int node_npes;
+    int *p2p_attrib_native_atomic_support;
+    int proxy;
+    int atomics_sync;
+    int job_connectivity;
+    bool proxy_ops_are_ordered;
+    void *heap_base;
+    size_t heap_size;
+    void **peer_heap_base;
+    void **peer_heap_base_actual;
 
-extern __device__ nvshmemi_timeout_t *nvshmemi_timeout_d;
-extern __device__ unsigned long long test_wait_any_start_idx_d;
+    nvshmemi_timeout_t *timeout;
+    unsigned long long *test_wait_any_start_idx_ptr;
+
+    /* team variables */
+    nvshmemi_team_t team_world;
+    nvshmemi_team_t team_shared;
+    nvshmemi_team_t team_node;
+
+    nvshmemi_team_t **team_pool;
+    long *psync_pool;
+    long *sync_counter;
+
+    int barrier_dissem_kval;
+    int barrier_tg_dissem_kval;
+    gpu_coll_env_params_t gpu_coll_env_params_var;
+
+    int reduce_recexch_step1_sendto;
+    int *reduce_recexch_step1_recvfrom;
+    int reduce_recexch_step1_nrecvs;
+    int **reduce_recexch_step2_nbrs;
+    int reduce_recexch_step2_nphases;
+    int reduce_recexch_p_of_k;
+    int reduce_recexch_reduce_recexch_digit;
+    int *digit;
+
+    /* channel */
+    void *proxy_channels_buf; /* requests are written in this buffer */
+    char *proxy_channel_g_buf;
+    char *proxy_channel_g_coalescing_buf;
+    uint64_t *proxy_channel_g_buf_head_ptr; /* next location to be assigned to a thread */
+    uint64_t proxy_channel_g_buf_size;      /* Total size of g_buf in bytes */
+    uint64_t proxy_channel_g_buf_log_size;  /* Total size of g_buf in bytes */
+    uint64_t *proxy_channels_issue;         /* last byte of the last request */
+    uint64_t *
+        proxy_channels_complete; /* shared betwen CPU and GPU threads - only write by CPU thread and
+                                      read by GPU threads. This is allocated on the system memory */
+    uint64_t *proxy_channels_complete_local_ptr; /* shared only between GPU threads */
+    uint64_t *proxy_channels_quiet_issue;
+    uint64_t *proxy_channels_quiet_ack;
+    uint64_t *proxy_channels_cst_issue;
+    uint64_t *proxy_channels_cst_ack;
+    uint64_t proxy_channel_buf_size; /* Maximum number of inflight requests in bytes OR
+                                                   maximum channel length */
+    uint32_t proxy_channel_buf_logsize;
+} nvshmemi_device_state_t;
+
+extern nvshmemi_device_state_t nvshmemi_device_state;
+extern __constant__ nvshmemi_device_state_t nvshmemi_device_state_d;
+
 __device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar);
 
 template <typename T>
@@ -462,7 +511,7 @@ __device__ inline void nvshmemi_check_timeout_and_log(long long int start, int c
     long long int now;
     asm volatile("mov.u64  %0, %globaltimer;" : "=l"(now));
     if ((now - start) > TIMEOUT_NCYCLES) {
-        nvshmemi_timeout_t *timeout_d = nvshmemi_timeout_d;
+        nvshmemi_timeout_t *timeout_d = nvshmemi_device_state_d.timeout;
         timeout_d->caller = caller;
         timeout_d->signal_addr = signal_addr;
         *(T *)(&timeout_d->signal_val_found) = signal_val_found;
@@ -655,20 +704,21 @@ __device__ inline uint64_t nvshmemi_signal_wait_until(volatile uint64_t *signal,
 __device__ inline void nvshmemi_syncapi_update_mem() {
     __threadfence(); /* 1. Ensures consitency op is not called before the prior test/wait condition has been met
                         2. Needed to prevent reorder of instructions after sync api (when the following if condition is false) */
-    if (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_PROXY) { 
-       nvshmemi_proxy_enforce_consistency_at_target(true);
-    }	
+    if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_PROXY) {
+        nvshmemi_proxy_enforce_consistency_at_target(true);
+    }
 }
 #endif
 
-__device__ inline void nvshmemi_memcpy_thread(void *dst, const void *src, size_t len) {
+#ifdef __CUDACC__
+__device__ inline void nvshmemi_memcpy_thread(void * __restrict__ dst, const void * __restrict__ src, size_t len) {
 
     /*
      * If src and dst are 16B aligned copy as much as possible using 16B chunks
      */
     if ((uintptr_t) dst % 16 == 0 && (uintptr_t) src % 16 == 0) {
-              int4 *dst_p =       (int4 *) dst;
-        const int4 *src_p = (const int4 *) src;
+              int4 * __restrict__ dst_p =       (int4 *) dst;
+        const int4 * __restrict__ src_p = (const int4 *) src;
 
         for ( ; len >= 16; len -= 16)
             *dst_p++ = *src_p++;
@@ -683,8 +733,8 @@ __device__ inline void nvshmemi_memcpy_thread(void *dst, const void *src, size_t
      * If src and dst are 8B aligned copy as much as possible using 8B chunks
      */
     if ((uintptr_t) dst % 8 == 0 && (uintptr_t) src % 8 == 0) {
-              uint64_t *dst_p =       (uint64_t *) dst;
-        const uint64_t *src_p = (const uint64_t *) src;
+              uint64_t * __restrict__ dst_p =       (uint64_t *) dst;
+        const uint64_t * __restrict__ src_p = (const uint64_t *) src;
 
         for ( ; len >= 8; len -= 8)
             *dst_p++ = *src_p++;
@@ -699,8 +749,8 @@ __device__ inline void nvshmemi_memcpy_thread(void *dst, const void *src, size_t
      * If src and dst are 4B aligned copy as much as possible using 4B chunks
      */
     if ((uintptr_t) dst % 4 == 0 && (uintptr_t) src % 4 == 0) {
-              uint32_t *dst_p =       (uint32_t *) dst;
-        const uint32_t *src_p = (const uint32_t *) src;
+              uint32_t * __restrict__ dst_p =       (uint32_t *) dst;
+        const uint32_t * __restrict__ src_p = (const uint32_t *) src;
 
         for ( ; len >= 4; len -= 4)
             *dst_p++ = *src_p++;
@@ -715,8 +765,8 @@ __device__ inline void nvshmemi_memcpy_thread(void *dst, const void *src, size_t
      * If src and dst are 2B aligned copy as much as possible using 2B chunks
      */
     if ((uintptr_t) dst % 2 == 0 && (uintptr_t) src % 2 == 0) {
-              uint16_t *dst_p =       (uint16_t *) dst;
-        const uint16_t *src_p = (const uint16_t *) src;
+              uint16_t * __restrict__ dst_p =       (uint16_t *) dst;
+        const uint16_t * __restrict__ src_p = (const uint16_t *) src;
 
         for ( ; len >= 2; len -= 2)
             *dst_p++ = *src_p++;
@@ -727,11 +777,190 @@ __device__ inline void nvshmemi_memcpy_thread(void *dst, const void *src, size_t
         src = (void *) src_p;
     }
 
-          unsigned char *dst_c =       (unsigned char *) dst;
-    const unsigned char *src_c = (const unsigned char *) src;
+          unsigned char * __restrict__ dst_c =       (unsigned char *) dst;
+    const unsigned char * __restrict__ src_c = (const unsigned char *) src;
 
     for ( ; len > 0; len--)
         *dst_c++ = *src_c++;
 }
+
+
+__device__ inline void nvshmemi_memcpy_warp(void * __restrict__ dst, const void * __restrict__ src, size_t len) {
+    NVSHMEMI_DECL_THREAD_IDX_warp();
+    NVSHMEMI_DECL_THREADGROUP_SIZE_warp();
+
+    /*
+     * If src and dst are 16B aligned copy as much as possible using 16B chunks
+     */
+    if ((uintptr_t) dst % 16 == 0 && (uintptr_t) src % 16 == 0) {
+              int4 * __restrict__ dst_p =       (int4 *) dst;
+        const int4 * __restrict__ src_p = (const int4 *) src;
+        const size_t nelems = len / 16;
+
+        for (size_t i = myIdx; i < nelems; i += groupSize)
+            dst_p[i] = src_p[i];
+
+        len -= nelems * 16;
+
+        if (0 == len) return;
+
+        dst = (void *) (dst_p + nelems);
+        src = (void *) (src_p + nelems);
+    }
+
+    /*
+     * If src and dst are 8B aligned copy as much as possible using 8B chunks
+     */
+    if ((uintptr_t) dst % 8 == 0 && (uintptr_t) src % 8 == 0) {
+              uint64_t * __restrict__ dst_p =       (uint64_t *) dst;
+        const uint64_t * __restrict__ src_p = (const uint64_t *) src;
+        const size_t nelems = len / 8;
+
+        for (size_t i = myIdx; i < nelems; i += groupSize)
+            dst_p[i] = src_p[i];
+
+        len -= nelems * 8;
+
+        if (0 == len) return;
+
+        dst = (void *) (dst_p + nelems);
+        src = (void *) (src_p + nelems);
+    }
+
+    /*
+     * If src and dst are 4B aligned copy as much as possible using 4B chunks
+     */
+    if ((uintptr_t) dst % 4 == 0 && (uintptr_t) src % 4 == 0) {
+              uint32_t * __restrict__ dst_p =       (uint32_t *) dst;
+        const uint32_t * __restrict__ src_p = (const uint32_t *) src;
+        const size_t nelems = len / 4;
+
+        for (size_t i = myIdx; i < nelems; i += groupSize)
+            dst_p[i] = src_p[i];
+
+        len -= nelems * 4;
+
+        if (0 == len) return;
+
+        dst = (void *) (dst_p + nelems);
+        src = (void *) (src_p + nelems);
+    }
+
+    /*
+     * If src and dst are 2B aligned copy as much as possible using 2B chunks
+     */
+    if ((uintptr_t) dst % 2 == 0 && (uintptr_t) src % 2 == 0) {
+              uint16_t * __restrict__ dst_p =       (uint16_t *) dst;
+        const uint16_t * __restrict__ src_p = (const uint16_t *) src;
+        const size_t nelems = len / 2;
+
+        for (size_t i = myIdx; i < nelems; i += groupSize)
+            dst_p[i] = src_p[i];
+
+        len -= nelems * 2;
+
+        if (0 == len) return;
+
+        dst = (void *) (dst_p + nelems);
+        src = (void *) (src_p + nelems);
+    }
+
+          unsigned char * __restrict__ dst_c =       (unsigned char *) dst;
+    const unsigned char * __restrict__ src_c = (const unsigned char *) src;
+
+    for (size_t i = myIdx; i < len; i += groupSize)
+        dst_c[i] = src_c[i];
+
+}
+
+
+__device__ inline void nvshmemi_memcpy_block(void * __restrict__ dst, const void * __restrict__ src, size_t len) {
+    NVSHMEMI_DECL_THREAD_IDX_block();
+    NVSHMEMI_DECL_THREADGROUP_SIZE_block();
+
+    /*
+     * If src and dst are 16B aligned copy as much as possible using 16B chunks
+     */
+    if ((uintptr_t) dst % 16 == 0 && (uintptr_t) src % 16 == 0) {
+              int4 * __restrict__ dst_p =       (int4 *) dst;
+        const int4 * __restrict__ src_p = (const int4 *) src;
+        const size_t nelems = len / 16;
+
+        for (size_t i = myIdx; i < nelems; i += groupSize)
+            dst_p[i] = src_p[i];
+
+        len -= nelems * 16;
+
+        if (0 == len) return;
+
+        dst = (void *) (dst_p + nelems);
+        src = (void *) (src_p + nelems);
+    }
+
+    /*
+     * If src and dst are 8B aligned copy as much as possible using 8B chunks
+     */
+    if ((uintptr_t) dst % 8 == 0 && (uintptr_t) src % 8 == 0) {
+              uint64_t * __restrict__ dst_p =       (uint64_t *) dst;
+        const uint64_t * __restrict__ src_p = (const uint64_t *) src;
+        const size_t nelems = len / 8;
+
+        for (size_t i = myIdx; i < nelems; i += groupSize)
+            dst_p[i] = src_p[i];
+
+        len -= nelems * 8;
+
+        if (0 == len) return;
+
+        dst = (void *) (dst_p + nelems);
+        src = (void *) (src_p + nelems);
+    }
+
+    /*
+     * If src and dst are 4B aligned copy as much as possible using 4B chunks
+     */
+    if ((uintptr_t) dst % 4 == 0 && (uintptr_t) src % 4 == 0) {
+              uint32_t * __restrict__ dst_p =       (uint32_t *) dst;
+        const uint32_t * __restrict__ src_p = (const uint32_t *) src;
+        const size_t nelems = len / 4;
+
+        for (size_t i = myIdx; i < nelems; i += groupSize)
+            dst_p[i] = src_p[i];
+
+        len -= nelems * 4;
+
+        if (0 == len) return;
+
+        dst = (void *) (dst_p + nelems);
+        src = (void *) (src_p + nelems);
+    }
+
+    /*
+     * If src and dst are 2B aligned copy as much as possible using 2B chunks
+     */
+    if ((uintptr_t) dst % 2 == 0 && (uintptr_t) src % 2 == 0) {
+              uint16_t * __restrict__ dst_p =       (uint16_t *) dst;
+        const uint16_t * __restrict__ src_p = (const uint16_t *) src;
+        const size_t nelems = len / 2;
+
+        for (size_t i = myIdx; i < nelems; i += groupSize)
+            dst_p[i] = src_p[i];
+
+        len -= nelems * 2;
+
+        if (0 == len) return;
+
+        dst = (void *) (dst_p + nelems);
+        src = (void *) (src_p + nelems);
+    }
+
+          unsigned char * __restrict__ dst_c =       (unsigned char *) dst;
+    const unsigned char * __restrict__ src_c = (const unsigned char *) src;
+
+    for (size_t i = myIdx; i < len; i += groupSize)
+        dst_c[i] = src_c[i];
+
+}
+#endif /* __CUDACC__ */
 
 #endif

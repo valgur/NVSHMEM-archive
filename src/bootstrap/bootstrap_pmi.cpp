@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include "nvshmemx_error.h"
 #include "util.h"
-#include "bootstrap.h"
+#include "nvshmem_bootstrap.h"
 #include "bootstrap_internal.h"
 
 #ifdef NVSHMEM_BUILD_PMI2
@@ -116,6 +116,8 @@ typedef struct {
     char *kvs_value;
 } pmi_info_t;
 
+static pmi_info_t pmi_info;
+
 static char encoding_table[] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
                                 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
                                 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
@@ -193,17 +195,14 @@ static int bootstrap_pmi_allgather(const void *sendbuf, void *recvbuf, int lengt
                             bootstrap_handle_t *handle) {
     int status = 0, length64;
     static int key_index = 1;
-    pmi_info_t *pmi_info;
 
     if (handle->pg_size == 1) {
         memcpy(recvbuf, sendbuf, length);
         return 0;
     }
 
-    pmi_info = (pmi_info_t *)handle->internal;
-
     // TODO: this can be worked around by breaking down the transfer into multiple messages
-    int max_length = pmi_info->max_value_input_length;
+    int max_length = pmi_info.max_value_input_length;
     int num_transfers = ((length + (max_length - 1)) / max_length);
 
     INFO(NVSHMEM_BOOTSTRAP, "PMI allgather: transfer length: %d max input length: %d, transfers: %d", length,
@@ -214,14 +213,14 @@ static int bootstrap_pmi_allgather(const void *sendbuf, void *recvbuf, int lengt
     while (processed < length) {
         int curr_length = ((length - processed) > max_length) ? max_length : (length - processed);
 
-        snprintf(pmi_info->kvs_key, pmi_info->max_key_length, "BOOTSTRAP-%04x-%08x-%04x", key_index,
+        snprintf(pmi_info.kvs_key, pmi_info.max_key_length, "BOOTSTRAP-%04x-%08x-%04x", key_index,
                  handle->pg_rank, transfer);
 
-        length64 = base64_encode((char *)pmi_info->kvs_value,
+        length64 = base64_encode((char *)pmi_info.kvs_value,
                                  (const unsigned char *)sendbuf + processed, curr_length);
-        pmi_info->kvs_value[length64] = '\0';
+        pmi_info.kvs_value[length64] = '\0';
 
-        status = WRAP_PMI_KVS_Put(pmi_info->kvs_name, pmi_info->kvs_key, pmi_info->kvs_value);
+        status = WRAP_PMI_KVS_Put(pmi_info.kvs_name, pmi_info.kvs_key, pmi_info.kvs_value);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_KVS_Put failed \n");
 
         status = WRAP_PMI_KVS_Commit();
@@ -231,15 +230,15 @@ static int bootstrap_pmi_allgather(const void *sendbuf, void *recvbuf, int lengt
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_Barrier failed \n");
 
         for (int i = 0; i < handle->pg_size; i++) {
-            snprintf(pmi_info->kvs_key, pmi_info->max_key_length, "BOOTSTRAP-%04x-%08x-%04x",
+            snprintf(pmi_info.kvs_key, pmi_info.max_key_length, "BOOTSTRAP-%04x-%08x-%04x",
                      key_index, i, transfer);
 
             // assumes that same length is passed by all the processes
             status =
-                WRAP_PMI_KVS_Get(pmi_info->kvs_name, pmi_info->kvs_key, pmi_info->kvs_value, length64);
+                WRAP_PMI_KVS_Get(pmi_info.kvs_name, pmi_info.kvs_key, pmi_info.kvs_value, length64);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_KVS_Get failed \n");
 
-            base64_decode((char *)recvbuf + length * i + processed, (char *)pmi_info->kvs_value,
+            base64_decode((char *)recvbuf + length * i + processed, (char *)pmi_info.kvs_value,
                           length64);
         }
 
@@ -255,17 +254,14 @@ static int bootstrap_pmi_alltoall(const void *sendbuf, void *recvbuf, int length
                             bootstrap_handle_t *handle) {
     int status = 0, length64 = 0;
     static int key_index = 1;
-    pmi_info_t *pmi_info;
 
     if (handle->pg_size == 1) {
         memcpy(recvbuf, sendbuf, length);
         return 0;
     }
 
-    pmi_info = (pmi_info_t *)handle->internal;
-
     // TODO: this can be worked around by breaking down the transfer into multiple messages
-    int max_length = pmi_info->max_value_input_length;
+    int max_length = pmi_info.max_value_input_length;
     int num_transfers = ((length + (max_length - 1)) / max_length);
 
     INFO(NVSHMEM_BOOTSTRAP, "PMI alltoall: transfer length: %d max input length: %d, transfers: %d", length,
@@ -277,14 +273,14 @@ static int bootstrap_pmi_alltoall(const void *sendbuf, void *recvbuf, int length
         int curr_length = ((length - processed) > max_length) ? max_length : (length - processed);
         
         for (int i = 0; i < handle->pg_size; i++){
-            snprintf(pmi_info->kvs_key, pmi_info->max_key_length, "BOOTSTRAP-%04x-%08x-%08x-%04x", key_index,
+            snprintf(pmi_info.kvs_key, pmi_info.max_key_length, "BOOTSTRAP-%04x-%08x-%08x-%04x", key_index,
                      handle->pg_rank, i, transfer);
 
-            length64 = base64_encode((char *)pmi_info->kvs_value,
+            length64 = base64_encode((char *)pmi_info.kvs_value,
                                      (const unsigned char *)sendbuf + i * length + processed, curr_length);
-            pmi_info->kvs_value[length64] = '\0';
+            pmi_info.kvs_value[length64] = '\0';
 
-            status = WRAP_PMI_KVS_Put(pmi_info->kvs_name, pmi_info->kvs_key, pmi_info->kvs_value);
+            status = WRAP_PMI_KVS_Put(pmi_info.kvs_name, pmi_info.kvs_key, pmi_info.kvs_value);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_KVS_Put failed \n");
         }
 
@@ -295,15 +291,15 @@ static int bootstrap_pmi_alltoall(const void *sendbuf, void *recvbuf, int length
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_Barrier failed \n");
 
         for (int i = 0; i < handle->pg_size; i++) {
-            snprintf(pmi_info->kvs_key, pmi_info->max_key_length, "BOOTSTRAP-%04x-%08x-%08x-%04x",
+            snprintf(pmi_info.kvs_key, pmi_info.max_key_length, "BOOTSTRAP-%04x-%08x-%08x-%04x",
                      key_index, i, handle->pg_rank, transfer);
 
             // assumes that same length is passed by all the processes
             status =
-                WRAP_PMI_KVS_Get(pmi_info->kvs_name, pmi_info->kvs_key, pmi_info->kvs_value, length64);
+                WRAP_PMI_KVS_Get(pmi_info.kvs_name, pmi_info.kvs_key, pmi_info.kvs_value, length64);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_KVS_Get failed \n");
 
-            base64_decode((char *)recvbuf + length * i + processed, (char *)pmi_info->kvs_value,
+            base64_decode((char *)recvbuf + length * i + processed, (char *)pmi_info.kvs_value,
                           length64);
         }
 
@@ -318,17 +314,12 @@ out:
 static int bootstrap_pmi_finalize(bootstrap_handle_t *handle) {
     int status = 0;
 
-    pmi_info_t *pmi_info = (pmi_info_t *)handle->internal;
-
     status = WRAP_PMI_Finalize();
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "WRAP_PMI_Finalize failed \n");
 
     base64_cleanup();
 
-    if (pmi_info) {
-        if (pmi_info->kvs_name) free(pmi_info->kvs_name);
-        free(pmi_info);
-    }
+    if (pmi_info.kvs_name) free(pmi_info.kvs_name);
 
 error:
     return status;
@@ -338,14 +329,9 @@ int bootstrap_pmi_init(bootstrap_handle_t *handle) {
     int status = 0;
     int spawned = 0;
     int rank, size, key_length, value_length, name_length;
-    pmi_info_t *pmi_info = NULL;
 
     status = WRAP_PMI_Init(&spawned);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_Init_failed failed \n");
-
-    pmi_info = (pmi_info_t *)calloc(1, sizeof(pmi_info_t));
-    NULL_ERROR_JMP(pmi_info, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "memory allocation for pmi_info failed \n");
 
 #ifndef NVSHMEM_BUILD_PMI2
     if (!spawned) {
@@ -354,7 +340,7 @@ int bootstrap_pmi_init(bootstrap_handle_t *handle) {
         // singleton launch
         handle->pg_rank = 0;
         handle->pg_size = 1;
-        pmi_info->singleton = 1;
+        pmi_info.singleton = 1;
         handle->allgather = bootstrap_pmi_allgather;
         handle->alltoall = bootstrap_pmi_alltoall;
         handle->barrier = bootstrap_pmi_barrier;
@@ -384,36 +370,44 @@ int bootstrap_pmi_init(bootstrap_handle_t *handle) {
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
                      "WRAP_PMI_KVS_Get_value_length_max failed \n");
 
-        pmi_info->max_key_length = key_length;
-        pmi_info->max_value_length = value_length;
+        pmi_info.max_key_length = key_length;
+        pmi_info.max_value_length = value_length;
 
         // hacky workaround to allow space for metadata in KVS_Put, needs investgation
-        pmi_info->max_value_input_length = base64_decode_length(value_length / 2);
+        pmi_info.max_value_input_length = base64_decode_length(value_length / 2);
         INFO(NVSHMEM_BOOTSTRAP, "PMI max key length: %d max value length %d", key_length,
              value_length);
 
-        pmi_info->kvs_name = (char *)malloc(name_length);
-        pmi_info->kvs_key = (char *)malloc(key_length);
-        pmi_info->kvs_value = (char *)malloc(value_length);
+        pmi_info.kvs_name = (char *)malloc(name_length);
 
-        NULL_ERROR_JMP(pmi_info->kvs_name, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+        NULL_ERROR_JMP(pmi_info.kvs_name, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, error,
                        "memory allocation for kvs_name failed \n");
 
-        status = WRAP_PMI_KVS_Get_my_name(pmi_info->kvs_name, name_length);
+        pmi_info.kvs_key = (char *)malloc(key_length);
+
+        NULL_ERROR_JMP(pmi_info.kvs_key, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, error,
+                       "memory allocation for kvs_key failed \n");
+
+        pmi_info.kvs_value = (char *)malloc(value_length);
+
+        NULL_ERROR_JMP(pmi_info.kvs_value, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, error,
+                       "memory allocation for kvs_value failed \n");
+
+        status = WRAP_PMI_KVS_Get_my_name(pmi_info.kvs_name, name_length);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "WRAP_PMI_KVS_Get_my_name failed \n");
 #ifndef NVSHMEM_BUILD_PMI2
     }
 #endif
 
-    handle->internal = (void *)pmi_info;
     handle->finalize = bootstrap_pmi_finalize;
 
     base64_build_decoding_table();
 
 error:
-    if (status && pmi_info) {
-        if (pmi_info->kvs_name) free(pmi_info->kvs_name);
-        free(pmi_info);
+    if (status) {
+        if (pmi_info.kvs_name)  free(pmi_info.kvs_name);
+        if (pmi_info.kvs_key)   free(pmi_info.kvs_key);
+        if (pmi_info.kvs_value) free(pmi_info.kvs_value);
     }
 out:
     return status;

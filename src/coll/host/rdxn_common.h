@@ -15,7 +15,7 @@ extern "C" {
 
 #define CALL_RDXN_ON_STREAM_KERN(TYPENAME, TYPE, OP)                                                        \
     extern "C" void call_rdxn_##TYPENAME##_##OP##_on_stream_kern(                                     \
-        TYPE *dest, const TYPE *source, int nreduce, int PE_start, int PE_stride, int PE_size,    \
+        TYPE *dest, const TYPE *source, size_t nreduce, int PE_start, int PE_stride, int PE_size,    \
         TYPE *pWrk, long *pSync, cudaStream_t stream);
 
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(CALL_RDXN_ON_STREAM_KERN, and)

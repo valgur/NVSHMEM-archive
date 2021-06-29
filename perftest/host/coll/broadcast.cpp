@@ -30,6 +30,9 @@ int main(int argc, char **argv) {
     cudaStream_t stream;
     int PE_root = 0;
 
+    memset(size_array, 0, (MAX_ELEMS_LOG + 1) * sizeof(uint64_t));
+    memset(latency_array, 0, (MAX_ELEMS_LOG + 1) * sizeof(double));
+
     DEBUG_PRINT("symmetric size requested %lu\n", size);
     sprintf(size_string, "%lu", size);
 

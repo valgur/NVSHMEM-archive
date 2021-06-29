@@ -186,6 +186,14 @@ void nvshmemi_options_print(void) {
 #include "env_defs.h"
 #undef NVSHMEMI_ENV_DEF
 
+    printf("\nBootstrap options:\n");
+#define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)                                     \
+    if (CATEGORY == NVSHMEMI_ENV_CAT_BOOTSTRAP)                                                         \
+        printf("  NVSHMEM_%-20s " NVSHPRI_##KIND " (type: %s, default: " NVSHPRI_##KIND ")\n\t%s\n",    \
+               #NAME, NVSHFMT_##KIND(nvshmemi_options.NAME), #KIND, NVSHFMT_##KIND(DEFAULT), SHORT_DESC);
+#include "env_defs.h"
+#undef NVSHMEMI_ENV_DEF
+
     printf("\nAdditional options:\n");
 #define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)                                     \
     if (CATEGORY == NVSHMEMI_ENV_CAT_OTHER)                                                             \

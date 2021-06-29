@@ -18,12 +18,12 @@
 
 #ifdef __CUDA_ARCH__
 template <typename T>
-__device__ inline void signal(T *dest, const T value, int pe) {
+__device__ inline void nvshmemi_signal(T *dest, const T value, int pe) {
    const void *peer_base_addr =
-       (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+       (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
    if (peer_base_addr != NULL) {
        volatile T *dest_actual = (volatile T *)((char *)(peer_base_addr) +
-                              ((char *)dest - (char *)(nvshmemi_heap_base_d)));
+                              ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));
        *dest_actual = value;
    } else {
        nvshmemi_proxy_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
@@ -35,8 +35,8 @@ __device__ inline void signal(T *dest, const T value, int pe) {
         TYPE *dest, const TYPE *source, size_t nelems, uint64_t *sig_addr, uint64_t signal, \
         int sig_op, int pe, bool is_nbi) {                                                  \
         NVSHMEMI_DECL_THREAD_IDX##SC_SUFFIX();                                              \
-        void *peer_base_addr =                                                              \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);      \
+        void *peer_base_addr = (void *)__ldg(                                               \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);       \
         if (peer_base_addr) {                                                               \
             nvshmemx_##TYPENAME##_put##SC_SUFFIX(dest, source, nelems, pe);                 \
             if (myIdx == 0) {                                                               \
@@ -74,17 +74,13 @@ extern "C" {
                                                          size_t nelems, int pe) {        \
         NVSHMEMI_SYNC_##Group();                                                         \
         void *peer_base_addr =                                                           \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);    \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                              \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                        \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);    \
         if (peer_base_addr) {                                                            \
-            volatile Type *dest_actual =                                                 \
-                (volatile Type *)((char *)(peer_base_addr) +                             \
-                                  ((char *)dest - (char *)(nvshmemi_heap_base_d)));       \
-            for (size_t i = myIdx; i < nelems; i += groupSize) {                         \
-                *(dest_actual + i) = *(source + i);                                      \
-            }                                                                            \
+            Type *dest_actual = (Type *)((char *)(peer_base_addr) +                      \
+                                 ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));       \
+            nvshmemi_memcpy_##Group(dest_actual, source, nelems*sizeof(Type));           \
         } else {                                                                         \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                          \
             if (!myIdx) {                                                                \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source,         \
                                                    nelems * sizeof(Type), pe);           \
@@ -185,17 +181,13 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_NBI_SCOPE_IMPL, bloc
                                                          size_t nelems, int pe) {        \
         NVSHMEMI_SYNC_##Group();                                                         \
         void *peer_base_addr =                                                           \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);    \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                              \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                        \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);    \
         if (peer_base_addr) {                                                            \
-            volatile Type *source_actual =                                               \
-                (volatile Type *)((char *)(peer_base_addr) +                             \
-                                  ((char *)source - (char *)(nvshmemi_heap_base_d)));     \
-            for (size_t i = myIdx; i < nelems; i += groupSize) {                         \
-                *(dest + i) = *(source_actual + i);                                      \
-            }                                                                            \
+            Type *source_actual = (Type *)((char *)(peer_base_addr) +                    \
+                                   ((char *)source - (char *)(nvshmemi_device_state_d.heap_base)));   \
+            nvshmemi_memcpy_##Group(dest, source_actual, nelems*sizeof(Type));           \
         } else {                                                                         \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                          \
             if (!myIdx) {                                                                \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest,         \
                                                    nelems * sizeof(Type), pe);           \
@@ -212,29 +204,26 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_SCOPE2(NVSHMEMI_PUTSIZE_SIGNAL_NBI_SCOPE_IMPL, bloc
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_GET)
 #undef DEFINE_NVSHMEM_TYPE_GET
 
-#define NVSHMEM_PUTSIZE_THREADGROUP(Name, Type, Group)                                  \
-    __device__ inline void nvshmemx_put##Name##_##Group(void *dest, const void *source, \
-                                                        size_t nelems, int pe) {        \
-        NVSHMEMI_SYNC_##Group();                                                        \
-        void *peer_base_addr =                                                          \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);   \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                             \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                       \
-        if (peer_base_addr) {                                                           \
-            volatile Type *dest_actual =                                                \
-                (volatile Type *)((char *)(peer_base_addr) +                            \
-                                  ((char *)dest - (char *)(nvshmemi_heap_base_d)));      \
-            for (size_t i = myIdx; i < nelems; i += groupSize) {                        \
-                *((Type *)dest_actual + i) = *((Type *)source + i);                     \
-            }                                                                           \
-        } else {                                                                        \
-            if (!myIdx) {                                                               \
-                nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source,        \
-                                                   nelems * sizeof(Type), pe);          \
-                nvshmemi_proxy_quiet(true);                                             \
-            }                                                                           \
-        }                                                                               \
-        NVSHMEMI_SYNC_##Group();                                                        \
+#define NVSHMEM_PUTSIZE_THREADGROUP(Name, Type, Group)                                           \
+    __device__ inline void nvshmemx_put##Name##_##Group(void *dest, const void *source,          \
+                                                        size_t nelems, int pe) {                 \
+        NVSHMEMI_SYNC_##Group();                                                                 \
+        void *peer_base_addr = (void *)__ldg(                                                    \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+        if (peer_base_addr) {                                                                    \
+            Type *dest_actual =                                                                  \
+                (Type *)((char *)(peer_base_addr) +                                              \
+                                  ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base))); \
+            nvshmemi_memcpy_##Group(dest_actual, source, nelems * sizeof(Type));                 \
+        } else {                                                                                 \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                                  \
+            if (!myIdx) {                                                                        \
+                nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source,            \
+                                                        nelems * sizeof(Type), pe);              \
+                nvshmemi_proxy_quiet(true);                                                      \
+            }                                                                                    \
+        }                                                                                        \
+        NVSHMEMI_SYNC_##Group();                                                                 \
     }
 
 #define DEFINE_NVSHMEM_PUTSIZE_THREADGROUP(Name, Type) \
@@ -244,21 +233,19 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_GET)
 NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_PUTSIZE_THREADGROUP)
 #undef DEFINE_NVSHMEM_PUTSIZE_THREADGROUP
 
+
 #define NVSHMEM_GETSIZE_THREADGROUP(Name, Type, Group)                                         \
     __device__ inline void nvshmemx_get##Name##_##Group(void *dest, const void *source,        \
                                                         size_t nelems, int pe) {               \
         NVSHMEMI_SYNC_##Group();                                                               \
         void *peer_base_addr =                                                                 \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);          \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                    \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                              \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);          \
         if (peer_base_addr) {                                                                  \
-            volatile char *source_actual =                                                     \
-                ((char *)(peer_base_addr) + ((char *)source - (char *)(nvshmemi_heap_base_d))); \
-            for (size_t i = myIdx; i < nelems; i += groupSize) {                               \
-                *((Type *)dest + i) = *((Type *)source_actual + i);                            \
-            }                                                                                  \
+            char *source_actual = ((char *)(peer_base_addr) +                                  \
+                                   ((char *)source - (char *)(nvshmemi_device_state_d.heap_base)));         \
+            nvshmemi_memcpy_##Group(dest, source_actual, nelems*sizeof(Type));                 \
         } else {                                                                               \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                                \
             if (!myIdx) {                                                                      \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest,               \
                                                    nelems * sizeof(Type), pe);                 \
@@ -280,16 +267,13 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_GETSIZE_THREADGROUP)
                                                    int pe) {                                     \
         NVSHMEMI_SYNC_##Group();                                                                 \
         void *peer_base_addr =                                                                   \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);            \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                      \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                                \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);            \
         if (peer_base_addr) {                                                                    \
-            volatile char *dest_actual =                                                         \
-                ((char *)(peer_base_addr) + ((char *)dest - (char *)(nvshmemi_heap_base_d)));     \
-            for (size_t i = myIdx; i < bytes; i += groupSize) {                                  \
-                *(dest_actual + i) = *((volatile char *)source + i);                             \
-            }                                                                                    \
+            char *dest_actual = ((char *)(peer_base_addr) +                                      \
+                                 ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));               \
+            nvshmemi_memcpy_##Group(dest_actual, source, bytes);                                 \
         } else {                                                                                 \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                                  \
             if (!myIdx) {                                                                        \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, bytes, pe);     \
                 nvshmemi_proxy_quiet(true);                                                      \
@@ -301,27 +285,25 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_GETSIZE_THREADGROUP)
 DEFINE_NVSHMEM_PUTMEM_THREADGROUP(warp)
 DEFINE_NVSHMEM_PUTMEM_THREADGROUP(block)
 
-#define DEFINE_NVSHMEM_GETMEM_THREADGROUP(Group)                                                 \
-    __device__ inline void nvshmemx_getmem_##Group(void *dest, const void *source, size_t bytes, \
-                                                   int pe) {                                     \
-        NVSHMEMI_SYNC_##Group();                                                                 \
-        void *peer_base_addr =                                                                   \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);            \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                      \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                                \
-        if (peer_base_addr) {                                                                    \
-            volatile char *source_actual =                                                       \
-                ((char *)(peer_base_addr) + ((char *)source - (char *)(nvshmemi_heap_base_d)));   \
-            for (size_t i = myIdx; i < bytes; i += groupSize) {                                  \
-                *((char *)dest + i) = *((char *)source_actual + i);                              \
-            }                                                                                    \
-        } else {                                                                                 \
-            if (!myIdx) {                                                                        \
-                nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, bytes, pe);     \
-                nvshmemi_proxy_quiet(true);                                                      \
-            }                                                                                    \
-        }                                                                                        \
-        NVSHMEMI_SYNC_##Group();                                                                 \
+#define DEFINE_NVSHMEM_GETMEM_THREADGROUP(Group)                                                  \
+    __device__ inline void nvshmemx_getmem_##Group(void *dest, const void *source, size_t bytes,  \
+                                                   int pe) {                                      \
+        NVSHMEMI_SYNC_##Group();                                                                  \
+        void *peer_base_addr = (void *)__ldg(                                                     \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);             \
+        if (peer_base_addr) {                                                                     \
+            char *source_actual =                                                                 \
+                ((char *)(peer_base_addr) +                                                       \
+                 ((char *)source - (char *)(nvshmemi_device_state_d.heap_base)));                 \
+            nvshmemi_memcpy_##Group(dest, source_actual, bytes);                                  \
+        } else {                                                                                  \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                                   \
+            if (!myIdx) {                                                                         \
+                nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, bytes, pe); \
+                nvshmemi_proxy_quiet(true);                                                       \
+            }                                                                                     \
+        }                                                                                         \
+        NVSHMEMI_SYNC_##Group();                                                                  \
     }
 
 DEFINE_NVSHMEM_GETMEM_THREADGROUP(warp)
@@ -331,18 +313,14 @@ DEFINE_NVSHMEM_GETMEM_THREADGROUP(block)
     __device__ inline void nvshmemx_##Name##_put_nbi_##Group(Type *dest, const Type *source, \
                                                              size_t nelems, int pe) {        \
         NVSHMEMI_SYNC_##Group();                                                             \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                  \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                            \
         void *peer_base_addr =                                                               \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);        \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);        \
         if (peer_base_addr) {                                                                \
-            volatile Type *dest_actual =                                                     \
-                (volatile Type *)((char *)(peer_base_addr) +                                 \
-                                  ((char *)dest - (char *)(nvshmemi_heap_base_d)));           \
-            for (size_t i = myIdx; i < nelems; i += groupSize) {                             \
-                *(dest_actual + i) = *((volatile Type *)source + i);                         \
-            }                                                                                \
+            Type *dest_actual = (Type *)((char *)(peer_base_addr) +                          \
+                                 ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));           \
+            nvshmemi_memcpy_##Group(dest_actual, source, nelems*sizeof(Type));               \
         } else {                                                                             \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                              \
             if (!myIdx) {                                                                    \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source,             \
                                                    nelems * sizeof(Type), pe);               \
@@ -363,17 +341,13 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_PUT_NBI_THREADGROUP)
                                                              size_t nelems, int pe) {        \
         NVSHMEMI_SYNC_##Group();                                                             \
         void *peer_base_addr =                                                               \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);        \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                  \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                            \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);        \
         if (peer_base_addr) {                                                                \
-            volatile Type *source_actual =                                                   \
-                (volatile Type *)((char *)(peer_base_addr) +                                 \
-                                  ((char *)source - (char *)(nvshmemi_heap_base_d)));         \
-            for (size_t i = myIdx; i < nelems; i += groupSize) {                             \
-                *(dest + i) = *(source_actual + i);                                          \
-            }                                                                                \
+            Type *source_actual = (Type *)((char *)(peer_base_addr) +                        \
+                                   ((char *)source - (char *)(nvshmemi_device_state_d.heap_base)));       \
+            nvshmemi_memcpy_##Group(dest, source_actual, nelems*sizeof(Type));               \
         } else {                                                                             \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                              \
             if (!myIdx) {                                                                    \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest,             \
                                                    nelems * sizeof(Type), pe);               \
@@ -393,24 +367,20 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_GET_NBI_THREADGROUP)
     __device__ inline void nvshmemx_put##Name##_nbi_##Group(void *dest, const void *source, \
                                                             size_t nelems, int pe) {        \
         NVSHMEMI_SYNC_##Group();                                                            \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                 \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                           \
         void *peer_base_addr =                                                              \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);       \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);       \
         if (peer_base_addr) {                                                               \
-            volatile Type *dest_actual =                                                    \
-                (volatile Type *)((char *)(peer_base_addr) +                                \
-                                  ((char *)dest - (char *)(nvshmemi_heap_base_d)));          \
-            for (size_t i = myIdx; i < nelems; i += groupSize) {                            \
-                *((Type *)dest_actual + i) = *((Type *)source + i);                         \
-            }                                                                               \
+            Type *dest_actual = (Type *)((char *)(peer_base_addr) +                         \
+                                  ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));         \
+            nvshmemi_memcpy_##Group(dest_actual, source, nelems*sizeof(Type));              \
         } else {                                                                            \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                             \
             if (!myIdx) {                                                                   \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source,            \
-                                                   nelems * sizeof(Type), pe);              \
-            }                                                                               \
-        }                                                                                   \
-        NVSHMEMI_SYNC_##Group();                                                            \
+                                                        nelems * sizeof(Type), pe);              \
+            }                                                                                    \
+        }                                                                                        \
+        NVSHMEMI_SYNC_##Group();                                                                 \
     }
 
 #define DEFINE_NVSHMEM_PUTSIZE_NBI_THREADGROUP(Name, Type) \
@@ -425,17 +395,13 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_PUTSIZE_NBI_THREADGROUP)
                                                             size_t nelems, int pe) {        \
         NVSHMEMI_SYNC_##Group();                                                            \
         void *peer_base_addr =                                                              \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);       \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                 \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                           \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);       \
         if (peer_base_addr) {                                                               \
-            volatile Type *source_actual =                                                  \
-                (volatile Type *)((char *)(peer_base_addr) +                                \
-                                  ((char *)source - (char *)(nvshmemi_heap_base_d)));        \
-            for (size_t i = myIdx; i < nelems; i += groupSize) {                            \
-                *((Type *)dest + i) = *((Type *)source_actual + i);                         \
-            }                                                                               \
+            Type *source_actual = (Type *)((char *)(peer_base_addr) +                       \
+                                   ((char *)source - (char *)(nvshmemi_device_state_d.heap_base)));      \
+            nvshmemi_memcpy_##Group(dest, source_actual, nelems*sizeof(Type));              \
         } else {                                                                            \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                             \
             if (!myIdx) {                                                                   \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest,            \
                                                    nelems * sizeof(Type), pe);              \
@@ -455,23 +421,19 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_GETSIZE_NBI_THREADGROUP)
     __device__ inline void nvshmemx_putmem_nbi_##Group(void *dest, const void *source,       \
                                                        size_t bytes, int pe) {               \
         NVSHMEMI_SYNC_##Group();                                                             \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                  \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                            \
         void *peer_base_addr =                                                               \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);        \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);        \
         if (peer_base_addr) {                                                                \
-            volatile char *dest_actual =                                                     \
-                (volatile char *)((char *)(peer_base_addr) +                                 \
-                                  ((char *)dest - (char *)(nvshmemi_heap_base_d)));           \
-            for (size_t i = myIdx; i < bytes; i += groupSize) {                              \
-                *(dest_actual + i) = *((volatile char *)source + i);                         \
-            }                                                                                \
+            char *dest_actual = (char *)((char *)(peer_base_addr) +                          \
+                                 ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));           \
+            nvshmemi_memcpy_##Group(dest_actual, source, bytes);                             \
         } else {                                                                             \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                              \
             if (!myIdx) {                                                                    \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, bytes, pe); \
-            }                                                                                \
-        }                                                                                    \
-        NVSHMEMI_SYNC_##Group();                                                             \
+            }                                                                                     \
+        }                                                                                         \
+        NVSHMEMI_SYNC_##Group();                                                                  \
     }
 
 DEFINE_NVSHMEM_PUTMEM_NBI_THREADGROUP(warp)
@@ -482,16 +444,13 @@ DEFINE_NVSHMEM_PUTMEM_NBI_THREADGROUP(block)
                                                        size_t bytes, int pe) {                 \
         NVSHMEMI_SYNC_##Group();                                                               \
         void *peer_base_addr =                                                                 \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);          \
-        NVSHMEMI_DECL_THREAD_IDX_##Group();                                                    \
-        NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                              \
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);          \
         if (peer_base_addr) {                                                                  \
-            volatile char *source_actual =                                                     \
-                ((char *)(peer_base_addr) + ((char *)source - (char *)(nvshmemi_heap_base_d))); \
-            for (size_t i = myIdx; i < bytes; i += groupSize) {                                \
-                *((char *)dest + i) = *((char *)source_actual + i);                            \
-            }                                                                                  \
+            char *source_actual = ((char *)(peer_base_addr) +                                  \
+                                   ((char *)source - (char *)(nvshmemi_device_state_d.heap_base)));         \
+            nvshmemi_memcpy_##Group(dest, source_actual, bytes);                               \
         } else {                                                                               \
+            NVSHMEMI_DECL_THREAD_IDX_##Group();                                                \
             if (!myIdx) {                                                                      \
                 nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, bytes, pe);   \
             }                                                                                  \
@@ -505,7 +464,7 @@ DEFINE_NVSHMEM_GETMEM_NBI_THREADGROUP(block)
 /* __device__ nvshmem_signal */
 #define DEFINE_NVSHMEMX_TYPE_SIGNAL(TYPENAME, TYPE)                                             \
     __device__ inline void nvshmemx_##TYPENAME##_signal(TYPE *dest, const TYPE value, int pe) { \
-        signal<TYPE>(dest, value, pe);                                                          \
+        nvshmemi_signal<TYPE>(dest, value, pe);                                                 \
 }
 
 NVSHMEMX_REPT_FOR_SIGNAL_TYPES(DEFINE_NVSHMEMX_TYPE_SIGNAL)
@@ -513,16 +472,16 @@ NVSHMEMX_REPT_FOR_SIGNAL_TYPES(DEFINE_NVSHMEMX_TYPE_SIGNAL)
 
 __device__ inline void nvshmemi_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
     const void *peer_base_addr =
-        (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (sig_op == NVSHMEM_SIGNAL_SET && peer_base_addr != NULL) {
         volatile uint64_t *dest_actual =
             (volatile uint64_t *)((char *)(peer_base_addr) +
-                                  ((char *)sig_addr - (char *)(nvshmemi_heap_base_d)));
+                                  ((char *)sig_addr - (char *)(nvshmemi_device_state_d.heap_base)));
         *dest_actual = signal;
-    } else if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {
+    } else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {
         volatile uint64_t *dest_actual =
             (volatile uint64_t *)((char *)(peer_base_addr) +
-                                  ((char *)sig_addr - (char *)(nvshmemi_heap_base_d)));
+                                  ((char *)sig_addr - (char *)(nvshmemi_device_state_d.heap_base)));
         /* sig_op == NVSHMEM_SIGNAL_ADD */
         atomicAdd((unsigned long long *)dest_actual, signal);
     } else {

@@ -9,11 +9,15 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include "bootstrap.h"
+#include "bootstrap_internal.h"
 #include "transport.h"
 #include "util.h"
 #include "common.h"
+#include "nvshmem_types.h"
 #include "nvshmem_common.cuh"
+#include <map>
+#include <vector>
+using namespace std;
 #ifdef NVSHMEM_USE_NCCL
 #include "nccl.h"
 #endif /* NVSHMEM_USE_NCCL */
@@ -68,16 +72,16 @@ typedef struct nvshmemi_state_dec {
     size_t heap_size;
     int initialized;
     void *heap_base;
+    void *global_heap_base; /* Used when using VMM API */
+
     void **peer_heap_base_actual;
     void **peer_heap_base;
     void *heap_mspace;
     struct nvshmem_mem_handle *handles;
     /* variables for VMM */
-#if CUDART_VERSION >= 11000
-    size_t global_heap_base;
-    CUmemGenericAllocationHandle heap_handle;
-#else
-    nvshmem_mem_handle_t heap_handle;
+#if CUDART_VERSION >= 11030
+    vector<CUmemGenericAllocationHandle> cumem_handles;
+    size_t physical_heap_size;
 #endif
     bootstrap_handle_t boot_handle;
     /*transport info*/
@@ -97,7 +101,6 @@ typedef struct nvshmemi_state_dec {
     size_t scratch_size;
     int *scratch;
     cuda_device_attributes_t cu_dev_attrib;
-    int *p2p_attrib_native_atomic_support;
     collective_launch_params_t claunch_params;
     CUstream my_stream;
     // proxy
@@ -105,6 +108,9 @@ typedef struct nvshmemi_state_dec {
     CUstream *custreams;
     CUevent *cuevents;
     CUdeviceptr *curets;
+#if CUDART_VERSION >= 11030
+    nvshmemi_state_dec() : cumem_handles() {}
+#endif
 } nvshmemi_state_t;
 
 typedef struct {
@@ -118,12 +124,13 @@ typedef struct {
 
 extern nvshmemi_state_t *nvshmemi_state;
 extern nvshmem_options_t nvshmem_options;
-extern __device__ unsigned long long test_wait_any_start_idx_d;
 extern int nvshmemi_job_connectivity;
 extern int nvshmemi_cuda_driver_version;
 extern int nvshmemi_use_nccl;
+extern bool nvshmemi_use_cuda_vmm;
 extern int nccl_version;
 extern long nvshmemi_max_teams;
+
 #ifdef NVSHMEM_USE_NCCL
 /* Reduction operation types */
 #define NCCL_REDOP_sum ncclSum
@@ -238,6 +245,7 @@ bool nvshmemi_need_proxy(nvshmemi_state_t *state);
 int nvshmemi_common_init(nvshmemi_state_t *state);
 int nvshmemi_init_g_buffer();
 int nvshmemi_init_device_state(nvshmemi_state_t *state);
+int nvshmemi_set_device_state();
 int nvshmemi_setup_local_heap(nvshmemi_state_t *state);
 int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state);
 int nvshmemi_setup_connections(nvshmemi_state_t *state);

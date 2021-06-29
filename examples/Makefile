@@ -26,7 +26,8 @@ EXAMPLECUSRCFILES := \
     thread-group.cu             \
     put-block.cu                \
     dev-guide-ring.cu           \
-    prefix-sum-ring.cu
+    prefix-sum-ring.cu          \
+    ring-bcast.cu
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
 EXAMPLECUSRCFILES += mpi-based-init.cu dev-guide-ring-mpi.cu

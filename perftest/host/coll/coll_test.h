@@ -15,6 +15,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstring>
 #include <assert.h>
 #include <unistd.h>
 #include "utils.h"
@@ -32,9 +33,9 @@
 
 #define alltoall_dest_size(DATATYPE, num_elems, npes) (sizeof(DATATYPE) * num_elems * npes)
 
-#define collect_src_size(DATATYPE, num_elems, npes) (sizeof(DATATYPE) * num_elems)
+#define fcollect_src_size(DATATYPE, num_elems, npes) (sizeof(DATATYPE) * num_elems)
 
-#define collect_dest_size(DATATYPE, num_elems, npes) (sizeof(DATATYPE) * num_elems * npes)
+#define fcollect_dest_size(DATATYPE, num_elems, npes) (sizeof(DATATYPE) * num_elems * npes)
 
 #define broadcast_src_size(DATATYPE, num_elems, npes) (sizeof(DATATYPE) * num_elems)
 
@@ -45,9 +46,9 @@
         nvshmem_##TYPENAME##_broadcast(team, d_dest, d_source, num_elems, root);                \
     } while (0)
 
-#define call_shmem_collect(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root)                \
+#define call_shmem_fcollect(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root)                \
     do {                                                                                           \
-        nvshmem_##TYPENAME##_collect(team, d_dest, d_source, num_elems);                           \
+        nvshmem_##TYPENAME##_fcollect(team, d_dest, d_source, num_elems);                           \
     } while (0)
 
 #define call_shmem_alltoall(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root)               \
@@ -60,9 +61,9 @@
         nvshmemx_##TYPENAME##_broadcast_on_stream(team, d_dest, d_source, num_elems, root, stream);      \
     } while (0)
 
-#define call_shmem_collect_on_stream(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root, stream)    \
+#define call_shmem_fcollect_on_stream(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root, stream)    \
     do {                                                                                        \
-        nvshmemx_##TYPENAME##_collect_on_stream(team, d_dest, d_source, num_elems, stream);     \
+        nvshmemx_##TYPENAME##_fcollect_on_stream(team, d_dest, d_source, num_elems, stream);     \
     } while (0)
 
 #define call_shmem_alltoall_on_stream(TYPENAME, TYPE, team, d_dest, d_source, num_elems, root, stream)  \

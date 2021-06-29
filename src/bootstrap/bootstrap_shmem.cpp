@@ -7,12 +7,15 @@
 #include "nvshmemx_error.h"
 #include "util.h"
 #include "shmem.h"
-#include "bootstrap.h"
+#include "nvshmem_bootstrap.h"
 #include "bootstrap_internal.h"
 #include <stdlib.h>
 #include <dlfcn.h>
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+static size_t  scratch_size;
+static long   *scratch;
 
 int (*shmem_wrapper_my_pe)(void);
 int (*shmem_wrapper_n_pes)(void);
@@ -80,17 +83,16 @@ int bootstrap_shmem_allgather(const void *sendbuf, void *recvbuf, int length,
 
     INFO(NVSHMEM_BOOTSTRAP,
          "[%d] bootstrap_shmem_allgather recvbuf %p sendbuf %p length %d scratch %p",
-         handle->pg_rank, recvbuf_i, sendbuf_i, length, handle->scratch);
+         handle->pg_rank, recvbuf_i, sendbuf_i, length, scratch);
 
     memcpy(sendbuf_i, sendbuf, length);
     INFO(NVSHMEM_BOOTSTRAP,
          "[%d] bootstrap_shmem_allgather recvbuf %p sendbuf %p *sendbuf %d length %d scratch %p",
-         handle->pg_rank, recvbuf_i, sendbuf_i, *(int *)sendbuf, length, handle->scratch);
+         handle->pg_rank, recvbuf_i, sendbuf_i, *(int *)sendbuf, length, scratch);
 
     shmem_wrapper_barrier();
-    assert(handle->scratch_size >= SHMEM_COLLECT_SYNC_SIZE * sizeof(long));
-    shmem_wrapper_allgather(recvbuf_i, sendbuf_i, length / 4, 0, 0, handle->pg_size,
-                            (long *)handle->scratch);
+    assert(scratch_size >= SHMEM_COLLECT_SYNC_SIZE * sizeof(long));
+    shmem_wrapper_allgather(recvbuf_i, sendbuf_i, length / 4, 0, 0, handle->pg_size, scratch);
     shmem_wrapper_barrier();
 
     memcpy(recvbuf, recvbuf_i, length * handle->pg_size);
@@ -118,16 +120,15 @@ int bootstrap_shmem_alltoall(const void *sendbuf, void *recvbuf, int length,
 
     INFO(NVSHMEM_BOOTSTRAP,
          "[%d] bootstrap_shmem_alltoall recvbuf %p sendbuf %p length %d scratch %p",
-         handle->pg_rank, recvbuf_i, sendbuf_i, length, handle->scratch);
+         handle->pg_rank, recvbuf_i, sendbuf_i, length, scratch);
 
     memcpy(sendbuf_i, sendbuf, length * handle->pg_size);
     INFO(NVSHMEM_BOOTSTRAP,
          "[%d] bootstrap_shmem_alltoall recvbuf %p sendbuf %p *sendbuf %d length %d scratch %p",
-         handle->pg_rank, recvbuf_i, sendbuf_i, *(int *)sendbuf, length, handle->scratch);
+         handle->pg_rank, recvbuf_i, sendbuf_i, *(int *)sendbuf, length, scratch);
     shmem_wrapper_barrier();
-    assert(handle->scratch_size >= SHMEM_ALLTOALL_SYNC_SIZE * sizeof(long));
-    shmem_wrapper_alltoall(recvbuf_i, sendbuf_i, length / 4, 0, 0, handle->pg_size,
-                            (long *)handle->scratch);
+    assert(scratch_size >= SHMEM_ALLTOALL_SYNC_SIZE * sizeof(long));
+    shmem_wrapper_alltoall(recvbuf_i, sendbuf_i, length / 4, 0, 0, handle->pg_size, scratch);
     shmem_wrapper_barrier();
 
     memcpy(recvbuf, recvbuf_i, length * handle->pg_size);
@@ -174,7 +175,7 @@ out:
 static int bootstrap_shmem_finalize(bootstrap_handle_t *handle) {
     int status = 0;
 
-    status = bootstrap_shmem_free(handle->scratch);
+    status = bootstrap_shmem_free(scratch);
     NE_ERROR_JMP(status, 0, NVSHMEMX_ERROR_INTERNAL, out, "shmem_free failed \n");
 
 out:
@@ -183,7 +184,6 @@ out:
 
 int bootstrap_shmem_init(bootstrap_handle_t *handle) {
     int status = 0;
-    long *psync = 0;
 
     status = init_shmem_wrapper();
     NE_ERROR_JMP(status, 0, NVSHMEMX_ERROR_INTERNAL, out, "init shmem wrapper failed \n");
@@ -194,13 +194,12 @@ int bootstrap_shmem_init(bootstrap_handle_t *handle) {
     status = bootstrap_shmem_n_pes(&handle->pg_size);
     NE_ERROR_JMP(status, 0, NVSHMEMX_ERROR_INTERNAL, out, "shmem_n_pes failed \n");
 
-    handle->scratch_size = MAX(SHMEM_COLLECT_SYNC_SIZE, SHMEM_ALLTOALL_SYNC_SIZE) * sizeof(long);
-    status = bootstrap_shmem_malloc(&handle->scratch, handle->scratch_size);
+    scratch_size = MAX(SHMEM_COLLECT_SYNC_SIZE, SHMEM_ALLTOALL_SYNC_SIZE) * sizeof(long);
+    status = bootstrap_shmem_malloc((void **)&scratch, scratch_size);
     NE_ERROR_JMP(status, 0, NVSHMEMX_ERROR_INTERNAL, out, "shmem_malloc failed \n");
 
-    psync = (long *)handle->scratch;
-    for (int i = 0; i < handle->scratch_size / sizeof(long); ++i) {
-        psync[i] = SHMEM_SYNC_VALUE;
+    for (int i = 0; i < scratch_size / sizeof(long); ++i) {
+        scratch[i] = SHMEM_SYNC_VALUE;
     }
 
     handle->allgather = bootstrap_shmem_allgather;

@@ -12,28 +12,10 @@
 #define N_PSYNC_BYTES 8
 #define PSYNC_CHUNK_SIZE (N_PSYNCS_PER_TEAM * 2 * NVSHMEMI_SYNC_SIZE)
 
-struct nvshmemi_team_t {
-    int                            my_pe;
-    int                            start, stride, size;
-    int                            psync_idx;
-    nvshmem_team_config_t          config;
-    long                           config_mask;
-    ncclComm_t                     nccl_comm;
-    /*size_t                       contexts_len;
-    struct shmem_transport_ctx_t **contexts;*/
-};
-typedef struct nvshmemi_team_t nvshmemi_team_t;
-
 extern nvshmemi_team_t nvshmemi_team_world;
 extern nvshmemi_team_t nvshmemi_team_shared;
 extern nvshmemi_team_t nvshmemi_team_node;
-extern __device__ nvshmemi_team_t nvshmemi_team_world_d;
-extern __device__ nvshmemi_team_t nvshmemi_team_shared_d;
-extern __device__ nvshmemi_team_t nvshmemi_team_node_d;
-
 extern nvshmemi_team_t **nvshmemi_team_pool;
-extern __device__ nvshmemi_team_t **nvshmemi_team_pool_d;
-extern __device__ long *nvshmemi_psync_pool_d;
 
 enum nvshmemi_team_op_t {
     SYNC = 0,

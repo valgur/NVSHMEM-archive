@@ -9,13 +9,12 @@
 #include "nvshmem_internal.h"
 #include "nvshmem_nvtx.hpp"
 #include "transport.h"
-#include "util.h"
 
 template <nvshmemi_op_t desc, int is_nbi>
 int nvshmemi_proxy_rma_launcher(void *args[], cudaStream_t cstrm);
 
 static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev, rma_verb_t verb,
-                            rma_memdesc_t dest, rma_memdesc_t src, rma_bytesdesc_t bytesdesc,
+                            rma_memdesc_t *dest, rma_memdesc_t *src, rma_bytesdesc_t bytesdesc,
                             uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
     int status = 0;
     bool is_contig = ((bytesdesc.srcstride == 1) && (bytesdesc.deststride == 1)) ? true : false;
@@ -27,7 +26,7 @@ static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev,
             status = cuStreamWaitEvent(custrm, cuev, 0);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamWaitEvent() failed\n");
             if (is_contig) { /*can include iput,iget in future*/
-                status = cuMemcpyDtoDAsync((CUdeviceptr)dest.ptr, (CUdeviceptr)src.ptr,
+                status = cuMemcpyDtoDAsync((CUdeviceptr)dest->ptr, (CUdeviceptr)src->ptr,
                                            bytesdesc.nelems * bytesdesc.elembytes, custrm);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyDtoDAsync() failed\n");
                 if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)
@@ -37,20 +36,20 @@ static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev,
             if (is_contig) {
                 if (is_single_word) {
                     if (verb.desc == NVSHMEMI_OP_P) {
-                        status = cuMemcpyHtoDAsync((CUdeviceptr)dest.ptr, src.ptr,
+                        status = cuMemcpyHtoDAsync((CUdeviceptr)dest->ptr, src->ptr,
                                                    bytesdesc.nelems * bytesdesc.elembytes,
                                                    (CUstream)verb.cstrm);
                         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                      "cuMemcpyHtoDAsync() failed\n");
                     } else { /*!is P*/
-                        status = cuMemcpyDtoHAsync(dest.ptr, (CUdeviceptr)src.ptr,
+                        status = cuMemcpyDtoHAsync(dest->ptr, (CUdeviceptr)src->ptr,
                                                    bytesdesc.nelems * bytesdesc.elembytes,
                                                    (CUstream)verb.cstrm);
                         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                      "cuMemcpyDtoHAsync() failed\n");
                     }
                 } else { /*!is_single_word*/
-                    status = cuMemcpyDtoDAsync((CUdeviceptr)dest.ptr, (CUdeviceptr)src.ptr,
+                    status = cuMemcpyDtoDAsync((CUdeviceptr)dest->ptr, (CUdeviceptr)src->ptr,
                                                bytesdesc.nelems * bytesdesc.elembytes,
                                                (CUstream)verb.cstrm);
                     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
@@ -62,10 +61,10 @@ static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev,
                 CUDA_MEMCPY2D pCopy;
                 memset(&pCopy, 0, sizeof(pCopy));
                 pCopy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-                pCopy.dstDevice = (CUdeviceptr)dest.ptr;
+                pCopy.dstDevice = (CUdeviceptr)dest->ptr;
                 pCopy.dstPitch = bytesdesc.deststride * bytesdesc.elembytes;
                 pCopy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-                pCopy.srcDevice = (CUdeviceptr)src.ptr;
+                pCopy.srcDevice = (CUdeviceptr)src->ptr;
                 pCopy.srcPitch = bytesdesc.srcstride * bytesdesc.elembytes;
                 pCopy.WidthInBytes = bytesdesc.elembytes;
                 pCopy.Height = bytesdesc.nelems;
@@ -76,7 +75,7 @@ static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev,
     } else {  /*!is_stream*/
         if (verb.is_nbi) {
             if (is_contig) { /*can include iput,iget in future*/
-                status = cuMemcpyDtoDAsync((CUdeviceptr)dest.ptr, (CUdeviceptr)src.ptr,
+                status = cuMemcpyDtoDAsync((CUdeviceptr)dest->ptr, (CUdeviceptr)src->ptr,
                                            bytesdesc.nelems * bytesdesc.elembytes, custrm);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyDtoDAsync() failed\n");
             }
@@ -84,18 +83,18 @@ static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev,
             if (is_contig) {
                 if (is_single_word) {
                     if (verb.desc == NVSHMEMI_OP_P) {
-                        status = cuMemcpyHtoDAsync((CUdeviceptr)dest.ptr, src.ptr,
+                        status = cuMemcpyHtoDAsync((CUdeviceptr)dest->ptr, src->ptr,
                                                    bytesdesc.nelems * bytesdesc.elembytes, custrm);
                         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                      "cuMemcpyHtoDAsync() failed\n");
                     } else { /*!is P*/
-                        status = cuMemcpyDtoHAsync(dest.ptr, (CUdeviceptr)src.ptr,
+                        status = cuMemcpyDtoHAsync(dest->ptr, (CUdeviceptr)src->ptr,
                                                    bytesdesc.nelems * bytesdesc.elembytes, custrm);
                         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                      "cuMemcpyDtoHAsync() failed\n");
                     }
                 } else { /*!is_single_word*/
-                    status = cuMemcpyDtoDAsync((CUdeviceptr)dest.ptr, (CUdeviceptr)src.ptr,
+                    status = cuMemcpyDtoDAsync((CUdeviceptr)dest->ptr, (CUdeviceptr)src->ptr,
                                                bytesdesc.nelems * bytesdesc.elembytes, custrm);
                     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                  "cuMemcpyDtoDAsync() failed\n");
@@ -104,10 +103,10 @@ static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev,
                 CUDA_MEMCPY2D pCopy;
                 memset(&pCopy, 0, sizeof(pCopy));
                 pCopy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-                pCopy.dstDevice = (CUdeviceptr)dest.ptr;
+                pCopy.dstDevice = (CUdeviceptr)dest->ptr;
                 pCopy.dstPitch = bytesdesc.deststride * bytesdesc.elembytes;
                 pCopy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-                pCopy.srcDevice = (CUdeviceptr)src.ptr;
+                pCopy.srcDevice = (CUdeviceptr)src->ptr;
                 pCopy.srcPitch = bytesdesc.srcstride * bytesdesc.elembytes;
                 pCopy.WidthInBytes = bytesdesc.elembytes;
                 pCopy.Height = bytesdesc.nelems;
@@ -151,7 +150,7 @@ static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t des
         if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL && !is_stream) {
             ERROR_EXIT("Host put_signal API is not supported\n");
         }
-        status = nvshmemi_p2p_rma(custrm, cuev, verb, dest, src, bytesdesc, sig_addr, signal,
+        status = nvshmemi_p2p_rma(custrm, cuev, verb, &dest, &src, bytesdesc, sig_addr, signal,
                                   sig_op, pe);
     } else {
         int t = nvshmemi_state->selected_transport_for_rma[pe];
@@ -198,7 +197,7 @@ static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t des
                 remote = src;
                 local = dest;
             }
-            status = nvshmemi_state->rma[pe](tcurr, pe, verb, remote, local, bytesdesc, 0);
+            status = nvshmemi_state->rma[pe](tcurr, pe, verb, &remote, &local, bytesdesc, 0);
         } else {
             void *rptr, *lptr, *sigptr;
             if ((verb.desc == NVSHMEMI_OP_PUT) || (verb.desc == NVSHMEMI_OP_P) ||
@@ -311,7 +310,7 @@ void nvshmem_putmem(void *dest, const void *source, size_t bytes, int pe) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped put : (remote)dest %p, (local)source %p, %d bytes, remote PE %d",
+         "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_putmem", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, (void *)dest,
                                   (void *)source, DEST_STRIDE_CONTIG, SRC_STRIDE_CONTIG, bytes, 1,
@@ -323,7 +322,7 @@ void nvshmemx_putmem_on_stream(void *dest, const void *source, size_t bytes, int
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped put : (remote)dest %p, (local)source %p, %d bytes, remote PE %d",
+         "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmemx_putmem_on_stream", NVSHMEMI_OP_PUT, NO_NBI, ASYNC,
                                   (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
@@ -459,7 +458,7 @@ void nvshmemx_putmem_signal_on_stream(void *dest, const void *source, size_t byt
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     TRACE(NVSHMEM_P2P,
-         "[%d] untyped put : (remote)dest %p, (local)source %p, %d bytes, remote PE %d",
+         "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmemx_putmem_signal_on_stream", NVSHMEMI_OP_PUT_SIGNAL, NO_NBI,
                                   ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
@@ -511,7 +510,7 @@ void nvshmem_putmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped put : (remote)dest %p, (local)source %p, %d bytes, remote PE %d",
+         "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_putmem_nbi", NVSHMEMI_OP_PUT, NBI, NO_ASYNC,
                                   (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
@@ -523,7 +522,7 @@ void nvshmemx_putmem_nbi_on_stream(void *dest, const void *source, size_t bytes,
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped put : (remote)dest %p, (local)source %p, %d bytes, remote PE %d",
+         "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_putmem_nbi_on_stream", NVSHMEMI_OP_PUT, NBI, ASYNC,
                                   (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
@@ -567,7 +566,7 @@ void nvshmemx_putmem_signal_nbi_on_stream(void *dest, const void *source, size_t
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped put : (remote)dest %p, (local)source %p, %d bytes, remote PE %d",
+         "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_putmem_signal_nbi_on_stream", NVSHMEMI_OP_PUT_SIGNAL, NBI,
                                   ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
@@ -634,7 +633,7 @@ void nvshmem_getmem(void *dest, const void *source, size_t bytes, int pe) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped get : (local)dest %p, (remote)source %p, %d bytes, remote PE %d",
+         "[%d] untyped get : (local)dest %p, (remote)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_getmem", NVSHMEMI_OP_GET, NO_NBI, NO_ASYNC, (void *)dest,
                                   (void *)source, DEST_STRIDE_CONTIG, SRC_STRIDE_CONTIG, bytes, 1,
@@ -646,7 +645,7 @@ void nvshmemx_getmem_on_stream(void *dest, const void *source, size_t bytes, int
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped get : (local)dest %p, (remote)source %p, %d bytes, remote PE %d",
+         "[%d] untyped get : (local)dest %p, (remote)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmemx_getmem_on_stream", NVSHMEMI_OP_GET, NO_NBI, ASYNC,
                                   (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
@@ -798,7 +797,7 @@ void nvshmem_getmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped get : (local)dest %p, (remote)source %p, %d bytes, remote PE %d",
+         "[%d] untyped get : (local)dest %p, (remote)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_getmem_nbi", NVSHMEMI_OP_GET, NBI, NO_ASYNC,
                                   (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
@@ -810,7 +809,7 @@ void nvshmemx_getmem_nbi_on_stream(void *dest, const void *source, size_t bytes,
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
     NVSHMEM_CHECK_STATE_AND_INIT();
     INFO(NVSHMEM_P2P,
-         "[%d] untyped get : (local)dest %p, (remote)source %p, %d bytes, remote PE %d",
+         "[%d] untyped get : (local)dest %p, (remote)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_getmem_nbi_on_stream", NVSHMEMI_OP_GET, NBI, ASYNC,
                                   (void *)dest, (void *)source, DEST_STRIDE_CONTIG,

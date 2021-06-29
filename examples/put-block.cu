@@ -54,7 +54,7 @@ __global__ void set_and_shift_kernel(float *send_data, float *recv_data, int num
 }
 
 int main(int c, char *v[]) {
-    int mype, npes, mype_node, num_devices;
+    int mype, npes, mype_node;
     float *send_data, *recv_data;
     int num_elems = 8192;
     int num_blocks;
@@ -84,11 +84,10 @@ int main(int c, char *v[]) {
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
-    mype_node = nvshmem_team_n_pes(NVSHMEMX_TEAM_NODE);
+    mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
 
     // application picks the device each PE will use
-    CUDA_CHECK(cudaGetDeviceCount(&num_devices));
-    CUDA_CHECK(cudaSetDevice(mype_node % num_devices));
+    CUDA_CHECK(cudaSetDevice(mype_node));
     send_data = (float *)nvshmem_malloc(sizeof(float) * num_elems);
     recv_data = (float *)nvshmem_malloc(sizeof(float) * num_elems);
     assert(send_data != NULL && recv_data != NULL);

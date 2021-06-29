@@ -14,7 +14,6 @@
 #define TRANSPORT_STRING_MAX_LENGTH 8
 #define IB_TRANSPORT_STRING "ibrc"
 #define UCX_TRANSPORT_STRING "ucx"
-#define DEFAULT_TRANSPORT_STRING "default"
 
 #define NVSHMEM_TRANSPORT_DEVICE_SCORE_MAX 7
 
@@ -114,10 +113,10 @@ typedef struct nvshmem_transport_pe_info {
     TRANSPORT_TYPE_##OPNAME(float, float, opname)                       \
     TRANSPORT_TYPE_##OPNAME(double, double, opname)
 
-typedef int (*rma_handle)(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, rma_memdesc_t dest,
-                          rma_memdesc_t src, rma_bytesdesc_t bytesdesc, int is_proxy);
+typedef int (*rma_handle)(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, rma_memdesc_t *dest,
+                          rma_memdesc_t *src, rma_bytesdesc_t bytesdesc, int is_proxy);
 typedef int (*amo_handle)(struct nvshmem_transport *tcurr, int pe, void *curetptr, amo_verb_t verb,
-                          amo_memdesc_t target, amo_bytesdesc_t bytesdesc, int is_proxy);
+                          amo_memdesc_t *target, amo_bytesdesc_t bytesdesc, int is_proxy);
 typedef int (*fence_handle)(struct nvshmem_transport *tcurr, int pe, int is_proxy);
 typedef int (*quiet_handle)(struct nvshmem_transport *tcurr, int pe, int is_proxy);
 
@@ -127,10 +126,10 @@ struct nvshmem_transport_host_ops {
     int (*can_reach_peer)(int *access, nvshmem_transport_pe_info_t *peer_info,
                           struct nvshmem_transport *transport);
     int (*connect_endpoints)(struct nvshmem_transport *t);
-    int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t mem_handle_in,
+    int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t *mem_handle_in,
                           void *buf, size_t size, struct nvshmem_transport *transport);
-    int (*release_mem_handle)(nvshmem_mem_handle_t mem_handle, struct nvshmem_transport *transport);
-    int (*map)(void **buf, size_t size, nvshmem_mem_handle_t mem_handle);
+    int (*release_mem_handle)(nvshmem_mem_handle_t *mem_handle, struct nvshmem_transport *transport);
+    int (*map)(void **buf, size_t size, nvshmem_mem_handle_t *mem_handle);
     int (*unmap)(void *buf, size_t size);
     int (*finalize)(struct nvshmem_transport *transport);
     int (*show_info)(nvshmem_mem_handle_t *mem_handles, int transport_id, int transport_count,

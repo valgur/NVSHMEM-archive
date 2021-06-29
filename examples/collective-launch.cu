@@ -51,7 +51,7 @@ __global__ void reduce_ring(int *target, int mype, int npes) {
 }
 
 int main(int c, char *v[]) {
-    int mype, npes, mype_node, num_devices;
+    int mype, npes, mype_node;
 
 #ifdef NVSHMEM_MPI_SUPPORT
     bool use_mpi = false;
@@ -78,11 +78,10 @@ int main(int c, char *v[]) {
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
-    mype_node = nvshmem_team_n_pes(NVSHMEMX_TEAM_NODE);
+    mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
 
     // application picks the device each PE will use
-    CUDA_CHECK(cudaGetDeviceCount(&num_devices));
-    CUDA_CHECK(cudaSetDevice(mype_node % num_devices));
+    CUDA_CHECK(cudaSetDevice(mype_node));
     double *u = (double *)nvshmem_malloc(sizeof(double));
 
     void *args[] = {&u, &mype, &npes};

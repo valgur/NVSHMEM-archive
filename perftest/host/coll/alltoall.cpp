@@ -29,6 +29,9 @@ int main(int argc, char **argv) {
     double latency_array[MAX_ELEMS_LOG + 1];
     cudaStream_t stream;
 
+    memset(size_array, 0, (MAX_ELEMS_LOG + 1) * sizeof(uint64_t));
+    memset(latency_array, 0, (MAX_ELEMS_LOG + 1) * sizeof(double));
+
     DEBUG_PRINT("symmetric size requested %lu\n", size);
     sprintf(size_string, "%lu", size);
 

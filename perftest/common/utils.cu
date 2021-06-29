@@ -26,29 +26,34 @@ void select_device() {
     cudaDeviceProp prop;
     int dev_count;
     int mype_node;
+    int mype;
 
+    mype = nvshmem_my_pe();
     mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
 
     CUDA_CHECK(cudaGetDeviceCount(&dev_count));
     CUDA_CHECK(cudaSetDevice(mype_node % dev_count));
 
     CUDA_CHECK(cudaGetDeviceProperties(&prop, mype_node % dev_count));
-    fprintf(stderr, "mype: %d device name: %s bus id: %d \n", mype_node, prop.name, prop.pciBusID);
+    fprintf(stderr, "mype: %d mype_node: %d device name: %s bus id: %d \n", mype, mype_node, prop.name, prop.pciBusID);
     CUDA_CHECK(cudaMemcpyToSymbol(clockrate, (void *)&prop.clockRate, sizeof(int), 0,
                                   cudaMemcpyHostToDevice));
 }
 
 void init_wrapper(int *c, char ***v) {
-    char *value;
 
 #ifdef NVSHMEM_MPI_SUPPORT
-    value = getenv("NVSHMEMTEST_USE_MPI_LAUNCHER");
-    if (value) use_mpi = atoi(value);
+    {
+        char *value = getenv("NVSHMEMTEST_USE_MPI_LAUNCHER");
+        if (value) use_mpi = atoi(value);
+    }
 #endif
 
 #ifdef NVSHMEM_SHMEM_SUPPORT
-    value = getenv("NVSHMEMTEST_USE_SHMEM_LAUNCHER");
-    if (value) use_shmem = atoi(value);
+    {
+        char *value = getenv("NVSHMEMTEST_USE_SHMEM_LAUNCHER");
+        if (value) use_shmem = atoi(value);
+    }
 #endif
 
 #ifdef NVSHMEM_MPI_SUPPORT
@@ -75,7 +80,7 @@ void init_wrapper(int *c, char ***v) {
         shmem_init();
         mype = shmem_my_pe();
         npes = shmem_n_pes();
-        DEBUG_PRINT("SHMEM: [%d of %d] hello SHMEM world! \n", my_pe, npes);
+        DEBUG_PRINT("SHMEM: [%d of %d] hello SHMEM world! \n", mype, npes);
 
         latency = (double *)shmem_malloc(sizeof(double));
         if (!latency) ERROR_EXIT("(shmem_malloc) failed \n");
@@ -149,6 +154,7 @@ alloc_tables(void ***table_mem, int num_tables, int num_entries_per_table)
     /* Just allocate an array of 8 byte values. The user can decide if they want to use double or uint64_t */
     for (i = 0; i < num_tables; i++) {
         CUDA_CHECK(cudaHostAlloc(&tables[i], num_entries_per_table * sizeof(double), cudaHostAllocMapped));
+        memset(tables[i], 0, num_entries_per_table * sizeof(double));
     }
 }
 
@@ -185,8 +191,10 @@ print_table(const char *job_name, const char *subjob_name, const char *var_name,
 	printf("| %-22s | %10s %-9s |\n", var_name, output_var, units);
 	printf("+------------------------+----------------------+\n");
 	for (i = 0; i < num_entries; i++) {
-		printf("| %-22.1lu | %-20.6lf |\n", size[i], value[i]);
-		printf("+------------------------+----------------------+\n");
+        if (size[i] != 0 && value[i] != 0.00) {
+            printf("| %-22.1lu | %-20.6lf |\n", size[i], value[i]);
+            printf("+------------------------+----------------------+\n");
+        }
 	}
 #endif
 	printf("\n\n");

@@ -35,9 +35,9 @@ __global__ void ping_pong(uint64_t *flag_d,
         if (pe) {
             nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
 
-            nvshmemx_uint64_signal(flag_d, (i + 1), peer);
+            nvshmemx_signal_op(flag_d, (i + 1), NVSHMEM_SIGNAL_SET, peer);
         } else {
-            nvshmemx_uint64_signal(flag_d, (i + 1), peer);
+            nvshmemx_signal_op(flag_d, (i + 1), NVSHMEM_SIGNAL_SET, peer);
 
             nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
         }

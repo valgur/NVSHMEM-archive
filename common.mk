@@ -37,6 +37,7 @@ UCX_HOME ?= /usr/local/ucx
 NVSHMEM_MPI_SUPPORT ?= 1
 # MPI install location
 MPI_HOME ?= /usr/local/ompi/
+MPICC ?= $(MPI_HOME)/bin/mpicc
 # Name of MPI library
 NVSHMEM_LMPI ?= -lmpi
 # Whether to build with SHMEM support
@@ -46,18 +47,25 @@ SHMEM_HOME ?= $(MPI_HOME)
 # Name of SHMEM library
 NVSHMEM_LSHMEM ?= -loshmem
 
+MPI_LIBS := $(NVSHMEM_LMPI)
+SHMEM_LIBS := $(NVSHMEM_LSHMEM)
+TESTCUFLAGS  := -dc -ccbin $(CXX) -std=c++11
+TESTLDFLAGS := -lcuda -L$(CUDA_HOME)/lib64 -lcudart -L$(NVSHMEM_HOME)/lib -lnvshmem
+TESTINC := -I$(CUDA_INC) -I$(mkfile_dir)/common
+
 # Better define NVCC_GENCODE in your environment to the minimal set
 # of archs to reduce compile time.
 NVCC_GENCODE ?= -gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_70,code=sm_70
 ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 11; echo $$?),0)
 NVCC_GENCODE += -gencode=arch=compute_80,code=sm_80
+# The threads option was introuced to NVCC in CUDA 11.2
+ifeq ($(shell test "0$(CUDA_MINOR)" -ge 2; echo $$?),0)
+NVCUFLAGS += -t 4
+TESTCUFLAGS += -t 4
+endif
 endif
 
-MPI_LIBS := $(NVSHMEM_LMPI)
-SHMEM_LIBS := $(NVSHMEM_LSHMEM)
-TESTCUFLAGS  := -dc -ccbin $(CXX) -std=c++11 $(NVCC_GENCODE)
-TESTLDFLAGS := -lcuda -L$(CUDA_HOME)/lib64 -lcudart -L$(NVSHMEM_HOME)/lib -lnvshmem
-TESTINC := -I$(CUDA_INC) -I$(mkfile_dir)/common
+TESTCUFLAGS += $(NVCC_GENCODE)
 
 ifeq ($(NVSHMEM_COMPLEX_SUPPORT), 1)
 CXXFLAGS  += -DNVSHMEM_COMPLEX_SUPPORT
@@ -91,8 +99,8 @@ NVCUFLAGS += -O3
 CXXFLAGS  += -O3
 else
 TESTCUFLAGS  += -O0 -g -G -D_NVSHMEM_DEBUG
-NVCUFLAGS += -O0 -g -G -DENABLE_TRACE
-CXXFLAGS  += -O0 -g -DENABLE_TRACE
+NVCUFLAGS += -O0 -g -G -DENABLE_TRACE -D_NVSHMEM_DEBUG
+CXXFLAGS  += -O0 -g -DENABLE_TRACE -D_NVSHMEM_DEBUG
 endif
 
 ifneq ($(NVSHMEM_VERBOSE), 0)

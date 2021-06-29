@@ -4,8 +4,8 @@
  * See COPYRIGHT for license information
  */
 
-#ifndef NVSHMEMI_COLLECT_COMMON_CPU_H
-#define NVSHMEMI_COLLECT_COMMON_CPU_H
+#ifndef NVSHMEMI_FCOLLECT_COMMON_CPU_H
+#define NVSHMEMI_FCOLLECT_COMMON_CPU_H
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -13,15 +13,15 @@
 extern "C" {
 #endif
 
-#define CALL_COLLECT_ON_STREAM_KERN(TYPENAME, TYPE)                                          \
-    void call_##TYPENAME##_collect_on_stream_kern(TYPE *dest, const TYPE *source, size_t nelems, \
+#define CALL_FCOLLECT_ON_STREAM_KERN(TYPENAME, TYPE)                                          \
+    void call_##TYPENAME##_fcollect_on_stream_kern(TYPE *dest, const TYPE *source, size_t nelems, \
                                                   int PE_start, int PE_stride, int PE_size,       \
                                                   long *pSync, cudaStream_t stream);
 
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(CALL_COLLECT_ON_STREAM_KERN)
+    NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(CALL_FCOLLECT_ON_STREAM_KERN)
 
 #if __cplusplus
 }
 #endif
 
-#endif /* NVSHMEMI_COLLECT_COMMON_CPU_H */
+#endif /* NVSHMEMI_FCOLLECT_COMMON_CPU_H */

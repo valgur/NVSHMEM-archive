@@ -33,17 +33,12 @@ PERFCUHELPERFILES := common/utils.cu
 PERFCUSRCFILES := device/coll/alltoall_latency.cu \
                   device/coll/barrier_latency.cu \
                   device/coll/bcast_latency.cu \
-                  device/coll/collect_latency.cu \
+                  device/coll/fcollect_latency.cu \
                   device/coll/reduction_latency.cu \
                   device/coll/sync_latency.cu \
-                  device/pt-to-pt/shmem_atomic_add_ping_pong_latency.cu \
-                  device/pt-to-pt/shmem_atomic_and_ping_pong_latency.cu \
-                  device/pt-to-pt/shmem_atomic_compare_swap_ping_pong_latency.cu \
-                  device/pt-to-pt/shmem_atomic_inc_ping_pong_latency.cu \
-                  device/pt-to-pt/shmem_atomic_or_ping_pong_latency.cu \
-                  device/pt-to-pt/shmem_atomic_set_ping_pong_latency.cu \
-                  device/pt-to-pt/shmem_atomic_swap_ping_pong_latency.cu \
-                  device/pt-to-pt/shmem_atomic_xor_ping_pong_latency.cu \
+                  device/pt-to-pt/shmem_atomic_bw.cu \
+                  device/pt-to-pt/shmem_atomic_latency.cu \
+                  device/pt-to-pt/shmem_atomic_ping_pong_latency.cu \
                   device/pt-to-pt/shmem_get_bw.cu \
                   device/pt-to-pt/shmem_get_latency.cu \
                   device/pt-to-pt/shmem_g_bw.cu \
@@ -67,8 +62,8 @@ PERFCXXSRCFILES := host/coll/alltoall.cpp \
                    host/coll/barrier_on_stream.cpp \
                    host/coll/broadcast.cpp \
                    host/coll/broadcast_on_stream.cpp \
-                   host/coll/collect.cpp \
-                   host/coll/collect_on_stream.cpp \
+                   host/coll/fcollect.cpp \
+                   host/coll/fcollect_on_stream.cpp \
                    host/coll/reduction.cpp \
                    host/coll/reduction_on_stream.cpp \
                    host/coll/sync.cpp \

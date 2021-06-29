@@ -28,6 +28,7 @@ int ipcOpenSocket(ipcHandle *&handle) {
     if (name_len < 0 || name_len >= 50) {
         printf("Error formatting socket file name\n");
         delete handle;
+        close(sock);
         return -1;
     }
 
@@ -36,6 +37,7 @@ int ipcOpenSocket(ipcHandle *&handle) {
         perror("IPC failure: Binding socket failed. If you have any (stale) files"
                 "with names like /tmp/nvshmem-socket-<0-9>*, delete or rename them!");
         delete handle;
+        close(sock);
         return -1;
     }
 
@@ -146,6 +148,7 @@ int ipcSendFd(ipcHandle *handle, const int shareableHandle, pid_t process) {
     iov[0].iov_len = 1;
     msg.msg_iov = iov;
     msg.msg_iovlen = 1;
+    msg.msg_flags = 0;
 
     ssize_t sendResult = sendmsg(handle->socket, &msg, 0);
     if (sendResult <= 0) {

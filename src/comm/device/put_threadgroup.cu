@@ -14,14 +14,15 @@
     __device__ void nvshmemx_##Name##_iput_##Group(Type *dest, const Type *source, ptrdiff_t dst, \
                                                    ptrdiff_t sst, size_t nelems, int pe) {        \
         NVSHMEMI_SYNC_##Group();                                                                  \
-        void *peer_base_addr =                                                                    \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);             \
+        void *peer_base_addr = (void *)__ldg(                                                     \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);             \
         if (peer_base_addr) {                                                                     \
             NVSHMEMI_DECL_THREAD_IDX_##Group();                                                   \
             NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                             \
             volatile Type *dest_actual;                                                           \
-            dest_actual = (volatile Type *)((char *)(peer_base_addr) +                            \
-                                            ((char *)dest - (char *)(nvshmemi_heap_base_d)));      \
+            dest_actual =                                                                         \
+                (volatile Type *)((char *)(peer_base_addr) +                                      \
+                                  ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));  \
             int i;                                                                                \
             for (i = myIdx; i < nelems; i += groupSize) {                                         \
                 *(dest_actual + i * dst) = *((volatile Type *)source + i * sst);                  \
@@ -44,14 +45,15 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_IPUT_THREADGROUP)
     __device__ void nvshmemx_iput##Name##_##Group(void *dest, const void *source, ptrdiff_t dst, \
                                                   ptrdiff_t sst, size_t nelems, int pe) {        \
         NVSHMEMI_SYNC_##Group();                                                                 \
-        void *peer_base_addr =                                                                   \
-            (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);            \
+        void *peer_base_addr = (void *)__ldg(                                                    \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);            \
         if (peer_base_addr) {                                                                    \
             NVSHMEMI_DECL_THREAD_IDX_##Group();                                                  \
             NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                            \
             volatile Type *dest_actual;                                                          \
-            dest_actual = (volatile Type *)((char *)(peer_base_addr) +                           \
-                                            ((char *)dest - (char *)(nvshmemi_heap_base_d)));     \
+            dest_actual =                                                                        \
+                (volatile Type *)((char *)(peer_base_addr) +                                     \
+                                  ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base))); \
             int i;                                                                               \
             for (i = myIdx; i < nelems; i += groupSize) {                                        \
                 *((Type *)dest_actual + i * dst) = *((Type *)source + i * sst);                  \

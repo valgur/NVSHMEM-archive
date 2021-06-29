@@ -36,9 +36,12 @@ __host__ void nvshmemi_recexchalgo_get_neighbors(int my_pe, int num_pes) {
 
     step2_nphases = log_p_of_k;
     int *step1_recvfrom = (int *)malloc(sizeof(int) * (k - 1));
+    assert(step1_recvfrom);
     int **step2_nbrs = (int **)malloc(sizeof(int *) * step2_nphases);
+    assert(step2_nbrs);
     for (int i = 0; i < step2_nphases; i++) {
         step2_nbrs[i] = (int *)malloc(sizeof(int) * (k - 1));
+        assert(step2_nbrs[i]);
     }
 
     rem = num_pes - p_of_k;
@@ -132,23 +135,29 @@ __host__ void nvshmemi_recexchalgo_get_neighbors(int my_pe, int num_pes) {
             phase++;
             mask *= k;
         }
+        free(digit);
     }
 
     // Copy the data to device memory
-    cudaMemcpyToSymbol(reduce_recexch_step1_sendto_d, &step1_sendto, sizeof(int));
-    void *dev_ptr;
-    cudaMemcpyFromSymbol(&dev_ptr, reduce_recexch_step1_recvfrom_d, sizeof(int *));
-    cuMemcpyHtoD((CUdeviceptr)dev_ptr, step1_recvfrom, sizeof(int) * step1_nrecvs);
-    cudaMemcpyToSymbol(reduce_recexch_step1_nrecvs_d, &step1_nrecvs, sizeof(int));
-
-    cudaMemcpyFromSymbol(&dev_ptr, reduce_recexch_step2_nbrs_d, sizeof(int **));
-    void *dev_ptr_2;
+    nvshmemi_device_state.reduce_recexch_step1_sendto = step1_sendto;
+    CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)nvshmemi_device_state.reduce_recexch_step1_recvfrom,
+                  step1_recvfrom, sizeof(int) * step1_nrecvs));
+    nvshmemi_device_state.reduce_recexch_step1_nrecvs = step1_nrecvs;
+    void *dev_ptr, *dev_ptr_2;
+    dev_ptr = nvshmemi_device_state.reduce_recexch_step2_nbrs;
     for (int i = 0; i < step2_nphases; i++) {
-        cuMemcpyDtoH(&dev_ptr_2, (CUdeviceptr)((int **)dev_ptr + i), sizeof(int *));
-        cudaDeviceSynchronize();
-        cuMemcpyHtoD((CUdeviceptr)dev_ptr_2, step2_nbrs[i], sizeof(int) * (k - 1));
-        cudaDeviceSynchronize();
+        CUDA_CHECK(cuMemcpyDtoH(&dev_ptr_2, (CUdeviceptr)((int **)dev_ptr + i), sizeof(int *)));
+        CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)dev_ptr_2, step2_nbrs[i], sizeof(int) * (k - 1)));
     }
-    cudaMemcpyToSymbol(reduce_recexch_step2_nphases_d, &step2_nphases, sizeof(int));
+    nvshmemi_device_state.reduce_recexch_step2_nphases = step2_nphases;
+    nvshmemi_set_device_state();
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
+
+    free(step1_recvfrom);
+    for (int i = 0; i < step2_nphases; i++) {
+        if (step2_nbrs[i]) {
+            free(step2_nbrs[i]);
+        }
+    }
+    free(step2_nbrs);
 }

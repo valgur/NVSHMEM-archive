@@ -25,19 +25,19 @@ __device__ __host__ int nvshmem_team_my_pe(nvshmem_team_t team)
     else
     #ifdef __CUDA_ARCH__
         if (team == NVSHMEM_TEAM_WORLD)
-            return nvshmemi_mype_d;
+        return nvshmemi_device_state_d.mype;
         else if (team == NVSHMEMX_TEAM_NODE)
-            return nvshmemi_node_mype_d;
+            return nvshmemi_device_state_d.node_mype;
         else
-            return nvshmemi_team_pool_d[team]->my_pe;
-    #else
+            return nvshmemi_device_state_d.team_pool[team]->my_pe;
+#else
         if (team == NVSHMEM_TEAM_WORLD)
-            return nvshmemi_state->mype;
-        else if (team == NVSHMEMX_TEAM_NODE)
-            return nvshmemi_state->mype_node;
-        else
-            return nvshmemi_team_pool[team]->my_pe;
-    #endif
+        return nvshmemi_state->mype;
+    else if (team == NVSHMEMX_TEAM_NODE)
+        return nvshmemi_state->mype_node;
+    else
+        return nvshmemi_team_pool[team]->my_pe;
+#endif
 }
 
 __device__ __host__ int nvshmem_team_n_pes(nvshmem_team_t team)
@@ -47,19 +47,19 @@ __device__ __host__ int nvshmem_team_n_pes(nvshmem_team_t team)
     else
     #ifdef __CUDA_ARCH__
         if (team == NVSHMEM_TEAM_WORLD)
-            return nvshmemi_npes_d;
+        return nvshmemi_device_state_d.npes;
         else if (team == NVSHMEMX_TEAM_NODE)
-            return nvshmemi_node_npes_d;
+            return nvshmemi_device_state_d.node_npes;
         else
-            return nvshmemi_team_pool_d[team]->size;
-    #else
+            return nvshmemi_device_state_d.team_pool[team]->size;
+#else
         if (team == NVSHMEM_TEAM_WORLD)
-            return nvshmemi_state->npes;
-        else if (team == NVSHMEMX_TEAM_NODE)
-            return nvshmemi_state->npes_node;
-        else
-            return nvshmemi_team_pool[team]->size;
-    #endif
+        return nvshmemi_state->npes;
+    else if (team == NVSHMEMX_TEAM_NODE)
+        return nvshmemi_state->npes_node;
+    else
+        return nvshmemi_team_pool[team]->size;
+#endif
 }
 
 void nvshmem_team_get_config(nvshmem_team_t team, nvshmem_team_config_t *config)
@@ -79,8 +79,8 @@ nvshmem_team_translate_pe(nvshmem_team_t src_team, int src_pe, nvshmem_team_t de
     if (src_team == NVSHMEM_TEAM_INVALID || dest_team == NVSHMEM_TEAM_INVALID) return -1;
     nvshmemi_team_t *src_teami, *dest_teami;
 #ifdef __CUDA_ARCH__
-    src_teami = nvshmemi_team_pool_d[src_team];
-    dest_teami = nvshmemi_team_pool_d[dest_team];
+    src_teami = nvshmemi_device_state_d.team_pool[src_team];
+    dest_teami = nvshmemi_device_state_d.team_pool[dest_team];
 #else
     NVSHMEM_CHECK_STATE_AND_INIT();
     src_teami = nvshmemi_team_pool[src_team];

@@ -38,18 +38,18 @@ __global__ void distributed_vector_sum(int *x, int *y, int *partial_sum, int *su
     partial_sum[index] = x[index] + y[index];
 
     if (use_threadgroup) {
-        /* all threads realize the entire collect operation */
-        nvshmemx_int_collect_block(NVSHMEM_TEAM_WORLD, sum, partial_sum, nelems);
+        /* all threads realize the entire fcollect operation */
+        nvshmemx_int_fcollect_block(NVSHMEM_TEAM_WORLD, sum, partial_sum, nelems);
     } else {
-        /* thread 0 realizes the entire collect operation */
+        /* thread 0 realizes the entire fcollect operation */
         if (0 == index) {
-            nvshmem_int_collect(NVSHMEM_TEAM_WORLD, sum, partial_sum, nelems);
+            nvshmem_int_fcollect(NVSHMEM_TEAM_WORLD, sum, partial_sum, nelems);
         }
     }
 }
 
 int main(int c, char *v[]) {
-    int mype, npes, mype_node, num_devices;
+    int mype, npes, mype_node;
     int *x;
     int *y;
     int *partial_sum;
@@ -82,10 +82,9 @@ int main(int c, char *v[]) {
 
     npes = nvshmem_n_pes();
     mype = nvshmem_my_pe();
-    mype_node = nvshmem_team_n_pes(NVSHMEMX_TEAM_NODE);
+    mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
 
-    CUDA_CHECK(cudaGetDeviceCount(&num_devices));
-    CUDA_CHECK(cudaSetDevice(mype_node % num_devices));
+    CUDA_CHECK(cudaSetDevice(mype_node));
 
     x = (int *)nvshmem_malloc(sizeof(int) * nthreads);
     y = (int *)nvshmem_malloc(sizeof(int) * nthreads);

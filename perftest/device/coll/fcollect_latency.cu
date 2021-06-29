@@ -13,8 +13,8 @@
 #include "coll_test.h"
 #define DATATYPE int64_t
 
-#define CALL_COLLECT(TYPENAME, TYPE)                                                                         \
-    __global__ void test_##TYPENAME##_collect_call_kern(nvshmem_team_t team, TYPE *dest, const TYPE *source,    \
+#define CALL_FCOLLECT(TYPENAME, TYPE)                                                                         \
+    __global__ void test_##TYPENAME##_fcollect_call_kern(nvshmem_team_t team, TYPE *dest, const TYPE *source,    \
                                                         size_t nelems, int mype, double *d_time_avg,   \
                                                         double *h_thread_lat, double *h_warp_lat,      \
                                                         double *h_block_lat) {                         \
@@ -38,7 +38,7 @@
             for (i = 0; i < (iter + skip); i++) {                                                  \
                 nvshmem_barrier_all();                                                             \
                 if (i > skip) start = clock64();                                                   \
-                nvshmem_##TYPENAME##_collect(team, dest, source, nelems);                          \
+                nvshmem_##TYPENAME##_fcollect(team, dest, source, nelems);                          \
                 if (i > skip) stop = clock64();                                                    \
                 time += (stop - start);                                                            \
             }                                                                                      \
@@ -63,7 +63,7 @@
             for (i = 0; i < (iter + skip); i++) {                                                  \
                 nvshmemx_barrier_all_warp();                                                       \
                 if (i > skip) start = clock64();                                                   \
-                nvshmemx_##TYPENAME##_collect_warp(team, dest, source, nelems);                    \
+                nvshmemx_##TYPENAME##_fcollect_warp(team, dest, source, nelems);                    \
                 if (i > skip) stop = clock64();                                                    \
                 time += (stop - start);                                                            \
             }                                                                                      \
@@ -90,7 +90,7 @@
             for (i = 0; i < (iter + skip); i++) {                                                  \
                 nvshmemx_barrier_all_block();                                                      \
                 if (i > skip) start = clock64();                                                   \
-                nvshmemx_##TYPENAME##_collect_block(team, dest, source, nelems);                   \
+                nvshmemx_##TYPENAME##_fcollect_block(team, dest, source, nelems);                   \
                 if (i > skip) stop = clock64();                                                    \
                 time += (stop - start);                                                            \
             }                                                                                      \
@@ -117,10 +117,10 @@
         }                                                                                          \
     }
 
-CALL_COLLECT(int32, int32_t);
-CALL_COLLECT(int64, int64_t);
+CALL_FCOLLECT(int32, int32_t);
+CALL_FCOLLECT(int64, int64_t);
 
-int collect_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int mype, int max_elems,
+int fcollect_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int mype, int max_elems,
                            cudaStream_t stream, double *d_time_avg, void **h_tables) {
     int status = 0;
     int nvshm_test_num_tpb = TEST_NUM_TPB_BLOCK;
@@ -136,7 +136,7 @@ int collect_calling_kernel(nvshmem_team_t team, void *dest, const void *source, 
     i = 0;
     for (num_elems = 1; num_elems < max_elems; num_elems *= 2) {
         h_size_array[i] = num_elems * 4;
-        test_int32_collect_call_kern<<<num_blocks, nvshm_test_num_tpb, 0, stream>>>(
+        test_int32_fcollect_call_kern<<<num_blocks, nvshm_test_num_tpb, 0, stream>>>(
             team, (int32_t *)dest, (const int32_t *)source, num_elems, mype, d_time_avg,
             &h_thread_lat[i], &h_warp_lat[i], &h_block_lat[i]);
         cuda_check_error();
@@ -145,15 +145,15 @@ int collect_calling_kernel(nvshmem_team_t team, void *dest, const void *source, 
     }
 
     if (!mype) {
-        print_table("collect_device", "32-bit-thread", "size (Bytes)", "latency", "us", '-', h_size_array, h_thread_lat, i);
-        print_table("collect_device", "32-bit-warp", "size (Bytes)", "latency", "us", '-', h_size_array, h_warp_lat, i);
-        print_table("collect_device", "32-bit-block", "size (Bytes)", "latency", "us", '-', h_size_array, h_block_lat, i);
+        print_table("fcollect_device", "32-bit-thread", "size (Bytes)", "latency", "us", '-', h_size_array, h_thread_lat, i);
+        print_table("fcollect_device", "32-bit-warp", "size (Bytes)", "latency", "us", '-', h_size_array, h_warp_lat, i);
+        print_table("fcollect_device", "32-bit-block", "size (Bytes)", "latency", "us", '-', h_size_array, h_block_lat, i);
     }
 
     i = 0;
     for (num_elems = 1; num_elems < max_elems; num_elems *= 2) {
         h_size_array[i] = num_elems * 8;
-        test_int64_collect_call_kern<<<num_blocks, nvshm_test_num_tpb, 0, stream>>>(
+        test_int64_fcollect_call_kern<<<num_blocks, nvshm_test_num_tpb, 0, stream>>>(
             team, (int64_t *)dest, (const int64_t *)source, num_elems, mype, d_time_avg,
             &h_thread_lat[i], &h_warp_lat[i], &h_block_lat[i]);
 
@@ -163,9 +163,9 @@ int collect_calling_kernel(nvshmem_team_t team, void *dest, const void *source, 
     }
 
     if (!mype) {
-        print_table("collect_device", "64-bit-thread", "size (Bytes)", "latency", "us", '-', h_size_array, h_thread_lat, i);
-        print_table("collect_device", "64-bit-warp", "size (Bytes)", "latency", "us", '-', h_size_array, h_warp_lat, i);
-        print_table("collect_device", "64-bit-block", "size (Bytes)", "latency", "us", '-', h_size_array, h_block_lat, i);
+        print_table("fcollect_device", "64-bit-thread", "size (Bytes)", "latency", "us", '-', h_size_array, h_thread_lat, i);
+        print_table("fcollect_device", "64-bit-warp", "size (Bytes)", "latency", "us", '-', h_size_array, h_warp_lat, i);
+        print_table("fcollect_device", "64-bit-block", "size (Bytes)", "latency", "us", '-', h_size_array, h_block_lat, i);
     }
 
     return status;
@@ -242,7 +242,7 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaMemcpyAsync(d_dest, h_dest, (sizeof(DATATYPE) * num_elems * npes),
                                cudaMemcpyHostToDevice, cstrm));
 
-    collect_calling_kernel(NVSHMEM_TEAM_WORLD, (void *)d_dest, (void *)d_source, mype, max_elems, cstrm, d_time_avg, h_tables);
+    fcollect_calling_kernel(NVSHMEM_TEAM_WORLD, (void *)d_dest, (void *)d_source, mype, max_elems, cstrm, d_time_avg, h_tables);
 
     CUDA_CHECK(cudaMemcpyAsync(h_source, d_source, (sizeof(DATATYPE) * num_elems),
                                cudaMemcpyDeviceToHost, cstrm));

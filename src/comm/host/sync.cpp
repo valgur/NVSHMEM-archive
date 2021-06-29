@@ -12,24 +12,6 @@
 
 #include "cuda_interface_sync.h"
 
-#define NVSHMEM_TYPE_WAIT_UNTIL(type, TYPE)                                               \
-    void nvshmem_##type##_wait_until(TYPE *ivar, int cmp, TYPE cmp_value) {               \
-        NVTX_FUNC_RANGE_IN_GROUP(WAIT);                                                   \
-        int status = 0;                                                                   \
-        call_nvshmemi_##type##_wait_until_on_stream_kernel(ivar, cmp, cmp_value,          \
-                                                           nvshmemi_state->my_stream);    \
-        status = cuStreamSynchronize(nvshmemi_state->my_stream);                          \
-        if (status) {                                                                     \
-            ERROR_PRINT("[%d] cuStreamSynchronize()/shmem_" #type "_wait_until() failed", \
-                        nvshmemi_state->mype);                                            \
-            goto out;                                                                     \
-        }                                                                                 \
-    out:                                                                                  \
-        return;                                                                           \
-    }
-NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TYPE_WAIT_UNTIL)
-#undef NVSHMEM_TYPE_WAIT_UNTIL
-
 #define NVSHMEMX_TYPE_WAIT_UNTIL_ON_STREAM(type, TYPE)                                     \
     void nvshmemx_##type##_wait_until_on_stream(TYPE *ivar, int cmp, TYPE cmp_value,       \
                                                 cudaStream_t cstream) {                    \

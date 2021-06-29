@@ -81,6 +81,9 @@ void nvshmem_nvtx_init() {
 
             gname = strtok(NULL, seps);
         }
+        if (groups != NULL) {
+            free(groups);
+        }
     }
 }
 

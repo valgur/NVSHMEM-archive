@@ -37,6 +37,41 @@ NVSHMEMI_ENV_DEF(DEBUG, string, "", NVSHMEMI_ENV_CAT_OPENSHMEM,
                  "Set to enable debugging messages.\n"
                  "\tOptional values: VERSION, WARN, INFO, ABORT, TRACE")
 
+/** Bootstrap **/
+
+NVSHMEMI_ENV_DEF(BOOTSTRAP, string, "PMI", NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Name of the default bootstrap that should be used to initialize\n"
+                 "\tNVSHMEM. Allowed values: PMI, "
+#ifdef NVSHMEM_MPI_SUPPORT
+                 "MPI, "
+#endif
+                 "plugin"
+                 )
+
+#if   defined(NVSHMEM_DEFAULT_PMIX)
+#define NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT "PMIX"
+#elif defined(NVSHMEM_DEFAULT_PMI2)
+#define NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT "PMI-2"
+#else
+#define NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT "PMI"
+#endif
+
+NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI, string, NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT, NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Name of the PMI bootstrap that should be used to initialize\n"
+                 "\tNVSHMEM. Allowed values: PMI, PMI-2"
+#ifdef NVSHMEM_PMIX_SUPPORT
+                 ", PMIX"
+#endif
+                 )
+
+#undef NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT
+
+NVSHMEMI_ENV_DEF(BOOTSTRAP_PLUGIN, string, "", NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Name of the bootstrap plugin file to load")
+
+NVSHMEMI_ENV_DEF(SHMEM_LIB_NAME, string, "liboshmem.so", NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Name of the OpenSHMEM shared library to be used for bootstrap")
+
 /** Debugging **/
 
 NVSHMEMI_ENV_DEF(DEBUG_SUBSYS, string, "", NVSHMEMI_ENV_CAT_HIDDEN,
@@ -47,32 +82,17 @@ NVSHMEMI_ENV_DEF(DEBUG_FILE, string, "", NVSHMEMI_ENV_CAT_OTHER,
 NVSHMEMI_ENV_DEF(ENABLE_ERROR_CHECKS, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Enable error checks")
 
-/** Bootstrap **/
-
-#if   defined(NVSHMEM_DEFAULT_PMIX)
-#define NVSHMEMI_ENV_BOOTSTRAP_DEFAULT "PMIX"
-#elif defined(NVSHMEM_DEFAULT_PMI2)
-#define NVSHMEMI_ENV_BOOTSTRAP_DEFAULT "PMI-2"
-#else
-#define NVSHMEMI_ENV_BOOTSTRAP_DEFAULT "PMI"
-#endif
-
-NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI, string, NVSHMEMI_ENV_BOOTSTRAP_DEFAULT, NVSHMEMI_ENV_CAT_OTHER,
-                 "Name of the bootstrap that should be used to initialize\n"
-                 "\tNVSHMEM. Allowed values: PMI, PMI-2"
-#ifdef NVSHMEM_PMIX_SUPPORT
-                 ", PMIX"
-#endif
-                 )
-
-#undef NVSHMEMI_ENV_BOOTSTRAP_DEFAULT
-
 NVSHMEMI_ENV_DEF(MAX_TEAMS, long, 20l, NVSHMEMI_ENV_CAT_OTHER,
                  "Maximum number of simultaneous teams allowed")
-NVSHMEMI_ENV_DEF(MPI_LIB_NAME, string, "libmpi.so", NVSHMEMI_ENV_CAT_OTHER,
-                 "Name of the MPI shared library to be used for bootstrap")
-NVSHMEMI_ENV_DEF(SHMEM_LIB_NAME, string, "liboshmem.so", NVSHMEMI_ENV_CAT_OTHER,
-                 "Name of the OpenSHMEM shared library to be used for bootstrap")
+
+NVSHMEMI_ENV_DEF(MAX_P2P_GPUS, int, 128, NVSHMEMI_ENV_CAT_OTHER,
+                 "Maximum number of P2P GPUs")
+NVSHMEMI_ENV_DEF(MAX_MEMORY_PER_GPU, size, (size_t)((size_t)128 * (1 << 30)), NVSHMEMI_ENV_CAT_OTHER,
+                 "Maximum memory per GPU")
+NVSHMEMI_ENV_DEF(DISABLE_CUDA_VMM, bool, true, NVSHMEMI_ENV_CAT_OTHER,
+                 "Disable use of CUDA VMM for P2P memory mapping (CUDA VMM is disabled by default."
+                  " It can be used whenever CUDA RT version and CUDA Driver version are greater than or equal to 11.3,"
+                  " and GPUS are P2P connected)")
 
 NVSHMEMI_ENV_DEF(BYPASS_ACCESSIBILITY_CHECK, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass peer GPU accessbility checks")
@@ -100,10 +120,16 @@ NVSHMEMI_ENV_DEF(RDX_NUM_TPB, int, 32, NVSHMEMI_ENV_CAT_HIDDEN,
 
 /** Transport **/
 
+#ifdef NVSHMEM_DEFAULT_UCX
+#define NVSHMEMI_ENV_TRANSPORT_DEFAULT "ucx"
+#else
+#define NVSHMEMI_ENV_TRANSPORT_DEFAULT "ibrc"
+#endif
+
 NVSHMEMI_ENV_DEF(ASSERT_ATOMICS_SYNC, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass flush on wait_until at target")
-NVSHMEMI_ENV_DEF(REMOTE_TRANSPORT, string, "default", NVSHMEMI_ENV_CAT_TRANSPORT,
-                 "Selected transport for remote operations: default (resolves to ibrc), ibrc, ucx, none")
+NVSHMEMI_ENV_DEF(REMOTE_TRANSPORT, string, NVSHMEMI_ENV_TRANSPORT_DEFAULT, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Selected transport for remote operations: ibrc, ucx, none")
 NVSHMEMI_ENV_DEF(DISABLE_IB_NATIVE_ATOMICS, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "disable use of InfiniBand native atomics")
 NVSHMEMI_ENV_DEF(DISABLE_GDRCOPY, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,

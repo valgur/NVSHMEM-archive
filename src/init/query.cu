@@ -11,7 +11,7 @@
 
 __host__ __device__ int nvshmem_my_pe(void) {
 #ifdef __CUDA_ARCH__
-    return nvshmemi_mype_d;
+    return nvshmemi_device_state_d.mype;
 #else
     return nvshmemi_state->mype;
 #endif
@@ -19,7 +19,7 @@ __host__ __device__ int nvshmem_my_pe(void) {
 
 __host__ __device__ int nvshmem_n_pes(void) {
 #ifdef __CUDA_ARCH__
-    return nvshmemi_npes_d;
+    return nvshmemi_device_state_d.npes;
 #else
     return nvshmemi_state->npes;
 #endif

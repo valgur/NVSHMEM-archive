@@ -47,7 +47,6 @@ int nvshmemi_proxy_create_channels(proxy_state_t *proxy_state) {
         CUDA_CHECK(cuMemAllocHost((void **)&channels[i].buf,
                                   proxy_state->channel_bufsize)); /* CPU reads, GPU writes */
         memset(channels[i].buf, 0, proxy_state->channel_bufsize);
-        assert(proxy_state->channel_bufsize % sizeof(channel_request_t) == 0);
 
         CUDA_CHECK(cuMemAlloc((CUdeviceptr *)&channels[i].issue,
                               sizeof(uint64_t))); /* issue is not accessed through LD/ST by CPU
@@ -86,6 +85,7 @@ int nvshmemi_proxy_setup_connections(proxy_state_t *proxy_state) {
     struct nvshmem_transport **transport = NULL;
     int *transport_id;
 
+    proxy_state->transport_bitmap = 0;
     transport = proxy_state->transport =
         (struct nvshmem_transport **)calloc(state->npes, sizeof(struct nvshmem_transport *));
     NULL_ERROR_JMP(transport, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -196,7 +196,7 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state) {
 #endif /* CUDART_VERSION >= 11030 */
 
     INFO(NVSHMEM_PROXY, "[%d] creating proxy thread", state->mype);
-
+    
     status = pthread_create(&proxy_state->progress_thread, NULL, nvshmemi_proxy_progress,
                             (void *)&proxy_state->progress_params);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread creation failed \n");
@@ -204,6 +204,9 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state) {
     state->proxy = (void *)proxy_state;
 
 out:
+    if (status != 0) {
+        exit(-1);
+    }
     return status;
 }
 
@@ -262,9 +265,6 @@ inline int process_channel_dma(proxy_state_t *state, proxy_channel_t *ch, int *i
         nvshmem_mem_handle_t *handles = nvshmemi_state->handles;
         int tcount = NVSHMEM_TRANSPORT_COUNT;
 
-        // incrementing G buf head corresponding to the device
-        if ((nvshmemi_op_t)base_req->op == NVSHMEMI_OP_G) proxy_channel_g_buf_head++;
-
         verb.desc = (nvshmemi_op_t)base_req->op;
         verb.is_nbi = 1;
 
@@ -276,7 +276,7 @@ inline int process_channel_dma(proxy_state_t *state, proxy_channel_t *ch, int *i
         bytes.nelems = size;
         bytes.elembytes = 1;
 
-        status = tcurr->host_ops.rma(tcurr, pe, verb, remotedesc, localdesc, bytes, 1);
+        status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytes, 1);
         if (unlikely(status)) {
             ERROR_PRINT("aborting due to error in process_channel_dma\n");
             exit(-1);
@@ -359,7 +359,7 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
         bytes.nelems = 1;
         bytes.elembytes = size;
 
-        status = tcurr->host_ops.rma(tcurr, pe, verb, remotedesc, localdesc, bytes, 1);
+        status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytes, 1);
         if (unlikely(status)) {
             ERROR_PRINT("aborting due to error in process_channel_dma\n");
             exit(-1);
@@ -408,6 +408,12 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
     while (*((volatile uint8_t *)&req_2->flag) != flag)
         ;
 
+    amo_request_3_t *req_3;
+    req_3 = (amo_request_3_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 32);
+    flag = COUNTER_TO_FLAG(state, ch->processed + 32);
+    while (*((volatile uint8_t *)&req_3->flag) != flag)
+        ;
+
 #if defined(NVSHMEM_PPC64LE)
     __sync_synchronize();  // XXX : prevents load from buf_d reordered to before load from issue_d
                            // (was present in dma function, was missing in inline function, breaks
@@ -451,15 +457,16 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
         memdesc.handle = handles[pe * tcount + t];
         // pick spot in g buffer for fetch value
         if ((amo_op > NVSHMEMI_AMO_END_OF_NONFETCH)) {
+            uint64_t g_buf_counter = ((*reinterpret_cast<uint64_t *>(req_3)) & 0xFFFFFFFFFFFFFF00u);
+            g_buf_counter >>= 8;
             uint64_t offset =
-                ((proxy_channel_g_buf_head * sizeof(g_elem_t)) & (proxy_channel_g_buf_size - 1));
+                ((g_buf_counter * sizeof(g_elem_t)) & (proxy_channel_g_buf_size - 1));
             memdesc.retptr = (void *)(proxy_channel_g_buf + offset);
-            memdesc.retflag = ((proxy_channel_g_buf_head * sizeof(g_elem_t)) >> proxy_channel_g_buf_log_size) * 2 + 1;
-            proxy_channel_g_buf_head++;
+            memdesc.retflag = ((g_buf_counter * sizeof(g_elem_t)) >> proxy_channel_g_buf_log_size) * 2 + 1;
         }
         bytes.elembytes = size;
 
-        status = tcurr->host_ops.amo(tcurr, pe, NULL, verb, memdesc, bytes, 1);
+        status = tcurr->host_ops.amo(tcurr, pe, NULL, verb, &memdesc, bytes, 1);
         if (unlikely(status)) {
             ERROR_PRINT("aborting due to error in process_channel_dma\n");
             exit(-1);
@@ -482,7 +489,9 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
 }
 
 void enforce_cst(proxy_state_t *proxy_state) {
+#if defined(NVSHMEM_X86_64)
     nvshmemi_state_t *state = proxy_state->nvshmemi_state;
+#endif
     int status = 0;
 
     if (nvshmemi_options.BYPASS_FLUSH) return;
@@ -907,7 +916,7 @@ void *nvshmemi_proxy_progress(void *in) {
     nvshmem_nvtx_set_thread_name(proxy_state->nvshmemi_state->mype, "proxy");
 
     // set context on the current thread
-    INFO(NVSHMEM_PROXY, "setting current CUDA context to saved context: %llu",
+    INFO(NVSHMEM_PROXY, "setting current CUDA context to saved context: %p",
          proxy_state->nvshmemi_state->cucontext);
     CUresult curesult = CUDA_SUCCESS;
     curesult = cuCtxSetCurrent(proxy_state->nvshmemi_state->cucontext);

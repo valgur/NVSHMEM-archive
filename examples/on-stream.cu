@@ -50,7 +50,7 @@ __global__ void correct_accumulate(int *input, int *partial_sum, int *full_sum) 
 }
 
 int main(int c, char *v[]) {
-    int mype, npes, mype_node, num_devices;
+    int mype, npes, mype_node;
     int *input;
     int *partial_sum;
     int *full_sum;
@@ -83,9 +83,8 @@ int main(int c, char *v[]) {
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
-    mype_node = nvshmem_team_n_pes(NVSHMEMX_TEAM_NODE);
-    CUDA_CHECK(cudaGetDeviceCount(&num_devices));
-    CUDA_CHECK(cudaSetDevice(mype_node % num_devices));
+    mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
+    CUDA_CHECK(cudaSetDevice(mype_node));
     CUDA_CHECK(cudaStreamCreate(&stream));
 
     input = (int *)nvshmem_malloc(sizeof(int) * input_nelems);

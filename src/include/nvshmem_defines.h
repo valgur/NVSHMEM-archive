@@ -36,12 +36,12 @@ __device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar);
 
 #ifdef __CUDA_ARCH__
 template <typename T>
-__device__ inline void p(T *dest, const T value, int pe) {
+__device__ inline void nvshmemi_p(T *dest, const T value, int pe) {
     const void *peer_base_addr =
-        (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (peer_base_addr) {
         T *dest_actual = (T *)((char *)(peer_base_addr) +
-                               ((char *)dest - (char *)(nvshmemi_heap_base_d)));
+                               ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));
         *dest_actual = value;
     } else {
         nvshmemi_proxy_rma_p<T>((void *)dest, value, pe);
@@ -49,13 +49,12 @@ __device__ inline void p(T *dest, const T value, int pe) {
 }
 
 template <typename T>
-__device__ inline T g(const T *source, int pe) {
+__device__ inline T nvshmemi_g(const T *source, int pe) {
     const void *peer_base_addr =
-        (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (peer_base_addr) {
-        T *source_actual =
-            (T *)((char *)(peer_base_addr) +
-                  ((char *)source - (char *)(nvshmemi_heap_base_d)));
+        T *source_actual = (T *)((char *)(peer_base_addr) +
+                                 ((char *)source - (char *)(nvshmemi_device_state_d.heap_base)));
         return *source_actual;
     } else {
         return nvshmemi_proxy_rma_g<T>((void*)source, pe);
@@ -63,11 +62,11 @@ __device__ inline T g(const T *source, int pe) {
 }
 
 template <typename T>
-__device__ inline void put(T *dest, const T *source, size_t nelems, int pe) {
-    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+__device__ inline void nvshmemi_put(T *dest, const T *source, size_t nelems, int pe) {
+    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (peer_base_addr) {
-        char *dest_actual = (char *)(peer_base_addr) +
-                               ((char *)dest - (char *)(nvshmemi_heap_base_d));
+        char *dest_actual =
+            (char *)(peer_base_addr) + ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base));
         nvshmemi_memcpy_thread((void *)dest_actual, (const void *) source, nelems * sizeof(T));
     } else {
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, nelems * sizeof(T), pe);
@@ -76,11 +75,12 @@ __device__ inline void put(T *dest, const T *source, size_t nelems, int pe) {
 }
 
 template <typename T>
-__device__ inline void put_signal(T *dest, const T *source, size_t nelems,
+__device__ inline void nvshmemi_put_signal(T *dest, const T *source, size_t nelems,
                                   uint64_t *sig_addr, uint64_t signal, int sig_op, int pe, bool is_nbi) {
-    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+    void *peer_base_addr =
+        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (peer_base_addr) {
-        put<T>(dest, source, nelems, pe);
+        nvshmemi_put<T>(dest, source, nelems, pe);
         __threadfence_system();
         nvshmemx_signal_op(sig_addr, signal, sig_op, pe);
         
@@ -93,11 +93,11 @@ __device__ inline void put_signal(T *dest, const T *source, size_t nelems,
 }
 
 template <typename T>
-__device__ inline void get(T *dest, const T *source, size_t nelems, int pe) {
-    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+__device__ inline void nvshmemi_get(T *dest, const T *source, size_t nelems, int pe) {
+    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (peer_base_addr) {
-        char *source_actual =
-            (char *)(peer_base_addr) + ((char *)source - (char *)(nvshmemi_heap_base_d));
+        char *source_actual = (char *)(peer_base_addr) +
+                              ((char *)source - (char *)(nvshmemi_device_state_d.heap_base));
         nvshmemi_memcpy_thread((void *)dest, (const void *)source_actual, nelems * sizeof(T));
     } else {
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, nelems * sizeof(T), pe);
@@ -106,11 +106,11 @@ __device__ inline void get(T *dest, const T *source, size_t nelems, int pe) {
 }
 
 template <typename T>
-__device__ inline void put_nbi(T *dest, const T *source, size_t nelems, int pe) {
-    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+__device__ inline void nvshmemi_put_nbi(T *dest, const T *source, size_t nelems, int pe) {
+    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (peer_base_addr) {
         char *dest_actual =
-            (char *)(peer_base_addr) + ((char *)dest - (char *)(nvshmemi_heap_base_d));
+            (char *)(peer_base_addr) + ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base));
         nvshmemi_memcpy_thread((void *)dest_actual, (const void *)source, nelems * sizeof(T));
     } else {
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>((void *)dest, (void *)source, nelems * sizeof(T), pe);
@@ -118,12 +118,11 @@ __device__ inline void put_nbi(T *dest, const T *source, size_t nelems, int pe) 
 }
 
 template <typename T>
-__device__ inline void get_nbi(T *dest, const T *source, size_t nelems, int pe) {
-    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+__device__ inline void nvshmemi_get_nbi(T *dest, const T *source, size_t nelems, int pe) {
+    void *peer_base_addr = (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (peer_base_addr) {
-        char *source_actual =
-            (char *)(peer_base_addr) +
-                  ((char *)source - (char *)(nvshmemi_heap_base_d));
+        char *source_actual = (char *)(peer_base_addr) +
+                              ((char *)source - (char *)(nvshmemi_device_state_d.heap_base));
         nvshmemi_memcpy_thread((void *)dest, (const void *)source_actual, nelems * sizeof(T));
     } else {
         nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>((void *)source, (void *)dest, nelems * sizeof(T), pe);
@@ -145,7 +144,7 @@ extern "C" {
 /*__device__ nvshmem_p*/
 #define NVSHMEMI_TYPENAME_P_IMPL(TYPENAME, TYPE)                                            \
     __device__ inline void nvshmem_##TYPENAME##_p(TYPE* dest, const TYPE value, int pe) {   \
-        p<TYPE>(dest, value, pe);                                                           \
+        nvshmemi_p<TYPE>(dest, value, pe);                                                           \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_P_IMPL)
 #undef NVSHMEMI_TYPENAME_P_IMPL
@@ -153,7 +152,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_P_IMPL)
 /*__device__ nvshmem_g*/
 #define NVSHMEMI_TYPENAME_G_IMPL(TYPENAME, TYPE)                                    \
     __device__ inline TYPE nvshmem_##TYPENAME##_g(const TYPE *source, int pe) {    \
-        return g<TYPE>(source, pe);                                                 \
+        return nvshmemi_g<TYPE>(source, pe);                                                 \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_G_IMPL)
 #undef NVSHMEMI_TYPENAME_G_IMPL
@@ -161,7 +160,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_G_IMPL)
 /*__device__ nvshmem_<typename>_put*/
 #define NVSHMEMI_TYPENAME_PUT_IMPL(TYPENAME, TYPE)                                                          \
     __device__ inline void nvshmem_##TYPENAME##_put(TYPE *dest, const TYPE *source, size_t nelems, int pe) {\
-        put<TYPE>(dest, source, nelems, pe);                                                                \
+        nvshmemi_put<TYPE>(dest, source, nelems, pe);                                                                \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_IMPL)
 #undef NVSHMEMI_TYPENAME_PUT_IMPL
@@ -170,7 +169,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_IMPL)
 #define NVSHMEMI_TYPENAME_PUT_SIGNAL_IMPL(TYPENAME, TYPE)                                                            \
     __device__ inline void nvshmem_##TYPENAME##_put_signal(TYPE *dest, const TYPE *source, size_t nelems,            \
                                                            uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {\
-        put_signal<TYPE>(dest, source, nelems, sig_addr, signal, sig_op, pe, 0);                                     \
+        nvshmemi_put_signal<TYPE>(dest, source, nelems, sig_addr, signal, sig_op, pe, 0);                                     \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_SIGNAL_IMPL)
 #undef NVSHMEMI_TYPENAME_PUT_SIGNAL_IMPL
@@ -178,26 +177,26 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_SIGNAL_IMPL)
 /*__device__ nvshmem_<typename>_get*/
 #define NVSHMEMI_TYPENAME_GET_IMPL(TYPENAME, TYPE)                                                          \
     __device__ inline void nvshmem_##TYPENAME##_get(TYPE *dest, const TYPE *source, size_t nelems, int pe) {\
-        get<TYPE>(dest, source, nelems, pe);                                                                \
+        nvshmemi_get<TYPE>(dest, source, nelems, pe);                                                                \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_GET_IMPL)
 #undef NVSHMEMI_TYPENAME_GET_IMPL
 
 /*__device__ nvshmem_put<bits>*/
 __device__ inline void nvshmem_put8(void *dest, const void *source, size_t nelems, int pe) {
-    put<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
+    nvshmemi_put<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_put16(void *dest, const void *source, size_t nelems, int pe) {
-    put<int16_t>((int16_t *)dest, (const int16_t *)source, nelems, pe);
+    nvshmemi_put<int16_t>((int16_t *)dest, (const int16_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_put32(void *dest, const void *source, size_t nelems, int pe) {
-    put<int32_t>((int32_t *)dest, (const int32_t *)source, nelems, pe);
+    nvshmemi_put<int32_t>((int32_t *)dest, (const int32_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_put64(void *dest, const void *source, size_t nelems, int pe) {
-    put<int64_t>((int64_t *)dest, (const int64_t *)source, nelems, pe);
+    nvshmemi_put<int64_t>((int64_t *)dest, (const int64_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_put128(void *dest, const void *source, size_t nelems, int pe) {
-    put<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
+    nvshmemi_put<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
 }
 
 /*__device__ nvshmem_put<bits>_signal*/
@@ -211,42 +210,42 @@ NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_SIZE_PUT_SIGNAL_IMPL)
 
 /*__device__ nvshmem_get<bits>*/
 __device__ inline void nvshmem_get8(void *dest, const void *source, size_t nelems, int pe) {
-    get<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
+    nvshmemi_get<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_get16(void *dest, const void *source, size_t nelems, int pe) {
-    get<int16_t>((int16_t *)dest, (const int16_t *)source, nelems, pe);
+    nvshmemi_get<int16_t>((int16_t *)dest, (const int16_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_get32(void *dest, const void *source, size_t nelems, int pe) {
-    get<int32_t>((int32_t *)dest, (const int32_t *)source, nelems, pe);
+    nvshmemi_get<int32_t>((int32_t *)dest, (const int32_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_get64(void *dest, const void *source, size_t nelems, int pe) {
-    get<int64_t>((int64_t *)dest, (const int64_t *)source, nelems, pe);
+    nvshmemi_get<int64_t>((int64_t *)dest, (const int64_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_get128(void *dest, const void *source, size_t nelems, int pe) {
-    get<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
+    nvshmemi_get<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
 }
 
 /*__device__ nvshmem_putmem*/
 __device__ inline void nvshmem_putmem(void *dest, const void *source, size_t bytes, int pe) {
-    put<char>((char *)dest, (const char *)source, bytes, pe);
+    nvshmemi_put<char>((char *)dest, (const char *)source, bytes, pe);
 }
 
 /*__device__ nvshmem_putmem_signal*/
 __device__ inline void nvshmem_putmem_signal(void *dest, const void *source, size_t bytes,
                                              uint64_t *sig_addr, uint64_t signal, int sig_op,
                                              int pe) {
-    put_signal<char>((char *)dest, (const char *)source, bytes, sig_addr, signal, sig_op, pe, 0);
+    nvshmemi_put_signal<char>((char *)dest, (const char *)source, bytes, sig_addr, signal, sig_op, pe, 0);
 }
 
 /*__device__ nvshmem_getmem*/
 __device__ inline void nvshmem_getmem(void *dest, const void *source, size_t bytes, int pe) {
-    get<char>((char *)dest, (const char *)source, bytes, pe);
+    nvshmemi_get<char>((char *)dest, (const char *)source, bytes, pe);
 }
 
 /*__device__ nvshmem_<typename>_put_nbi*/
 #define NVSHMEMI_TYPENAME_PUT_NBI_IMPL(TYPENAME, TYPE)                                                          \
     __device__ inline void nvshmem_##TYPENAME##_put_nbi(TYPE *dest, const TYPE *source, size_t nelems, int pe) {\
-        put_nbi<TYPE>(dest, source, nelems, pe);                                                                \
+        nvshmemi_put_nbi<TYPE>(dest, source, nelems, pe);                                                       \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_NBI_IMPL)
 #undef NVSHMEMI_TYPENAME_PUT_NBI_IMPL
@@ -255,7 +254,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_NBI_IMPL)
 #define NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_IMPL(TYPENAME, TYPE)                                                        \
     __device__ inline void nvshmem_##TYPENAME##_put_signal_nbi(TYPE *dest, const TYPE *source, size_t nelems,        \
                                                            uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {\
-        put_signal<TYPE>(dest, source, nelems, sig_addr, signal, sig_op, pe, 1);                                     \
+         nvshmemi_put_signal<TYPE>(dest, source, nelems, sig_addr, signal, sig_op, pe, 1);                                     \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_IMPL)
 #undef NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_IMPL
@@ -263,46 +262,46 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_PUT_SIGNAL_NBI_IMPL)
 /*__device__ nvshmem_<typename>_get_nbi*/
 #define NVSHMEMI_TYPENAME_GET_NBI_IMPL(TYPENAME, TYPE)                                                          \
     __device__ inline void nvshmem_##TYPENAME##_get_nbi(TYPE *dest, const TYPE *source, size_t nelems, int pe) {\
-        get_nbi<TYPE>(dest, source, nelems, pe);                                                                \
+        nvshmemi_get_nbi<TYPE>(dest, source, nelems, pe);                                                                \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_TYPENAME_GET_NBI_IMPL)
 #undef NVSHMEMI_TYPENAME_GET_NBI_IMPL
 
 /*__device__ nvshmem_put<bits>_nbi*/
 __device__ inline void nvshmem_put8_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    put_nbi<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
+    nvshmemi_put_nbi<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_put16_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    put_nbi<int16_t>((int16_t *)dest, (const int16_t *)source, nelems, pe);
+    nvshmemi_put_nbi<int16_t>((int16_t *)dest, (const int16_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_put32_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    put_nbi<int32_t>((int32_t *)dest, (const int32_t *)source, nelems, pe);
+    nvshmemi_put_nbi<int32_t>((int32_t *)dest, (const int32_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_put64_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    put_nbi<int64_t>((int64_t *)dest, (const int64_t *)source, nelems, pe);
+    nvshmemi_put_nbi<int64_t>((int64_t *)dest, (const int64_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_put128_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    put_nbi<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
+    nvshmemi_put_nbi<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
 }
 /*__device__ nvshmem_get<bits>_nbi*/
 __device__ inline void nvshmem_get8_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    get_nbi<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
+    nvshmemi_get_nbi<int8_t>((int8_t *)dest, (const int8_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_get16_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    get_nbi<int16_t>((int16_t *)dest, (const int16_t *)source, nelems, pe);
+    nvshmemi_get_nbi<int16_t>((int16_t *)dest, (const int16_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_get32_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    get_nbi<int32_t>((int32_t *)dest, (const int32_t *)source, nelems, pe);
+    nvshmemi_get_nbi<int32_t>((int32_t *)dest, (const int32_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_get64_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    get_nbi<int64_t>((int64_t *)dest, (const int64_t *)source, nelems, pe);
+    nvshmemi_get_nbi<int64_t>((int64_t *)dest, (const int64_t *)source, nelems, pe);
 }
 __device__ inline void nvshmem_get128_nbi(void *dest, const void *source, size_t nelems, int pe) {
-    get_nbi<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
+    nvshmemi_get_nbi<int4>((int4 *)dest, (const int4 *)source, nelems, pe);
 }
 /*__device__ nvshmem_putmem_nbi*/
 __device__ inline void nvshmem_putmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
-    put_nbi<char>((char *)dest, (const char *)source, bytes, pe);
+    nvshmemi_put_nbi<char>((char *)dest, (const char *)source, bytes, pe);
 }
 
 /*__device__ nvshmem_put<bits>_signal*/
@@ -318,12 +317,12 @@ NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_SIZE_PUT_SIGNAL_NBI_IMPL)
 __device__ inline void nvshmem_putmem_signal_nbi(void *dest, const void *source, size_t bytes,
                                                  uint64_t *sig_addr, uint64_t signal, int sig_op,
                                                  int pe) {
-    put_signal<char>((char *)dest, (const char *)source, bytes, sig_addr, signal, sig_op, pe, 1);
+    nvshmemi_put_signal<char>((char *)dest, (const char *)source, bytes, sig_addr, signal, sig_op, pe, 1);
 }
 
 /*__device__ nvshmem_getmem_nbi*/
 __device__ inline void nvshmem_getmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
-    get_nbi<char>((char *)dest, (const char *)source, bytes, pe);
+    nvshmemi_get_nbi<char>((char *)dest, (const char *)source, bytes, pe);
 }
 
 /**** TEST API ****/
@@ -357,21 +356,22 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TEST)
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TEST_ALL)
 #undef NVSHMEM_TEST_ALL
 
-#define NVSHMEM_TEST_ANY(Name, Type)                                                           \
-    __device__ inline size_t nvshmem_##Name##_test_any(Type *ivars, size_t nelems, const int *status, \
-                                                int cmp, Type cmp_value) {                     \
-        unsigned long long start_idx = atomicAdd(&test_wait_any_start_idx_d, 1);               \
-        for (size_t i = 0; i < nelems; i++) {                                                  \
-            size_t idx = (i + (size_t)start_idx) % nelems;                                     \
-            if (!status || status[idx] == 0) {                                                 \
-                if (nvshmemi_test<Type>(&ivars[idx], cmp, cmp_value) == 1) {                   \
-                    nvshmemi_syncapi_update_mem();                                             \
-                    return idx;                                                                \
-                }                                                                              \
-            }                                                                                  \
-        }                                                                                      \
-                                                                                               \
-        return SIZE_MAX;                                                                       \
+#define NVSHMEM_TEST_ANY(Name, Type)                                              \
+    __device__ inline size_t nvshmem_##Name##_test_any(                           \
+        Type *ivars, size_t nelems, const int *status, int cmp, Type cmp_value) { \
+        unsigned long long start_idx =                                            \
+            atomicAdd(nvshmemi_device_state_d.test_wait_any_start_idx_ptr, 1);    \
+        for (size_t i = 0; i < nelems; i++) {                                     \
+            size_t idx = (i + (size_t)start_idx) % nelems;                        \
+            if (!status || status[idx] == 0) {                                    \
+                if (nvshmemi_test<Type>(&ivars[idx], cmp, cmp_value) == 1) {      \
+                    nvshmemi_syncapi_update_mem();                                \
+                    return idx;                                                   \
+                }                                                                 \
+            }                                                                     \
+        }                                                                         \
+                                                                                  \
+        return SIZE_MAX;                                                          \
     }
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TEST_ANY)
@@ -418,21 +418,22 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TEST_SOME)
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TEST_ALL_VECTOR)
 #undef NVSHMEM_TEST_ALL_VECTOR
 
-#define NVSHMEM_TEST_ANY_VECTOR(Name, Type)                                                           \
-    __device__ inline size_t nvshmem_##Name##_test_any_vector(Type *ivars, size_t nelems, const int *status, \
-                                                int cmp, Type *cmp_value) {                     \
-        unsigned long long start_idx = atomicAdd(&test_wait_any_start_idx_d, 1);               \
-        for (size_t i = 0; i < nelems; i++) {                                                  \
-            size_t idx = (i + (size_t)start_idx) % nelems;                                     \
-            if (!status || status[idx] == 0) {                                                 \
-                if (nvshmemi_test<Type>(&ivars[idx], cmp, cmp_value[idx]) == 1) {                   \
-                    nvshmemi_syncapi_update_mem();                                             \
-                    return idx;                                                                \
-                }                                                                              \
-            }                                                                                  \
-        }                                                                                      \
-                                                                                               \
-        return SIZE_MAX;                                                                       \
+#define NVSHMEM_TEST_ANY_VECTOR(Name, Type)                                        \
+    __device__ inline size_t nvshmem_##Name##_test_any_vector(                     \
+        Type *ivars, size_t nelems, const int *status, int cmp, Type *cmp_value) { \
+        unsigned long long start_idx =                                             \
+            atomicAdd(nvshmemi_device_state_d.test_wait_any_start_idx_ptr, 1);     \
+        for (size_t i = 0; i < nelems; i++) {                                      \
+            size_t idx = (i + (size_t)start_idx) % nelems;                         \
+            if (!status || status[idx] == 0) {                                     \
+                if (nvshmemi_test<Type>(&ivars[idx], cmp, cmp_value[idx]) == 1) {  \
+                    nvshmemi_syncapi_update_mem();                                 \
+                    return idx;                                                    \
+                }                                                                  \
+            }                                                                      \
+        }                                                                          \
+                                                                                   \
+        return SIZE_MAX;                                                           \
     }
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_TEST_ANY_VECTOR)
@@ -498,7 +499,8 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_ALL)
         bool wait_set_is_empty = true;                                            \
         size_t idx;                                                               \
         if (nelems == 0) return SIZE_MAX;                                         \
-        unsigned long long start_idx = atomicAdd(&test_wait_any_start_idx_d, 1);  \
+        unsigned long long start_idx =                                            \
+            atomicAdd(nvshmemi_device_state_d.test_wait_any_start_idx_ptr, 1);    \
                                                                                   \
         for (size_t i = 0;; i++) {                                                \
             idx = (i + (size_t)start_idx) % nelems;                               \
@@ -509,8 +511,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_ALL)
                 break;                                                            \
         }                                                                         \
                                                                                   \
-        if (wait_set_is_empty == false)                                           \
-            nvshmemi_syncapi_update_mem();                                        \
+        if (wait_set_is_empty == false) nvshmemi_syncapi_update_mem();            \
                                                                                   \
         return wait_set_is_empty ? SIZE_MAX : idx;                                \
     }
@@ -565,28 +566,27 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_SOME)
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_ALL_VECTOR)
 #undef NVSHMEM_WAIT_UNTIL_ALL_VECTOR
 
-#define NVSHMEM_WAIT_UNTIL_ANY_VECTOR(Name, Type)                                 \
-    __device__ inline size_t nvshmem_##Name##_wait_until_any_vector(                     \
+#define NVSHMEM_WAIT_UNTIL_ANY_VECTOR(Name, Type)                                  \
+    __device__ inline size_t nvshmem_##Name##_wait_until_any_vector(               \
         Type *ivars, size_t nelems, const int *status, int cmp, Type *cmp_value) { \
-        bool wait_set_is_empty = true;                                            \
-        size_t idx;                                                               \
-        if (nelems == 0) return SIZE_MAX;                                         \
-        unsigned long long start_idx = atomicAdd(&test_wait_any_start_idx_d, 1);  \
-                                                                                  \
-        for (size_t i = 0;; i++) {                                                \
-            idx = (i + (size_t)start_idx) % nelems;                               \
-            if (!status || status[idx] == 0) {                                    \
-                wait_set_is_empty = false;                                        \
-                if (nvshmemi_test<Type>(&ivars[idx], cmp, cmp_value[idx])) break; \
-            } else if (i >= nelems && wait_set_is_empty)                          \
-                break;                                                            \
-        }                                                                         \
-                                                                                  \
-        if (wait_set_is_empty == false)                                           \
-            nvshmemi_syncapi_update_mem();                                        \
-                                                                                  \
-                                                                                  \
-        return wait_set_is_empty ? SIZE_MAX : idx;                                \
+        bool wait_set_is_empty = true;                                             \
+        size_t idx;                                                                \
+        if (nelems == 0) return SIZE_MAX;                                          \
+        unsigned long long start_idx =                                             \
+            atomicAdd(nvshmemi_device_state_d.test_wait_any_start_idx_ptr, 1);     \
+                                                                                   \
+        for (size_t i = 0;; i++) {                                                 \
+            idx = (i + (size_t)start_idx) % nelems;                                \
+            if (!status || status[idx] == 0) {                                     \
+                wait_set_is_empty = false;                                         \
+                if (nvshmemi_test<Type>(&ivars[idx], cmp, cmp_value[idx])) break;  \
+            } else if (i >= nelems && wait_set_is_empty)                           \
+                break;                                                             \
+        }                                                                          \
+                                                                                   \
+        if (wait_set_is_empty == false) nvshmemi_syncapi_update_mem();             \
+                                                                                   \
+        return wait_set_is_empty ? SIZE_MAX : idx;                                 \
     }
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_ANY_VECTOR)
@@ -622,7 +622,8 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_SOME_VECTOR)
 
 /* nvshmem_quiet and nvshmem_fence API */
 __device__ inline void nvshmem_quiet() {
-    if (nvshmemi_proxy_d && (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_LDST_ATOMICS)) { 
+    if (nvshmemi_device_state_d.proxy &&
+        (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST_ATOMICS)) {
         nvshmemi_proxy_quiet(true);
     } else {
         __threadfence_system(); /* Use __threadfence_system instead of __threadfence
@@ -631,44 +632,49 @@ __device__ inline void nvshmem_quiet() {
 }
 
 __device__ inline void nvshmem_fence() {
-    if (nvshmemi_proxy_d && (nvshmemi_job_connectivity_d > NVSHMEMI_JOB_GPU_LDST_ATOMICS)
-        && !nvshmemi_proxy_ops_are_ordered_d) { 
+    if (nvshmemi_device_state_d.proxy &&
+        (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST_ATOMICS) &&
+        !nvshmemi_device_state_d.proxy_ops_are_ordered) {
         nvshmemi_proxy_fence();
     }
     __threadfence_system(); /* Use __threadfence_system instead of __threadfence
                                for data visibility in case of intra-node GPU transfers */
 }
 
-#define NVSHMEM_TYPE_ATOMIC_FETCH_ADD(Name, Type)                                                              \
-    __device__ inline Type nvshmem_##Name##_atomic_fetch_add(Type *target, Type value, int pe) {               \
-        void *peer_base_addr =                                                                     \
-            (void *)__ldg((const unsigned long long *)nvshmemi_peer_heap_base_d + pe);              \
-       if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {             \
-            Type *target_actual =                                                                  \
-                (Type *)((char *)peer_base_addr + ((char *)target - (char *)nvshmemi_heap_base_d)); \
-                                                                                                   \
-            return ((Type)atomicAdd(target_actual, value));                                        \
-        } else {                                                                                   \
-	    Type retval;									   \
-            nvshmemi_proxy_amo_fetch<Type>((void *)target, (void *)&retval, (Type)value, 0, pe, NVSHMEMI_AMO_FETCH_ADD);      \
-            return retval;                                                                         \
-        }                                                                                          \
+#define NVSHMEM_TYPE_ATOMIC_FETCH_ADD(Name, Type)                                                \
+    __device__ inline Type nvshmem_##Name##_atomic_fetch_add(Type *target, Type value, int pe) { \
+        void *peer_base_addr = (void *)__ldg(                                                    \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {         \
+            Type *target_actual =                                                                \
+                (Type *)((char *)peer_base_addr +                                                \
+                         ((char *)target - (char *)nvshmemi_device_state_d.heap_base));          \
+                                                                                                 \
+            return ((Type)atomicAdd(target_actual, value));                                      \
+        } else {                                                                                 \
+            Type retval;                                                                         \
+            nvshmemi_proxy_amo_fetch<Type>((void *)target, (void *)&retval, (Type)value, 0, pe,  \
+                                           NVSHMEMI_AMO_FETCH_ADD);                              \
+            return retval;                                                                       \
+        }                                                                                        \
     }
 
-#define NVSHMEM_TYPE_ATOMIC_FETCH_ADD_CAST(Name, Type, subType)                                                \
-    __device__ inline Type nvshmem_##Name##_atomic_fetch_add(Type *target, Type value, int pe) {               \
-        void *peer_base_addr =                                                                     \
-            (void *)__ldg((const unsigned long long *)nvshmemi_peer_heap_base_d + pe);              \
-       if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {             \
-            Type *target_actual =                                                                  \
-                (Type *)((char *)peer_base_addr + ((char *)target - (char *)nvshmemi_heap_base_d)); \
-                                                                                                   \
-            return (Type)atomicAdd((subType *)target_actual, *((subType *)&value));                \
-        } else {                                                                                   \
-            Type retval;									   \
-	    nvshmemi_proxy_amo_fetch<Type>((void *)target, (void *)&retval, (Type)value, 0, pe, NVSHMEMI_AMO_FETCH_ADD);      \
-	    return retval;									   \
-        }                                                                                          \
+#define NVSHMEM_TYPE_ATOMIC_FETCH_ADD_CAST(Name, Type, subType)                                  \
+    __device__ inline Type nvshmem_##Name##_atomic_fetch_add(Type *target, Type value, int pe) { \
+        void *peer_base_addr = (void *)__ldg(                                                    \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {         \
+            Type *target_actual =                                                                \
+                (Type *)((char *)peer_base_addr +                                                \
+                         ((char *)target - (char *)nvshmemi_device_state_d.heap_base));          \
+                                                                                                 \
+            return (Type)atomicAdd((subType *)target_actual, *((subType *)&value));              \
+        } else {                                                                                 \
+            Type retval;                                                                         \
+            nvshmemi_proxy_amo_fetch<Type>((void *)target, (void *)&retval, (Type)value, 0, pe,  \
+                                           NVSHMEMI_AMO_FETCH_ADD);                              \
+            return retval;                                                                       \
+        }                                                                                        \
     }
 
 NVSHMEM_TYPE_ATOMIC_FETCH_ADD(int, int)
@@ -686,17 +692,17 @@ NVSHMEM_TYPE_ATOMIC_FETCH_ADD_CAST(size, size_t, unsigned long long int)
  * int64_t
  */
 #undef NVSHMEM_TYPE_ATOMIC_FETCH_ADD
-#undef NVSHMEM_TYPE_ATOMIC_FETCH_ADD_CAST	
+#undef NVSHMEM_TYPE_ATOMIC_FETCH_ADD_CAST
 
-#define NVSHMEM_TYPE_ATOMIC_ADD_EMULATE(Name, Type)                                 \
-    __device__ inline void nvshmem_##Name##_atomic_add(Type *target, Type value, int pe) { \
-       /*need a better check for case when to use only proxy-based atomics*/          \
-       if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {             \
-            nvshmem_##Name##_atomic_fetch_add(target, value, pe);                      \
-       } else {                                                                       \
-            nvshmemi_proxy_amo_nonfetch<Type>((void *)target, value, pe, NVSHMEMI_AMO_ADD);   \
-       }									      \
-   }
+#define NVSHMEM_TYPE_ATOMIC_ADD_EMULATE(Name, Type)                                         \
+    __device__ inline void nvshmem_##Name##_atomic_add(Type *target, Type value, int pe) {  \
+        /*need a better check for case when to use only proxy-based atomics*/               \
+        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {    \
+            nvshmem_##Name##_atomic_fetch_add(target, value, pe);                           \
+        } else {                                                                            \
+            nvshmemi_proxy_amo_nonfetch<Type>((void *)target, value, pe, NVSHMEMI_AMO_ADD); \
+        }                                                                                   \
+    }
 
 NVSHMEM_TYPE_ATOMIC_ADD_EMULATE(int, int)
 NVSHMEM_TYPE_ATOMIC_ADD_EMULATE(long, long)
@@ -715,36 +721,40 @@ NVSHMEM_TYPE_ATOMIC_ADD_EMULATE(size, size_t)
 
 #undef NVSHMEM_TYPE_ATOMIC_ADD_EMULATE
 
-#define NVSHMEM_TYPE_ATOMIC_FETCH_INC(Name, Type)                                                         \
-    __device__ inline Type nvshmem_##Name##_atomic_fetch_inc(Type *target, int pe) {                           \
-        void *peer_base_addr =                                                                     \
-            (void *)__ldg((const unsigned long long *)nvshmemi_peer_heap_base_d + pe);              \
-        if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {             \
-            Type *target_actual =                                                                  \
-                (Type *)((char *)peer_base_addr + ((char *)target - (char *)nvshmemi_heap_base_d)); \
-                                                                                                   \
-            return atomicInc(target_actual, UINT_MAX);                                             \
-        } else {                                                                                   \
-            Type retval;									   \
-	    nvshmemi_proxy_amo_fetch<Type>((void *)target, (void *)&retval, (Type)1, 0, pe, NVSHMEMI_AMO_FETCH_INC);      \
-	    return retval;									   \
-        }                                                                                          \
+#define NVSHMEM_TYPE_ATOMIC_FETCH_INC(Name, Type)                                           \
+    __device__ inline Type nvshmem_##Name##_atomic_fetch_inc(Type *target, int pe) {        \
+        void *peer_base_addr = (void *)__ldg(                                               \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);       \
+        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {    \
+            Type *target_actual =                                                           \
+                (Type *)((char *)peer_base_addr +                                           \
+                         ((char *)target - (char *)nvshmemi_device_state_d.heap_base));     \
+                                                                                            \
+            return atomicInc(target_actual, UINT_MAX);                                      \
+        } else {                                                                            \
+            Type retval;                                                                    \
+            nvshmemi_proxy_amo_fetch<Type>((void *)target, (void *)&retval, (Type)1, 0, pe, \
+                                           NVSHMEMI_AMO_FETCH_INC);                         \
+            return retval;                                                                  \
+        }                                                                                   \
     }
 
-#define NVSHMEM_TYPE_ATOMIC_FETCH_INC_CAST(Name, Type, subType)                                           \
-    __device__ inline Type nvshmem_##Name##_atomic_fetch_inc(Type *target, int pe) {                           \
-        void *peer_base_addr =                                                                     \
-            (void *)__ldg((const unsigned long long *)nvshmemi_peer_heap_base_d + pe);              \
-        if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {             \
-            Type *target_actual =                                                                  \
-                (Type *)((char *)peer_base_addr + ((char *)target - (char *)nvshmemi_heap_base_d)); \
-                                                                                                   \
-            return (Type)atomicInc((subType *)target_actual, UINT_MAX);                            \
-        } else {                                                                                   \
-            Type retval;									   \
-	    nvshmemi_proxy_amo_fetch<Type>((void *)target, (void *)&retval, (Type)1, 0, pe, NVSHMEMI_AMO_FETCH_INC);      \
-	    return retval;									   \
-        }                                                                                          \
+#define NVSHMEM_TYPE_ATOMIC_FETCH_INC_CAST(Name, Type, subType)                             \
+    __device__ inline Type nvshmem_##Name##_atomic_fetch_inc(Type *target, int pe) {        \
+        void *peer_base_addr = (void *)__ldg(                                               \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);       \
+        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {    \
+            Type *target_actual =                                                           \
+                (Type *)((char *)peer_base_addr +                                           \
+                         ((char *)target - (char *)nvshmemi_device_state_d.heap_base));     \
+                                                                                            \
+            return (Type)atomicInc((subType *)target_actual, UINT_MAX);                     \
+        } else {                                                                            \
+            Type retval;                                                                    \
+            nvshmemi_proxy_amo_fetch<Type>((void *)target, (void *)&retval, (Type)1, 0, pe, \
+                                           NVSHMEMI_AMO_FETCH_INC);                         \
+            return retval;                                                                  \
+        }                                                                                   \
     }
 
 #define NVSHMEM_TYPE_ATOMIC_FETCH_INC_EMULATE(Name, Type)                \
@@ -771,15 +781,15 @@ NVSHMEM_TYPE_ATOMIC_FETCH_INC_EMULATE(size, size_t)
 #undef NVSHMEM_TYPE_ATOMIC_FETCH_INC_CAST
 #undef NVSHMEM_TYPE_ATOMIC_FETCH_INC_EMULATE
 
-#define NVSHMEM_TYPE_ATOMIC_INC_EMULATE(Name, Type)                                                      \
-    __device__ inline void nvshmem_##Name##_atomic_inc(Type *target, int pe) {                           \
-       /*need a better check for case when to use only proxy-based atomcis*/                      \
-       if (nvshmemi_job_connectivity_d <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {             \
-            nvshmem_##Name##_atomic_fetch_inc(target, pe);                                                    \
-       } else {                                                                       \
-            nvshmemi_proxy_amo_nonfetch<Type>((void *)target, (Type)1, pe, NVSHMEMI_AMO_ADD);             \
-       }                                                                                          \
-     }
+#define NVSHMEM_TYPE_ATOMIC_INC_EMULATE(Name, Type)                                           \
+    __device__ inline void nvshmem_##Name##_atomic_inc(Type *target, int pe) {                \
+        /*need a better check for case when to use only proxy-based atomcis*/                 \
+        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {      \
+            nvshmem_##Name##_atomic_fetch_inc(target, pe);                                    \
+        } else {                                                                              \
+            nvshmemi_proxy_amo_nonfetch<Type>((void *)target, (Type)1, pe, NVSHMEMI_AMO_ADD); \
+        }                                                                                     \
+    }
 
 NVSHMEM_TYPE_ATOMIC_INC_EMULATE(int, int)
 NVSHMEM_TYPE_ATOMIC_INC_EMULATE(long, long)
@@ -798,10 +808,11 @@ NVSHMEM_TYPE_ATOMIC_INC_EMULATE(size, size_t)
 #undef NVSHMEM_TYPE_ATOMIC_INC_EMULATE
 
 __device__ inline void *nvshmem_ptr(const void *ptr, int pe) {
-    ptrdiff_t offset = (char *)ptr - (char *)nvshmemi_heap_base_d;
+    ptrdiff_t offset = (char *)ptr - (char *)nvshmemi_device_state_d.heap_base;
 
-    if (ptr >= nvshmemi_heap_base_d && offset < nvshmemi_heap_size_d) {
-        void *peer_addr = (void *)__ldg((const long long unsigned *)nvshmemi_peer_heap_base_d + pe);
+    if (ptr >= nvshmemi_device_state_d.heap_base && offset < nvshmemi_device_state_d.heap_size) {
+        void *peer_addr =
+            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
         if (peer_addr != NULL) peer_addr = (void *)((char *)peer_addr + offset);
         return peer_addr;
     } else

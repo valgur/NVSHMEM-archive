@@ -9,7 +9,7 @@
 #include <dlfcn.h>
 #include "util.h"
 #include "nvshmemx_error.h"
-#include "bootstrap.h"
+#include "nvshmem_bootstrap.h"
 #include "bootstrap_internal.h"
 
 #define GET_SYMBOL(lib_handle, name, var, status)                                              \
@@ -24,11 +24,8 @@
 static void *plugin_hdl;
 static char *plugin_name;
 
-static int (*bootstrap_plugin_init)(bootstrap_handle_t *handle);
-static int (*bootstrap_plugin_finalize)(bootstrap_handle_t *handle);
-
 static int bootstrap_loader_finalize(bootstrap_handle_t *handle) {
-    int status = bootstrap_plugin_finalize(handle);
+    int status = handle->finalize(handle);
 
     if (status != 0)
         ERROR_PRINT("Bootstrap plugin finalize failed for '%s'\n", plugin_name);
@@ -39,7 +36,8 @@ static int bootstrap_loader_finalize(bootstrap_handle_t *handle) {
     return 0;
 }
 
-int bootstrap_loader_init(const char *plugin, bootstrap_handle_t *handle) {
+int bootstrap_loader_init(const char *plugin, void *arg, bootstrap_handle_t *handle) {
+    int (*bootstrap_plugin_init)(void *arg, bootstrap_handle_t *handle);
     int status = 0;
 
     dlerror(); /* Clear any existing error */
@@ -49,11 +47,8 @@ int bootstrap_loader_init(const char *plugin, bootstrap_handle_t *handle) {
 
     dlerror(); /* Clear any existing error */
     GET_SYMBOL(plugin_hdl, "nvshmemi_bootstrap_plugin_init", bootstrap_plugin_init, status);
-    GET_SYMBOL(plugin_hdl, "nvshmemi_bootstrap_plugin_finalize", bootstrap_plugin_finalize, status);
 
-    handle->finalize = bootstrap_loader_finalize;
-
-    status = bootstrap_plugin_init(handle);
+    status = bootstrap_plugin_init(arg, handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "Bootstrap plugin init failed for '%s'\n", plugin);
 
     goto out;

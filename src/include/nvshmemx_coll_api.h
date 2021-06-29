@@ -43,17 +43,17 @@ void nvshmemx_sync_all_on_stream(cudaStream_t stream);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEMX_TYPENAME_BROADCAST_ON_STREAM)
 #undef DECL_NVSHMEMX_TYPENAME_BROADCAST_ON_STREAM
 
-// collect and fcollect collectives
-#define DECL_NVSHMEMX_TYPENAME_COLLECT_ON_STREAM(TYPENAME, TYPE)        \
-    int nvshmemx_##TYPENAME##_collect_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *src, \
+// fcollect collectives
+#define DECL_NVSHMEMX_TYPENAME_FCOLLECT_ON_STREAM(TYPENAME, TYPE)        \
+    int nvshmemx_##TYPENAME##_fcollect_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *src, \
                                                  size_t nelem, cudaStream_t stream);
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEMX_TYPENAME_COLLECT_ON_STREAM)
-#undef DECL_NVSHMEMX_TYPENAME_COLLECT_ON_STREAM
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEMX_TYPENAME_FCOLLECT_ON_STREAM)
+#undef DECL_NVSHMEMX_TYPENAME_FCOLLECT_ON_STREAM
 
 // reduction collectives
 #define NVSHMEMI_DECL_REDUCE_ONSTREAM(NAME, TYPE, OP)                           \
     NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_##NAME##_##OP##_reduce_on_stream(  \
-            nvshmem_team_t team, TYPE *dest, const TYPE *src, int nreduce,      \
+            nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nreduce,  \
             cudaStream_t stream);
 
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE_ONSTREAM, and)
@@ -101,17 +101,17 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_BROADCAST
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_BROADCAST_SCOPE, block)
 #undef DECL_NVSHMEMX_TYPENAME_BROADCAST_SCOPE
 
-// collect and fcollect collectives
-#define DECL_NVSHMEMX_TYPENAME_COLLECT_SCOPE(SCOPE, TYPENAME, TYPE)   \
-    __device__ int nvshmemx_##TYPENAME##_collect_##SCOPE(nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nelem);
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_COLLECT_SCOPE, warp)
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_COLLECT_SCOPE, block)
-#undef DECL_NVSHMEMX_TYPENAME_COLLECT_SCOPE
+// fcollect collectives
+#define DECL_NVSHMEMX_TYPENAME_FCOLLECT_SCOPE(SCOPE, TYPENAME, TYPE)   \
+    __device__ int nvshmemx_##TYPENAME##_fcollect_##SCOPE(nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nelem);
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_FCOLLECT_SCOPE, warp)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_FCOLLECT_SCOPE, block)
+#undef DECL_NVSHMEMX_TYPENAME_FCOLLECT_SCOPE
 
 // reduction collectives
 #define DECL_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP(SCOPE, TYPENAME, TYPE, OP) \
     NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_##TYPENAME##_##OP##_reduce_##SCOPE(       \
-            nvshmem_team_t team, TYPE *dest, const TYPE *src, int nreduce);
+            nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nreduce);
 
 #define DECL_NVSHMEMX_TYPENAME_OP_REDUCE(SC)  \
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, and)    \
