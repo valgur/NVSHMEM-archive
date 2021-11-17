@@ -7,8 +7,6 @@
 #ifndef __TOPO_H
 #define __TOPO_H
 
-enum pci_distance { PATH_PIX = 0, PATH_PXB = 1, PATH_PHB = 2, PATH_NODE = 3, PATH_SYS = 4 };
-
 static int getNumaId(char *path) {
     char npath[PATH_MAX];
     snprintf(npath, PATH_MAX, "%s/numa_node", path);

@@ -24,6 +24,14 @@
 #define PROXY_AMO_REQ_BYTES 40
 #define PROXY_INLINE_REQ_BYTES 24
 #define CHANNEL_ENTRY_BYTES 8
+#define NVSHMEM_PROXY_GLOBAL_MESSAGE_SIZE 1024
+
+enum {
+    PROXY_GLOBAL_EXIT_NOT_REQUESTED = 0,
+    PROXY_GLOBAL_EXIT_INIT,
+    PROXY_GLOBAL_EXIT_REQUESTED,
+    PROXY_GLOBAL_EXIT_FINISHED
+};
 
 enum {
     PROXY_QUIET_STATUS_CHANNELS_INACTIVE = 0,
@@ -56,21 +64,21 @@ static_assert(sizeof(base_request_t) == 8, "request_size must be 8 bytes.");
 
 /* put_dma_request_0
  * 32 | 16 | 8 | 8
- * loffset_high | loffset_low | pe | flag */
+ * laddr_high | laddr_3| laddr_2 | flag */
 typedef struct __attribute__ ((packed)) put_dma_request_0 {
     volatile uint8_t flag;
-    uint8_t resv;
-    uint16_t loffset_low;  // source is local
-    uint32_t loffset_high;
+    uint8_t laddr_2;
+    uint16_t laddr_3;  // source is local
+    uint32_t laddr_high;
 } put_dma_request_0_t;
 static_assert(sizeof(put_dma_request_0) == 8, "request_size must be 8 bytes.");
 
 /* put_dma_request_1
  * 32 | 16 | 8 | 8
- * size_high | size_low | resv | flag */
+ * size_high | size_low | laddr_low | flag */
 typedef struct __attribute__ ((packed)) put_dma_request_1 {
     volatile uint8_t flag;
-    uint8_t resv;
+    uint8_t laddr_low;
     uint16_t size_low;
     uint32_t size_high;
 } put_dma_request_1_t;
@@ -192,8 +200,11 @@ typedef struct proxy_state {
     nvshmemi_timeout_t* nvshmemi_timeout;
     bool is_consistency_api_supported;
     int gdr_device_native_ordering;
+    int *global_exit_request_state;
+    int *global_exit_code;
 } proxy_state_t;
 
+int nvshmemi_proxy_prep_minimal_state(proxy_state_t *state);
 int nvshmemi_proxy_setup_device_channels(proxy_state_t *state);
 
 extern char *proxy_channel_g_buf;

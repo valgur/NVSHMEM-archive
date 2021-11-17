@@ -4,9 +4,12 @@
  * See COPYRIGHT for license information
  */
 
-#ifndef NVSHMEMI_ALLTOALL_CPU_H
-#define NVSHMEMI_ALLTOALL_CPU_H
+#ifndef NVSHMEMI_ALLTOALL_COMMON_CPU_H
+#define NVSHMEMI_ALLTOALL_COMMON_CPU_H
+#include <cuda.h>
+#include <cuda_runtime.h>
 
-#include "alltoall_common.h"
-
-#endif /* NVSHMEMI_ALLTOALL_CPU_H */
+template <typename TYPE>
+void nvshmemi_call_alltoall_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
+                                             size_t nelems, cudaStream_t stream);
+#endif /* NVSHMEMI_ALLTOALL_COMMON_CPU_H */

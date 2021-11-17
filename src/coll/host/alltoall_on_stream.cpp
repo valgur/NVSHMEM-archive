@@ -14,6 +14,7 @@
         nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, cudaStream_t stream) { \
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                            \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                                 \
         nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                         \
         int team_n_pes = nvshmem_team_n_pes(team);                                                 \
         if (nvshmemi_use_nccl && NCCL_DT_##TYPENAME != -1 &&                                       \
@@ -31,10 +32,7 @@
             }                                                                                      \
             NCCL_CHECK(nccl_ftable.GroupEnd());                                                    \
         } else {                                                                                   \
-            nvshmemx_barrier_on_stream(team, stream);                                              \
-            call_##TYPENAME##_alltoall_on_stream_kern(                                             \
-                dest, source, nelems, teami->start, teami->stride, teami->size,                    \
-                nvshmemi_team_get_psync(teami, ALLTOALL), stream);                                 \
+            nvshmemi_call_alltoall_on_stream_kernel<TYPE>(team, dest, source, nelems, stream);     \
         }                                                                                          \
         return 0;                                                                                  \
     }

@@ -32,9 +32,16 @@ int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle)
             break;
         case BOOTSTRAP_SHMEM:
 #ifdef NVSHMEM_SHMEM_SUPPORT
-            status = bootstrap_shmem_init(handle);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                    "bootstrap_shmem_init returned error\n");
+#ifndef NVSHMEM_MPI_SUPPORT
+            const char *plugin_name;
+#endif
+            if (nvshmemi_options.BOOTSTRAP_PLUGIN_provided)
+                plugin_name = nvshmemi_options.BOOTSTRAP_PLUGIN;
+            else
+                plugin_name = BOOTSTRAP_SHMEM_PLUGIN;
+
+            status = bootstrap_loader_init(plugin_name, (attr != NULL) ? &attr->initialize_shmem : NULL, handle);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_loader_init returned error\n");
 #else
             status = 1;
             ERROR_PRINT("OpenSHMEM bootstrap requested but NVSHMEM was not built with OpenSHMEM support\n");
@@ -64,6 +71,13 @@ int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle)
             break;
         case BOOTSTRAP_PLUGIN:
             assert(attr == NULL);
+
+            if (!nvshmemi_options.BOOTSTRAP_PLUGIN_provided) {
+                ERROR_PRINT("Plugin bootstrap requires NVSHMEM_BOOTSTRAP_PLUGIN to be set\n");
+                status = 1;
+                goto out;
+            }
+
             status = bootstrap_loader_init(nvshmemi_options.BOOTSTRAP_PLUGIN, NULL, handle);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_loader_init returned error\n");
             break;

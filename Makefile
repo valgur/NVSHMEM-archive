@@ -90,6 +90,11 @@ CXXFLAGS  += -I$(UCX_HOME)/include -DNVSHMEM_UCX_SUPPORT
 NVCUFLAGS += -I$(UCX_HOME)/include -DNVSHMEM_UCX_SUPPORT
 endif
 
+ifeq ($(NVSHMEM_IBRC_SUPPORT), 1)
+CXXFLAGS  += -DNVSHMEM_IBRC_SUPPORT
+NVCUFLAGS += -DNVSHMEM_IBRC_SUPPORT
+endif
+
 ifeq ($(NVSHMEM_USE_GDRCOPY), 1)
 CXXFLAGS  += -I$(GDRCOPY_HOME)/include -DNVSHMEM_USE_GDRCOPY
 NVCUFLAGS += -I$(GDRCOPY_HOME)/include -DNVSHMEM_USE_GDRCOPY
@@ -109,6 +114,7 @@ ifeq ($(NVSHMEM_DISABLE_COLL_POLL), 1)
 CXXFLAGS  += -DNVSHMEM_DISABLE_COLL_POLL
 NVCUFLAGS += -DNVSHMEM_DISABLE_COLL_POLL
 endif
+
 ifeq ($(NVSHMEM_GPU_COLL_USE_LDST), 1)
 CXXFLAGS  += -DNVSHMEM_GPU_COLL_USE_LDST
 NVCUFLAGS += -DNVSHMEM_GPU_COLL_USE_LDST
@@ -173,61 +179,37 @@ INCEXPORTS := nvshmem.h \
 
 PLUGINEXPORTS := src/bootstrap/bootstrap_pmix.c \
                  src/bootstrap/bootstrap_mpi.c \
-                 src/bootstrap/bootstrap_util.h
+                 src/bootstrap/bootstrap_util.h \
+                 src/bootstrap/bootstrap_shmem.c
 
 LIBSRCFILES := bootstrap/bootstrap.cpp \
                bootstrap/bootstrap_loader.cpp
 
-ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1) 
-LIBSRCFILES += bootstrap/bootstrap_shmem.cpp  
-endif
 ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
 LIBSRCFILES += comm/transports/ucx/ucx.cpp
+endif
+ifeq ($(NVSHMEM_IBRC_SUPPORT), 1)
+LIBSRCFILES += comm/transports/ibrc/ibrc.cpp
 endif
 
 LIBSRCFILES += bootstrap/bootstrap_pmi.cpp \
                coll/device/alltoall.cu \
-               coll/device/kernels/alltoall.cu \
                coll/device/barrier.cu \
-               coll/device/kernels/barrier.cu \
-               coll/device/bcast.cu \
-               coll/device/kernels/bcast.cu \
+               coll/device/broadcast.cu \
                coll/device/fcollect.cu \
-               coll/device/kernels/fcollect.cu \
                coll/device/gpu_coll.cu \
                coll/device/gpu_coll_dev.cu \
                coll/device/recexchalgo.cu \
                coll/device/rdxn.cu \
                coll/device/rdxn_threadgroup.cu \
-               coll/device/kernels/rdxn_threadgroup.cu \
-               coll/host/alltoall.cpp \
-               coll/host/alltoall_on_stream.cpp \
-               coll/host/barrier.cpp \
-               coll/host/barrier_on_stream.cpp \
-               coll/host/broadcast.cpp \
-               coll/host/broadcast_on_stream.cpp \
-               coll/host/fcollect.cpp \
-               coll/host/fcollect_on_stream.cpp \
                coll/host/cpu_coll.cpp \
-               coll/host/rdxn.cpp \
-               coll/host/rdxn_on_stream.cpp \
-               comm/device/amo.cu \
-               comm/device/get.cu \
-               comm/device/get_threadgroup.cu \
                comm/device/proxy_device.cu \
-               comm/device/put.cu \
-               comm/device/put_threadgroup.cu \
                comm/host/putget.cpp \
-               comm/host/amo.cu \
-               comm/host/cuda_interface_sync.cu \
                comm/host/fence.cpp \
                comm/proxy/proxy.cu \
-               comm/host/proxy/rma.cu \
                comm/host/quiet.cpp \
-               comm/host/quiet_on_stream.cu \
                comm/host/sync.cpp \
                comm/transport.cpp \
-               comm/transports/ibrc/ibrc.cpp \
                comm/transports/p2p/p2p.cpp \
                init/init.cpp \
                init/init_device.cu \
@@ -257,9 +239,19 @@ endif
 LIBSRCFILES_NOMAXRREGCOUNT = \
                coll/device/kernels/alltoall.cu \
                coll/device/kernels/barrier.cu \
-               coll/device/kernels/bcast.cu \
+               coll/device/kernels/broadcast.cu \
                coll/device/kernels/fcollect.cu \
-               coll/device/kernels/rdxn_threadgroup.cu \
+               coll/device/kernels/rdxn.cu \
+               coll/host/alltoall.cpp \
+               coll/host/alltoall_on_stream.cpp \
+               coll/host/barrier.cpp \
+               coll/host/barrier_on_stream.cpp \
+               coll/host/broadcast.cpp \
+               coll/host/broadcast_on_stream.cpp \
+               coll/host/fcollect.cpp \
+               coll/host/fcollect_on_stream.cpp \
+               coll/host/rdxn.cpp \
+               coll/host/rdxn_on_stream.cpp \
                comm/host/amo.cu \
                comm/host/cuda_interface_sync.cu \
                comm/host/proxy/rma.cu \
@@ -282,6 +274,7 @@ LIBOBJ     += $(patsubst %.c, $(OBJDIR_NVSHMEM)/%.o, $(filter %.c, $(LIBSRCFILES
 LIBOBJ     += $(patsubst %.cu, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cu, $(LIBSRCFILES)))
 LIBOBJ     += $(OBJDIR_NVSHMEM)/bootstrap/bootstrap_pmi2.o
 LIBOBJ_NOMAXRREGCOUNT = $(patsubst %.cu, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cu, $(LIBSRCFILES_NOMAXRREGCOUNT)))
+LIBOBJ_NOMAXRREGCOUNT += $(patsubst %.cpp, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cpp, $(LIBSRCFILES_NOMAXRREGCOUNT)))
 
 LIBINC     := -Isrc/include -Isrc/util -Isrc/bootstrap -Isrc/comm -Isrc/coll/host -Isrc/coll/device -Isrc/coll -Isrc/topo
 LIBINC     += -Isrc/pmi/pmi-2 -Isrc/pmi/simple-pmi -I$(INCDIR)
@@ -294,6 +287,9 @@ endif
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1) 
 PLUGINS    += $(LIBDIR)/nvshmem_bootstrap_mpi.so
 endif
+ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1) 
+PLUGINS    += $(LIBDIR)/nvshmem_bootstrap_shmem.so
+endif
 
 .PHONY: lib
 lib : $(INCTARGETS) $(LIBDIR)/$(LIBTARGET) $(PLUGINS) $(PLUGINEXPORTTARGETS)
@@ -301,9 +297,9 @@ lib : $(INCTARGETS) $(LIBDIR)/$(LIBTARGET) $(PLUGINS) $(PLUGINEXPORTTARGETS)
 EXTRA_NVCUFLAGS = $(NVCU_MAXRREGCOUNT)
 $(LIBOBJ_NOMAXRREGCOUNT) : EXTRA_NVCUFLAGS =
 
-$(LIBDIR)/$(LIBTARGET) : $(LIBOBJ)
+$(LIBDIR)/$(LIBTARGET) : $(LIBOBJ) $(LIBOBJ_NOMAXRREGCOUNT)
 	@mkdir -p $(LIBDIR)
-	$(NVCC) -lib -o $@ $(LIBOBJ)
+	$(NVCC) -lib -o $@ $(LIBOBJ) $(LIBOBJ_NOMAXRREGCOUNT)
 
 $(PLUGINSDIR)/%: src/bootstrap/%
 	@mkdir -p $(PLUGINSDIR)
@@ -311,11 +307,15 @@ $(PLUGINSDIR)/%: src/bootstrap/%
 
 $(LIBDIR)/nvshmem_bootstrap_pmix.so: src/bootstrap/bootstrap_pmix.c $(BUILT_HEADERS)
 	@mkdir -p $(LIBDIR)
-	$(CC) -shared -fpic -Isrc/include -I$(PMIX_HOME)/include $< -L$(PMIX_HOME)/lib -lpmix -o $@
+	$(CC) $(CFLAGS) -shared -fpic -Isrc/include -I$(PMIX_HOME)/include $< -L$(PMIX_HOME)/lib -lpmix -o $@
 
 $(LIBDIR)/nvshmem_bootstrap_mpi.so: src/bootstrap/bootstrap_mpi.c
 	@mkdir -p $(LIBDIR)
-	$(MPICC) -shared -fpic -Isrc/include -Isrc/bootstrap $< -o $@
+	$(MPICC) $(CFLAGS) -shared -fpic -Isrc/include -Isrc/bootstrap $< -o $@
+
+$(LIBDIR)/nvshmem_bootstrap_shmem.so: src/bootstrap/bootstrap_shmem.c
+	@mkdir -p $(LIBDIR)
+	$(OSHCC) $(CFLAGS) -shared -fpic -Isrc/include -Isrc/bootstrap $< -o $@
 
 $(INCDIR)/%.h : src/include/%.h
 	@mkdir -p $(INCDIR)
@@ -365,6 +365,7 @@ purge: clean uninstall
 install : lib
 	mkdir -p $(NVSHMEM_PREFIX)/lib
 	mkdir -p $(NVSHMEM_PREFIX)/include
+	mkdir -p $(NVSHMEM_PREFIX)/share
 	cp -v $(NVSHMEM_BUILDDIR)/lib/* $(NVSHMEM_PREFIX)/lib/
-	cp -P -v $(NVSHMEM_BUILDDIR)/include/nvshmem* $(NVSHMEM_PREFIX)/include
 	cp -P -v $(NVSHMEM_BUILDDIR)/include/* $(NVSHMEM_PREFIX)/include/
+	cp -P -R -v $(NVSHMEM_BUILDDIR)/share/* $(NVSHMEM_PREFIX)/share/

@@ -75,12 +75,15 @@ typedef struct {
 typedef struct {
     char        rkey_packed_buf[NVSHMEMT_UCP_RKEY_PACKED_MAX_LEN];
     ucp_mem_h   mem_handle;
+    ucp_rkey_h  ep_rkey_host;
+    ucp_rkey_h  ep_rkey_proxy;
     size_t      rkey_packed_buf_len;
 } nvshmemt_ucx_mem_handle_t;
 
 typedef struct {
     void        *ptr;
     size_t      size;
+    ucp_mem_h   mem_handle;
 #ifdef NVSHMEM_USE_GDRCOPY
     gdr_mh_t    mh;
     void        *cpu_ptr;
@@ -99,9 +102,9 @@ typedef struct {
     bool        amo_has_retval;
 } nvshmemt_ucx_bounce_buffer_t;
 
-typedef struct {
+typedef struct transport_ucx_state_t {
     ucp_config_t                    *library_config;
-    nvshmemt_ucx_mem_handle_info_t  mem_handle_info;
+    vector<nvshmemt_ucx_mem_handle_info_t>  mem_handle_info_cache;
     ucp_context_h                   library_context;
     ucp_worker_h                    worker_context;
     ucp_ep_h                        *endpoints;
@@ -114,6 +117,9 @@ typedef struct {
     nvshmemt_ucx_am_header_t        send_headers[NVSHMEMT_UCX_ATOMIC_POOL_SIZE];
     nvshmemt_ucx_am_header_t        recv_headers[NVSHMEMT_UCX_ATOMIC_POOL_SIZE];
     nvshmemt_ucx_bounce_buffer_t    bounce_buffers[NVSHMEMT_UCX_BOUNCE_BUFFER_POOL_SIZE];
+
+    transport_ucx_state_t():
+        mem_handle_info_cache(){}
 } transport_ucx_state_t;
 
 struct ibv_device **(*get_device_list)(int *num_devices);

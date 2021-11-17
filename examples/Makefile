@@ -26,11 +26,14 @@ EXAMPLECUSRCFILES := \
     thread-group.cu             \
     put-block.cu                \
     dev-guide-ring.cu           \
-    prefix-sum-ring.cu          \
     ring-bcast.cu
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
 EXAMPLECUSRCFILES += mpi-based-init.cu dev-guide-ring-mpi.cu
+endif
+
+ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1)
+EXAMPLECUSRCFILES += shmem-based-init.cu
 endif
 
 CUPERFBIN   := $(patsubst %.cu, $(NVSHMEM_EXAMPLES_BUILDDIR)/%, $(filter %.cu, $(EXAMPLECUSRCFILES)))

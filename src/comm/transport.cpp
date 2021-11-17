@@ -21,9 +21,11 @@ int nvshmemi_transport_show_info(nvshmemi_state_t *state) {
     int status = 0;
     nvshmem_transport_t *transports = (nvshmem_transport_t *)state->transports;
     for (int i = 0; i < NVSHMEM_TRANSPORT_COUNT; ++i) {
-        status = transports[i]->host_ops.show_info(state->handles, i, NVSHMEM_TRANSPORT_COUNT,
-                                                   state->npes, state->mype);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport show info failed \n");
+        for (size_t j = 0; j < state->handles.size(); j++) {
+            status = transports[i]->host_ops.show_info(
+                state->handles[j].data(), i, NVSHMEM_TRANSPORT_COUNT, state->npes, state->mype);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport show info failed \n");
+        }
     }
 out:
     return status;
@@ -35,7 +37,9 @@ void nvshmemi_add_transport(int id, int (*init_op)(nvshmem_transport_t *)) {
 
 void nvshmemi_transports_preinit() {
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_P2P, nvshmemt_p2p_init);
+    #ifdef NVSHMEM_IBRC_SUPPORT
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_IBRC, nvshmemt_ibrc_init);
+    #endif
     #ifdef NVSHMEM_UCX_SUPPORT
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_UCX, nvshmemt_ucx_init);
     #endif
@@ -74,6 +78,7 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
 }
 
 int nvshmemi_transport_finalize(nvshmemi_state_t *state) {
+    INFO(NVSHMEM_INIT, "In nvshmemi_transport_finalize");
     int status = 0;
     nvshmem_transport_t *transports = NULL;
     ;

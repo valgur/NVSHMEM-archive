@@ -180,6 +180,16 @@ out:
     return status;
 }
 
+static void bootstrap_pmix_global_exit(int status) {
+    pmix_status_t rc = PMIX_SUCCESS;
+
+    rc = PMIx_Abort(status, "NVSHMEM Global Exit.\n", NULL, 0);
+    if (rc != PMIX_SUCCESS) {
+        BOOTSTRAP_ERROR_PRINT("PMIx_Abort failed. Manually exiting this process.\n");
+        exit(1);
+    }
+}
+
 
 static int bootstrap_pmix_finalize(bootstrap_handle_t *handle) {
     pmix_status_t status;
@@ -212,12 +222,13 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle) {
     BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
             "PMIx_Get(PMIX_JOB_SIZE) failed\n");
 
-    handle->pg_rank   = myproc.rank;
-    handle->pg_size   = val->data.uint32;
-    handle->allgather = bootstrap_pmix_allgather;
-    handle->alltoall  = bootstrap_pmix_alltoall;
-    handle->barrier   = bootstrap_pmix_barrier;
-    handle->finalize  = bootstrap_pmix_finalize;
+    handle->pg_rank     = myproc.rank;
+    handle->pg_size     = val->data.uint32;
+    handle->allgather   = bootstrap_pmix_allgather;
+    handle->alltoall    = bootstrap_pmix_alltoall;
+    handle->barrier     = bootstrap_pmix_barrier;
+    handle->global_exit = bootstrap_pmix_global_exit;
+    handle->finalize    = bootstrap_pmix_finalize;
 
     PMIX_VALUE_RELEASE(val);
 

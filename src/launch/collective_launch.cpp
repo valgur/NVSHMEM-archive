@@ -53,6 +53,7 @@ out:
 }
 
 int nvshmemi_teardown_collective_launch(nvshmemi_state_t *state) {
+    INFO(NVSHMEM_INIT, "In nvshmemi_teardown_collective_launch");
     int status = 0;
 
     if (!state->initialized) goto out;
@@ -96,6 +97,7 @@ int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
                                size_t sharedMem, cudaStream_t stream) {
     NVTX_FUNC_RANGE_IN_GROUP(LAUNCH);
     NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();
 
     int multiProcessorCount;
     int blockSize = blockDims.x * blockDims.y * blockDims.z;

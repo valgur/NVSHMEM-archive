@@ -13,6 +13,7 @@
 #include "util.h"
 #include "nvshmem_bootstrap.h"
 #include "bootstrap_internal.h"
+#include "bootstrap_util.h"
 
 #ifdef NVSHMEM_BUILD_PMI2
 
@@ -82,6 +83,8 @@ static inline int WRAP_PMI_KVS_Get(const char kvsname[], const char key[],
         return status;
 }
 
+#define WRAP_PMI_Abort PMI2_Abort
+
 
 #else /* !NVSHMEM_BUILD_PMI2 */
 
@@ -103,6 +106,7 @@ static inline int WRAP_PMI_KVS_Get(const char kvsname[], const char key[],
 
 #define WRAP_PMI_KVS_Get                  SPMI_KVS_Get
 #define WRAP_PMI_KVS_Put                  SPMI_KVS_Put
+#define WRAP_PMI_Abort                    SPMI_Abort
 
 #endif /* NVSHMEM_BUILD_PMI2 */
 
@@ -311,6 +315,25 @@ out:
     return status;
 }
 
+static void bootstrap_pmi_global_exit(int status) {
+#ifdef NVSHMEM_BUILD_PMI2
+    if (status == 0) {
+        BOOTSTRAP_ERROR_PRINT("PMI2 does not support global exit with 0 status. Exiting with ECANCELED.\n");
+        WRAP_PMI_Abort(ECANCELED, "NVSHMEM Global Exit.\n");
+    } else {
+#endif
+    WRAP_PMI_Abort(status, "NVSHMEM Global Exit.\n");
+#ifdef NVSHMEM_BUILD_PMI2
+    }
+    BOOTSTRAP_ERROR_PRINT("PMI2_Abort failed. Manually exiting this process.\n");
+#else
+    BOOTSTRAP_ERROR_PRINT("PMI_Abort failed. Manually exiting this process.\n");
+#endif
+
+    /* Both the PMI and PMI2 versions of abort only return if the abort was unsuccessful. */
+    exit(1);
+}
+
 static int bootstrap_pmi_finalize(bootstrap_handle_t *handle) {
     int status = 0;
 
@@ -343,6 +366,7 @@ int bootstrap_pmi_init(bootstrap_handle_t *handle) {
         pmi_info.singleton = 1;
         handle->allgather = bootstrap_pmi_allgather;
         handle->alltoall = bootstrap_pmi_alltoall;
+        handle->global_exit = bootstrap_pmi_global_exit;
         handle->barrier = bootstrap_pmi_barrier;
     } else {
 #endif
@@ -356,6 +380,7 @@ int bootstrap_pmi_init(bootstrap_handle_t *handle) {
         handle->pg_size = size;
         handle->allgather = bootstrap_pmi_allgather;
         handle->alltoall = bootstrap_pmi_alltoall;
+        handle->global_exit = bootstrap_pmi_global_exit;
         handle->barrier = bootstrap_pmi_barrier;
 
         status = WRAP_PMI_KVS_Get_name_length_max(&name_length);

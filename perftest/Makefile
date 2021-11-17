@@ -30,7 +30,8 @@ NVSHMEM_PERFTEST_INSTALL ?= $(mkfile_dir)/perftest_install
 default : perftest
 
 PERFCUHELPERFILES := common/utils.cu
-PERFCUSRCFILES := device/coll/alltoall_latency.cu \
+PERFCUSRCFILES := device/coll/alltoall_bw.cu \
+                  device/coll/alltoall_latency.cu \
                   device/coll/barrier_latency.cu \
                   device/coll/bcast_latency.cu \
                   device/coll/fcollect_latency.cu \
@@ -71,7 +72,8 @@ PERFCXXSRCFILES := host/coll/alltoall.cpp \
                    host/coll/sync_all_on_stream.cpp \
                    host/coll/sync_on_stream.cpp \
                    host/pt-to-pt/bw.cpp \
-                   host/pt-to-pt/latency.cpp
+                   host/pt-to-pt/latency.cpp \
+                   host/init/malloc.cpp
 
 LIBDIR := $(NVSHMEM_HOME)/lib
 
@@ -110,6 +112,12 @@ $(NVSHMEM_PERFTEST_BUILDDIR)/host/pt-to-pt/% : host/pt-to-pt/%.cpp $(CUPERFHELPE
 	@rm $@.o
 
 $(NVSHMEM_PERFTEST_BUILDDIR)/host/pt-to-pt/% : host/pt-to-pt/%.cu $(CUPERFHELPEROBJ)
+	@mkdir -p `dirname $@`
+	$(NVCC) $(TESTCUFLAGS) $(TESTINC) $< -c -o $@.o
+	$(NVCC) $(NVCC_GENCODE) $@.o $(CUPERFHELPEROBJ) -o $@ $(TESTLDFLAGS)
+	@rm $@.o
+
+$(NVSHMEM_PERFTEST_BUILDDIR)/host/init/% : host/init/%.cpp $(CUPERFHELPEROBJ)
 	@mkdir -p `dirname $@`
 	$(NVCC) $(TESTCUFLAGS) $(TESTINC) $< -c -o $@.o
 	$(NVCC) $(NVCC_GENCODE) $@.o $(CUPERFHELPEROBJ) -o $@ $(TESTLDFLAGS)

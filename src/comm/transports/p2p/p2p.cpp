@@ -87,7 +87,7 @@ out:
 
 int nvshmemt_p2p_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
                                 nvshmem_mem_handle_t *mem_handle_in, void *buf, size_t length,
-                                nvshmem_transport_t transport) {
+                                nvshmem_transport_t transport, bool local_only) {
     int status = 0;
 #if CUDART_VERSION >= 11030
     if (nvshmemi_use_cuda_vmm) {

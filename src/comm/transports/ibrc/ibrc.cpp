@@ -198,11 +198,40 @@ int check_poll_avail(struct ibrc_ep *ep, int wait_predicate);
 int progress_send(transport_ibrc_state_t *ibrc_state);
 int poll_recv(transport_ibrc_state_t *ibrc_state);
 
-ibrc_mem_handle_info_t get_mem_handle_info(void *gpu_ptr) {
-    assert(!mem_handle_cache.empty());
+#define DIVUP(x, y) \
+    (((x)+(y)-1)/(y))
 
-    // assuming there is only one region (shmem heap) that is registered with IB
-    ibrc_mem_handle_info_t mem_handle_info = mem_handle_cache.back();
+#define ROUNDUP(x, y) \
+    (DIVUP((x), (y))*(y))
+
+// Allocate memory to be potentially ibv_reg_mr'd. This needs to be
+// // allocated on separate pages as those pages will be marked DONTFORK
+// // and if they are shared, that could cause a crash in a child process
+static int nvshmemi_ib_malloc_debug(void** ptr, size_t size, const char *filefunc, int line) {
+  size_t page_size = sysconf(_SC_PAGESIZE);
+  void* p;
+  int size_aligned = ROUNDUP(size, page_size);
+  int ret = posix_memalign(&p, page_size, size_aligned);
+  if (ret != 0) return -1;
+  memset(p, 0, size);
+  *ptr = p;
+  INFO(NVSHMEM_INIT, "%s:%d Ib Alloc Size %ld pointer %p", filefunc, line, size, *ptr);
+  return 0;
+}
+#define nvshmemi_ib_malloc(...) nvshmemi_ib_malloc_debug(__VA_ARGS__, __FILE__, __LINE__)
+
+ibrc_mem_handle_info_t get_mem_handle_info(void *gpu_ptr) {
+    /* assumes that gpu_ptr is in symmetric heap */
+    assert(!mem_handle_cache.empty());
+    ibrc_mem_handle_info_t mem_handle_info;
+    if (nvshmemi_use_cuda_vmm) {
+        size_t offset = (char *) gpu_ptr - (char *) nvshmemi_state->heap_base; 
+        size_t addr_idx = offset >> log2_cumem_granularity;
+        size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
+        mem_handle_info = mem_handle_cache[handle_idx];
+    } else {
+        mem_handle_info = mem_handle_cache.back();
+    }
 
     return mem_handle_info;
 }
@@ -550,7 +579,7 @@ out:
 }
 int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
                                  nvshmem_mem_handle_t *mem_handle_in, void *buf, size_t length,
-                                 nvshmem_transport_t t) {
+                                 nvshmem_transport_t t, bool local_only) {
     int status = 0;
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)transport->state;
@@ -577,7 +606,7 @@ int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     INFO(NVSHMEM_TRANSPORT, "ibv_reg_mr handle %p handle->mr %p", handle, handle->mr);
 
 #ifdef NVSHMEM_USE_GDRCOPY
-    if (use_gdrcopy) {
+    if (use_gdrcopy && !local_only) {
         status =
             gdrcopy_ftable.pin_buffer(gdr_desc, (unsigned long)buf, length, 0, 0, &handle_info.mh);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdrcopy pin_buffer failed \n");
@@ -603,14 +632,22 @@ int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     }
 #endif
 
-    mem_handle_cache.push_back(handle_info);
+    /* The memory handle cache is only used with GDRCopy.
+     * Local memory is never used with GDRCopy so it doesn't need
+     * to go into the cache.
+     * This optimization allows us to greatly simplify the lookup of
+     * mem handle info when using the dynamic heap.
+     */
+    if (!local_only) {
+        mem_handle_cache.push_back(handle_info);
+    }
 
     if (!dummy_local_mem) {
         dummy_local_mem = (ibrc_mem_handle_info_t *)malloc(sizeof(ibrc_mem_handle_info_t));
         NULL_ERROR_JMP(dummy_local_mem, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                        "dummy_local_mem allocation failed\n");
 
-        dummy_local_mem->ptr = malloc(sizeof(uint64_t));
+        nvshmemi_ib_malloc(&dummy_local_mem->ptr, sizeof(uint64_t));
         NULL_ERROR_JMP(dummy_local_mem->ptr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                        "dummy_mem allocation failed\n");
 
@@ -631,7 +668,22 @@ int nvshmemt_ibrc_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_t
     INFO(NVSHMEM_TRANSPORT, "ibv_dereg_mr handle %p handle->mr %p", handle, handle->mr);
     status = ftable.dereg_mr((struct ibv_mr *)handle->mr);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_dereg_mr failed \n");
+    for (std::vector<ibrc_mem_handle_info_t>::iterator it = mem_handle_cache.begin(); it != mem_handle_cache.end(); it++) {
+       if (handle->mr == it->mr) {
+#ifdef NVSHMEM_USE_GDRCOPY
+            if (use_gdrcopy) {
+                status = gdrcopy_ftable.unmap(gdr_desc, it->mh, it->cpu_ptr_base,
+                                              it->size);
+                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unmap failed\n");
 
+                status = gdrcopy_ftable.unpin_buffer(gdr_desc, it->mh);
+                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
+               }
+#endif
+               mem_handle_cache.erase(it);
+               break;
+       }
+    }
 out:
     return status;
 }
@@ -650,13 +702,17 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
 
             status = gdrcopy_ftable.unpin_buffer(gdr_desc, handle_info.mh);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
-
-            status = gdrcopy_ftable.close(gdr_desc);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_close failed\n");
         }
 #endif
         mem_handle_cache.pop_back();
     }
+
+#ifdef NVSHMEM_USE_GDRCOPY
+        if (use_gdrcopy) {
+            status = gdrcopy_ftable.close(gdr_desc);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_close failed\n");
+        }
+#endif
 
     // clear qp map
     qp_map.clear();
@@ -665,8 +721,10 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
         status = ftable.dereg_mr(dummy_local_mem->mr);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_dereg_mr failed \n");
         free(dummy_local_mem);
+        dummy_local_mem = NULL;
     }
 
+    ibrc_cst_ep = NULL;
 #ifdef NVSHMEM_USE_GDRCOPY
     if (use_gdrcopy && gdrcopy_handle) {
         status = dlclose(gdrcopy_handle);
@@ -679,6 +737,7 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
 
         free(bpool);
     }
+    bqueue_toprocess.clear();
 
     status = dlclose(ibv_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "dlclose() failed\n");
@@ -689,6 +748,15 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
     status = pthread_mutex_destroy(&ibrc_mutex_recv_progress);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_destroy failed\n");
 
+#ifdef NVSHMEM_USE_GDRCOPY
+    gdrcopy_handle = NULL;
+    atomics_received = 0;
+    atomics_processed = 0;
+    atomics_issued = 0;
+    atomics_completed = 0;
+    atomics_acked = 0;
+#endif
+    connected_qp_count = 0;
 out:
     return status;
 }
@@ -908,7 +976,7 @@ int process_recv(transport_ibrc_state_t *ibrc_state) {
                 break;
             default:
                 ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                          "invalid element size encountered \n");
+                          "invalid element size encountered %u\n", op->elembytes);
         }
         atomics_processed++;
         TRACE(NVSHMEM_TRANSPORT, "[%d] atomic dequeued and processed : %llu \n", getpid(),
@@ -1064,10 +1132,14 @@ int nvshmemt_ibrc_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, 
     sr->sg_list = sge;
 
     sr->wr.rdma.remote_addr = (uint64_t)remote->ptr;
-    sr->wr.rdma.rkey = ((struct ibrc_mem_handle *)&remote->handle)->rkey;
+    assert(remote->handle);
+    sr->wr.rdma.rkey = ((struct ibrc_mem_handle *)remote->handle)->rkey;
     sge->length = bytesdesc.nelems * bytesdesc.elembytes;
     sge->addr = (uintptr_t)local->ptr;
-    sge->lkey = ((struct ibrc_mem_handle *)&local->handle)->lkey;
+    /* local->handle is unset for p operations since they are sent by value. */
+    if (likely(local->handle != NULL)) {
+        sge->lkey = ((struct ibrc_mem_handle *)local->handle)->lkey;
+    }
     if (verb.desc == NVSHMEMI_OP_P) {
         sr->opcode = IBV_WR_RDMA_WRITE;
         sr->send_flags |= IBV_SEND_INLINE;
@@ -1140,7 +1212,8 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
                 sr->send_flags = IBV_SEND_SIGNALED;
 
                 sr->wr.atomic.remote_addr = (uint64_t)remote->ptr;
-                sr->wr.atomic.rkey = ((struct ibrc_mem_handle *)&remote->handle)->rkey;
+                assert(remote->handle);
+                sr->wr.atomic.rkey = ((struct ibrc_mem_handle *)remote->handle)->rkey;
                 sr->wr.atomic.compare_add = remote->val;
 
                 sge->length = bytesdesc.elembytes;
@@ -1168,8 +1241,10 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
 
         // send rkey info
         assert(!mem_handle_cache.empty());
-        mem_handle_info = mem_handle_cache.back();
-        op.retrkey = mem_handle_info.mr->rkey;
+        if (verb.desc > NVSHMEMI_AMO_END_OF_NONFETCH) {
+            mem_handle_info = get_mem_handle_info(remote->retptr);
+            op.retrkey = mem_handle_info.mr->rkey;
+        }
 
         sr->opcode = IBV_WR_SEND;
         sr->send_flags = IBV_SEND_SIGNALED | IBV_SEND_INLINE;
@@ -1191,7 +1266,8 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
                 sr->send_flags = IBV_SEND_SIGNALED;
 
                 sr->wr.atomic.remote_addr = (uint64_t)remote->ptr;
-                sr->wr.atomic.rkey = ((struct ibrc_mem_handle *)&remote->handle)->rkey;
+                assert(remote->handle);
+                sr->wr.atomic.rkey = ((struct ibrc_mem_handle *)remote->handle)->rkey;
                 sr->wr.atomic.compare_add = remote->val;
 
                 sge->length = bytesdesc.elembytes;
@@ -1205,7 +1281,8 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
             sr->send_flags |= IBV_SEND_INLINE;
 
             sr->wr.rdma.remote_addr = (uint64_t)remote->ptr;
-            sr->wr.rdma.rkey = ((struct ibrc_mem_handle *)&remote->handle)->rkey;
+            assert(remote->handle);
+            sr->wr.rdma.rkey = ((struct ibrc_mem_handle *)remote->handle)->rkey;
 
             sge->length = bytesdesc.elembytes;
             sge->addr = (uintptr_t)&remote->val;
@@ -1444,6 +1521,7 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     int hca_list_count = 0, pe_hca_map_count = 0, user_selection = 0;
     int transport_skipped;
     int offset = 0;
+    connected_qp_count = 0;
 
     transport_skipped = strncasecmp(nvshmemi_options.REMOTE_TRANSPORT,
                                         IB_TRANSPORT_STRING,
@@ -1463,6 +1541,7 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
         goto out;
     }
 
+    LOAD_SYM(ibv_handle, "ibv_fork_init", ftable.fork_init);
     LOAD_SYM(ibv_handle, "ibv_get_device_list", ftable.get_device_list);
     LOAD_SYM(ibv_handle, "ibv_get_device_name", ftable.get_device_name);
     LOAD_SYM(ibv_handle, "ibv_open_device", ftable.open_device);
@@ -1484,6 +1563,7 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     ibrc_srq_depth = nvshmemi_options.SRQ_DEPTH;
     ibrc_qp_depth = nvshmemi_options.QP_DEPTH;
 
+    ftable.fork_init();
 #ifdef NVSHMEM_USE_GDRCOPY
     use_gdrcopy = 1;
     if (nvshmemi_options.DISABLE_GDRCOPY) {
@@ -1701,7 +1781,7 @@ skip_gdrcopy_dlsym:
 
     // allocate buffer pool
     bpool_size = ibrc_srq_depth;
-    bpool = (ibrc_buf_t *)calloc(bpool_size, sizeof(ibrc_buf_t));
+    nvshmemi_ib_malloc((void **)&bpool, bpool_size * sizeof(ibrc_buf_t));
     NULL_ERROR_JMP(bpool, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                    "buf poll allocation failed \n");
     for (int i = 0; i < bpool_size; i++) {

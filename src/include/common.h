@@ -9,22 +9,26 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <string>
 #include "nvshmemi_constants.h"
 
-#define CHECK_RMA_PRESENT 1
-#define CHECK_RMA_AMO_PRESENT 1
-
 #define NVSHMEM_MEM_HANDLE_SIZE 512
-#define NVSHMEM_EP_HANDLE_SIZE 128
-
-#define MAX_P2P_ACCESSIBLE_GPUS 128
 
 typedef struct nvshmem_mem_handle {
     char reserved[NVSHMEM_MEM_HANDLE_SIZE];
+    nvshmem_mem_handle() { memset((void *)reserved, 0, NVSHMEM_MEM_HANDLE_SIZE); }
 } nvshmem_mem_handle_t;
+
+typedef struct nvshmem_local_buf_handle {
+    void *ptr;
+    size_t length;
+    nvshmem_mem_handle_t *handle;
+    bool registered_by_us;
+} nvshmem_local_buf_handle_t;
 
 enum {
     NO_NBI = 0,
@@ -72,7 +76,7 @@ typedef struct rma_verb {
 
 typedef struct rma_memdesc {
     void *ptr;
-    nvshmem_mem_handle_t handle;
+    nvshmem_mem_handle_t *handle;
 } rma_memdesc_t;
 
 typedef struct rma_bytesdesc {
@@ -115,7 +119,7 @@ typedef struct amo_memdesc {
     void *cmpptr;
     uint64_t val;
     uint64_t cmp;
-    nvshmem_mem_handle_t handle;
+    nvshmem_mem_handle_t *handle;
 } amo_memdesc_t;
 
 typedef struct amo_bytesdesc {

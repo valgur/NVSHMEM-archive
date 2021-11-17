@@ -7,7 +7,16 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/types.h>
 #include <sched.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>      
 
 #include "nvshmem.h"
 #include "nvshmemx.h"
@@ -34,7 +43,9 @@ const char *p_err_str;
 int nvshmem_debug_level;
 uint64_t nvshmem_debug_mask = NVSHMEM_INIT;  // Default debug sub-system mask is INIT
 pthread_mutex_t nvshmem_debug_output_lock;
+bool nvshmemi_is_limited_mpg_run = 0;
 FILE *nvshmem_debug_file = stdout;
+static char shm_name[100];
 
 #ifdef ENABLE_TRACE
 std::chrono::high_resolution_clock::time_point nvshmem_epoch;
@@ -69,22 +80,19 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr, nvshmemi_s
         boot_attr.mpi_comm = nvshmem_attr->mpi_comm;
         status = bootstrap_init(BOOTSTRAP_MPI, &boot_attr, &state->boot_handle);
     } else if (flags & NVSHMEMX_INIT_WITH_SHMEM) {
-        status = bootstrap_init(BOOTSTRAP_SHMEM, NULL, &state->boot_handle);
+        bootstrap_attr_t boot_attr;
+        boot_attr.initialize_shmem = 0;
+        status = bootstrap_init(BOOTSTRAP_SHMEM, &boot_attr, &state->boot_handle);
     } else {
         /* User called nvshmem_init or supplied no flags to nvshmemx_init_attr */
         if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "PMI") == 0) {
             status = bootstrap_init(BOOTSTRAP_PMI, NULL, &state->boot_handle);
         } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "MPI") == 0) {
-            if (!nvshmemi_options.BOOTSTRAP_PLUGIN_provided)
-                nvshmemi_options.BOOTSTRAP_PLUGIN = BOOTSTRAP_MPI_PLUGIN;
             status = bootstrap_init(BOOTSTRAP_MPI, NULL, &state->boot_handle);
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "SHMEM") == 0) {
+            status = bootstrap_init(BOOTSTRAP_SHMEM, NULL, &state->boot_handle);
         } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "plugin") == 0) {
-            if (!nvshmemi_options.BOOTSTRAP_PLUGIN_provided) {
-                ERROR_PRINT("Plugin bootstrap requires NVSHMEM_BOOTSTRAP_PLUGIN to be set\n");
-                status = 1;
-            } else {
-                status = bootstrap_init(BOOTSTRAP_PLUGIN, NULL, &state->boot_handle);
-            }
+            status = bootstrap_init(BOOTSTRAP_PLUGIN, NULL, &state->boot_handle);
         } else {
             ERROR_PRINT("Invalid bootstrap '%s'\n", nvshmemi_options.BOOTSTRAP);
             status = 1;
@@ -187,7 +195,7 @@ int nvshmemi_get_cucontext(nvshmemi_state_t *state) {
                      "cudaStreamCreateWithPriority failed \n");
         INFO(NVSHMEM_INIT,
              "[%d] nvshmemi_get_cucontext->cuCtxGetDevice->%d(CUDA_ERROR_INVALID_CONTEXT %d) "
-             "cuStreamCreateWithPriority my_stream %llu",
+             "cuStreamCreateWithPriority my_stream %p",
              state->mype, cres, CUDA_ERROR_INVALID_CONTEXT, state->my_stream);
     }
 out:
@@ -220,6 +228,7 @@ int nvshmemi_setup_memory_ordering(nvshmemi_state_t *state, int selected_transpo
 }
 
 int nvshmemi_teardown_handles(nvshmemi_state_t *state) {
+    INFO(NVSHMEM_INIT, "In nvshmemi_teardown_handles");
     int status = 0;
     free(state->rma);
     free(state->selected_transport_for_rma);
@@ -234,18 +243,39 @@ int nvshmemi_teardown_handles(nvshmemi_state_t *state) {
         status = cuEventDestroy(state->cuevents[i]);
         NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cuEventDestroy failed \n");
     }
+    nvshmemx_buffer_unregister_all();
+    free(state->registered_buffers);
+    if (pthread_rwlock_destroy(&state->registered_buffer_lock)) {
+        ERROR_PRINT("Unable to destroy registered buffer lock.\n");
+        status = NVSHMEMX_ERROR_INTERNAL;
+    }
 out:
     return status;
 }
 
 static int nvshmemi_setup_nvshmem_handles(nvshmemi_state_t *state) {
     int status = 0;
+    int dev_attr = 0;
+    /* TODO: We should really check all of these allocations. */
     state->rma = (rma_handle *)calloc(state->npes, sizeof(rma_handle));
     state->amo = (amo_handle *)calloc(state->npes, sizeof(amo_handle));
     state->fence = (fence_handle *)calloc(NVSHMEM_TRANSPORT_COUNT, sizeof(fence_handle));
     state->quiet = (quiet_handle *)calloc(NVSHMEM_TRANSPORT_COUNT, sizeof(quiet_handle));
     state->selected_transport_for_rma = (int *)calloc(state->npes, sizeof(int));
     state->selected_transport_for_amo = (int *)calloc(state->npes, sizeof(int));
+    state->registered_buffers = (nvshmem_local_buf_handle_t **)calloc(64, sizeof(nvshmem_local_buf_handle_t *));
+    state->registered_buffer_array_size = 64;
+    state->registered_buffer_array_used = 0;
+    CUDA_RUNTIME_CHECK(cudaDeviceGetAttribute(&dev_attr,
+                                              cudaDevAttrCanUseHostPointerForRegisteredMem,
+                                              state->device_id));
+    state->host_memory_registration_supported = dev_attr & cudaDevAttrCanUseHostPointerForRegisteredMem;
+
+    status = pthread_rwlock_init(&state->registered_buffer_lock, NULL);
+    if (status) {
+        return status;
+    }
+
     for (int pe = 0; pe < state->npes; pe++) {
         state->rma[pe] = 0;
         state->amo[pe] = 0;
@@ -292,6 +322,7 @@ static int nvshmemi_setup_nvshmem_handles(nvshmemi_state_t *state) {
             tbitmap >>= 1;
         }
     }
+
     return status;
 }
 
@@ -321,8 +352,299 @@ out:
     return status;
 }
 
+static int shared_memory_create(const char *name, size_t sz, nvshmemi_shared_memory_info *info) {
+  int status = 0;
+
+  info->size = sz;
+
+  info->shm_fd = shm_open(name, O_RDWR | O_CREAT, 0777);
+  if (info->shm_fd < 0) {
+    INFO(NVSHMEM_INIT, "shm_open failed");
+    return errno;
+  }
+
+  status = ftruncate(info->shm_fd, sz);
+  if (status != 0) {
+    INFO(NVSHMEM_INIT, "ftruncate failed");
+    return status;
+  }
+
+  info->addr = mmap(0, sz, PROT_READ | PROT_WRITE, MAP_SHARED, info->shm_fd, 0);
+  if (info->addr == NULL) {
+    INFO(NVSHMEM_INIT, "mmap failed");
+    return errno;
+  }
+
+  return status;
+}
+
+
+int shared_memory_open(const char *name, size_t sz, nvshmemi_shared_memory_info *info) {
+  int status = 0;
+  info->size = sz;
+  struct stat stat_shm;
+
+  info->shm_fd = shm_open(name, O_RDWR, 0777);
+  if (info->shm_fd < 0) {
+    return errno;
+  }
+
+  status = fstat(info->shm_fd, &stat_shm);
+  if(status != 0) {
+    INFO(NVSHMEM_INIT, "fstat failed");
+    return status;
+  }
+  assert(stat_shm.st_size == (intmax_t)sz);  
+
+  info->addr = mmap(0, sz, PROT_READ | PROT_WRITE, MAP_SHARED, info->shm_fd, 0);
+  if (info->addr == NULL) {
+    return errno;
+  }
+
+  return status;
+}
+
+static void shared_memory_close(nvshmemi_shared_memory_info *info) {
+    if (info->addr) {
+        munmap(info->addr, info->size);
+    }
+
+    shm_unlink(shm_name);
+}
+
+static bool trimNewline(char *str)
+{
+    size_t len = strlen(str);
+    if (len > 0 && str[len - 1] == '\n')
+    {
+        str[len - 1] = '\0';
+    }
+    return strlen(str) > 0;
+}
+
+static bool mpsServerRunning(int *serverPID)
+{
+    const int lineSize = 256;
+    char line[lineSize];
+    int ret;
+    bool status = false;
+    bool serverExist = false;
+
+    FILE *output = popen("echo get_server_list | nvidia-cuda-mps-control 2> /dev/null", "r");
+    if (!output) {
+        INFO(NVSHMEM_INIT, "popen retuned NULL");
+        return false;
+    }
+
+    while (fgets(line, lineSize, output) != NULL) {
+        serverExist = true;
+    }
+
+    ret = pclose(output);
+    status = (ret != -1) && WIFEXITED(ret) && (WEXITSTATUS(ret) == 0);
+    if (!status) {
+        INFO(NVSHMEM_INIT, "pclose retuned error");
+        return false;
+    }
+
+    if (!serverExist) {
+        return false;
+    }
+
+    if (!trimNewline(line)) {
+        return false;
+    }
+
+    if (serverPID) {
+        stringstream ss(line);
+        int result;
+        ss >> result;
+        *serverPID = result;
+    }
+
+    return true;
+}
+
+static bool get_mps_server_active_thread_percentage(float *percentage) {
+    FILE *output;
+    const int lineSize = 256;
+    char line[lineSize];
+    int ret;
+    char *retstr = NULL;
+    bool status = false;
+    stringstream cmd;
+    int serverPID;
+    /* one PE per node queries the control daemon */
+    if (nvshmemi_state->mype == nvshmemi_team_node.start) {
+        if (!mpsServerRunning(&serverPID)) {
+            return false;
+        }
+
+        cmd << "echo get_active_thread_percentage " << serverPID << " | nvidia-cuda-mps-control";
+        output = popen(cmd.str().c_str(), "r");
+
+        if (!output) {
+            return false;
+        }
+
+        retstr = fgets(line, lineSize, output);
+
+        ret = pclose(output);
+        status = (ret != -1) && WIFEXITED(ret) && (WEXITSTATUS(ret) == 0);
+        if (!status || retstr == NULL) {
+            return false;
+        }
+
+        if (!trimNewline(line)) {
+            return false;
+        }
+
+        if (percentage) {
+            int result;
+            stringstream ss(line);
+            ss >> result;
+            *percentage = result;
+        }
+    }
+    float *scratch = (float *)malloc(sizeof(float) * nvshmemi_state->npes);
+    /* for lack of a better available bootstrap collective, using allagther */
+    status = nvshmemi_state->boot_handle.allgather((void *)percentage,
+                                          (void *)scratch, sizeof(float),
+                                          &nvshmemi_state->boot_handle);
+    *percentage = scratch[nvshmemi_team_node.start];
+    free(scratch);
+
+    return true;
+}
+
+static int nvshmemi_determine_mpg_support_level() {
+    int status = 0;
+    bool is_mps_server_running;
+    if (nvshmemi_state->mype == nvshmemi_team_node.start) {
+        is_mps_server_running = mpsServerRunning(NULL);
+    }
+    bool *scratch = (bool *)malloc(sizeof(bool) * nvshmemi_state->npes);
+    /* for lack of a better available bootstrap collective, using allagther */
+    status = nvshmemi_state->boot_handle.allgather((void *)&is_mps_server_running,
+                                          (void *)scratch, sizeof(bool),
+                                          &nvshmemi_state->boot_handle);
+    is_mps_server_running = scratch[nvshmemi_team_node.start];
+    free(scratch);
+
+    if (!is_mps_server_running) {
+        INFO(NVSHMEM_INIT, "Multiple PEs per GPU (MPG) detected but MPS is not running. "
+                           "Hence limited MPG support is available");
+        nvshmemi_is_limited_mpg_run = 1;
+    }
+    else {
+        float active_thread_percentage = 0;
+        bool success = get_mps_server_active_thread_percentage(&active_thread_percentage);
+        if (!success) {
+            INFO(NVSHMEM_INIT, "failed in get_mps_server_active_thread_percentage");
+            exit(-1);
+        }
+        char *env = getenv("CUDA_MPS_ACTIVE_THREAD_PERCENTAGE");
+        if (env)
+            active_thread_percentage = atof(env);
+
+        float *active_percentages = (float *)malloc(sizeof(float) * nvshmemi_state->npes);
+        status = nvshmemi_state->boot_handle.allgather((void *)&active_thread_percentage,
+                                              (void *)active_percentages, sizeof(float),
+                                              &nvshmemi_state->boot_handle);
+        float total_percentage = 0;
+        for (int i = 0; i < nvshmemi_team_same_gpu.size; i += 1) {
+            total_percentage += *((float *)active_percentages +
+                                  nvshmemi_team_same_gpu.start +
+                                  i * nvshmemi_team_same_gpu.stride);
+        }
+        if (total_percentage <= 100.0) {
+            nvshmemi_is_limited_mpg_run = 0;
+            INFO(NVSHMEM_INIT, "Multiple PEs per GPU (MPG) detected, MPS is also available, "
+                                "and active thread percentages for PEs on the same GPU add "
+                                "up to be <= 100. Hence full MPG support is available");
+        }
+        else {
+            nvshmemi_is_limited_mpg_run = 1;
+            INFO(NVSHMEM_INIT, "Multiple PEs per PU (MPG) detected, MPS is also available, "
+                               "but active thread percentages for PEs on the same GPU add "
+                               "up to be greater than 100. Hence limited MPG support is available");
+        }
+        free(active_percentages);
+    }
+    return status;
+}
+
+static int  nvshmemi_setup_limited_mpg_support() {
+    int status = 0;
+    nvshmemi_mps_shmdata *shm = NULL;
+    nvshmemi_shared_memory_info_t *info = &nvshmemi_state->shm_info;
+    cudaEvent_t event;
+    int counter = 0;
+
+    /* Ensure supported MPS runs */
+    /* Do reduction to check to that each GPU has same stride and size for team_same_gpu */
+    int ret = snprintf(shm_name, 100, "mps_shm_%d", nvshmemi_team_same_gpu.start);
+    if (ret < 0) {
+        INFO(NVSHMEM_INIT, "snprintf failed");
+        return ret;
+    }
+
+    if (nvshmemi_team_same_gpu.start == nvshmemi_state->mype) {
+        if (shared_memory_create(shm_name, sizeof(nvshmemi_mps_shmdata), info) != 0) {
+            ERROR_EXIT("Failed to create shared memory slab\n");
+        }
+    }
+    status = nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
+    if (nvshmemi_team_same_gpu.start != nvshmemi_state->mype) {
+        if (shared_memory_open(shm_name, sizeof(nvshmemi_mps_shmdata), info) != 0) {
+            ERROR_EXIT("Failed to open shared memory slab\n");
+        }
+    }
+
+    shm = (nvshmemi_mps_shmdata *)info->addr;
+    if (nvshmemi_team_same_gpu.start == nvshmemi_state->mype) {
+        shm->nprocesses = nvshmemi_team_same_gpu.size;
+        shm->barrier = 0;
+        shm->sense = 0;
+    }
+    CUDA_RUNTIME_CHECK(cudaEventCreate(
+        &nvshmemi_state->mps_event, cudaEventDisableTiming | cudaEventInterprocess));
+    CUDA_RUNTIME_CHECK(cudaIpcGetEventHandle(
+            (cudaIpcEventHandle_t *)&shm->event_handle[nvshmemi_team_same_gpu.my_pe],
+            nvshmemi_state->mps_event));
+
+    std::atomic_thread_fence(std::memory_order_seq_cst); //flush the data 
+    status = nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap barrier failed \n");
+    
+    for(int i = 0; i < nvshmemi_team_same_gpu.size; i++) {
+        if (i == nvshmemi_team_same_gpu.my_pe) continue;
+        CUDA_RUNTIME_CHECK(cudaIpcOpenEventHandle(
+                            &event, *(cudaIpcEventHandle_t *)&shm->event_handle[i]));
+        nvshmemi_state->same_gpu_other_pe_mps_events[counter++] = event;
+    }
+    
+    /*Close the shared memory file */
+    if (nvshmemi_team_same_gpu.start == nvshmemi_state->mype) {
+        if (info->shm_fd) {
+            close(info->shm_fd);
+        }
+    }
+
+out:
+    return status;
+}
+
+static int nvshmemi_mpg_finalize(){
+    shared_memory_close(&nvshmemi_state->shm_info);
+    CUDA_CHECK(cuEventDestroy(nvshmemi_state->mps_event));
+    return 0;
+}
+
 int nvshmemi_common_init(nvshmemi_state_t *state) {
     int status = 0;
+    cpu_set_t my_set;
+    CPU_ZERO(&my_set);
 
     if (state->initialized) return 0;
     
@@ -339,6 +661,11 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
 
     status = nvshmemi_detect_same_device(state);
     NZ_DEBUG_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem detect same device failed \n");
+
+    if (nvshmemi_is_mpg_run) {
+        status = nvshmemi_determine_mpg_support_level();
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "call to nvshmemi_determine_mpg_support_level failed \n");
+    }
 
     status = nvshmemi_setup_stream_priorities(state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem setup stream priorities failed \n");
@@ -380,35 +707,33 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
     status = nvshmemi_coll_common_gpu_init();
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gpu collective setup failed \n");
 
-    // enable proxy only if IB transport is initialized
-    if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST && nvshmemi_need_proxy(state)) {
+    if (sched_getaffinity(0, sizeof(my_set), &my_set) == 0) {
+        int core_count = 0;
 
-        cpu_set_t my_set;
-        CPU_ZERO(&my_set);
-
-        int ret = sched_getaffinity(0, sizeof(my_set), &my_set);
-
-        if (ret == 0) {
-            int core_count = 0;
-
-            for (int i = 0; i < CPU_SETSIZE; i++) {
-                if (CPU_ISSET(i, &my_set))
-                    core_count++;
-            }
-
-            if (core_count == 1) {
-                WARN("Proxy thread shares a core with the main PE, performance may be impacted");
-            }
+        for (int i = 0; i < CPU_SETSIZE; i++) {
+            if (CPU_ISSET(i, &my_set))
+                core_count++;
         }
 
-        status = nvshmemi_proxy_init(state);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy initialization failed \n");
+        if (core_count == 1) {
+            WARN("Proxy thread shares a core with the main PE, performance may be impacted");
+        }
     }
+
+    status = nvshmemi_proxy_init(state, nvshmemi_proxy_level(state));
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy initialization failed \n");
 
     nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
     status = nvshmemi_team_init();
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "team setup failed \n");
     
+    nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
+    if (nvshmemi_is_limited_mpg_run) {
+        status = nvshmemi_setup_limited_mpg_support();
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mps setup failed \n");
+    }
+    nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
+
     nvshmemi_barrier_all();
 out:
     return status;
@@ -514,6 +839,10 @@ out:
     return status;
 }
 
+void nvshmem_global_exit(int status) {
+    nvshmemi_state->boot_handle.global_exit(status);
+}
+
 void nvshmem_finalize() {
     NVTX_FUNC_RANGE_IN_GROUP(INIT);
     int status = 0;
@@ -524,14 +853,24 @@ void nvshmem_finalize() {
     if (nvshmemi_state->initialized) {
         nvshmemi_barrier_all();
         nvshmemx_quiet_on_stream(nvshmemi_state->my_stream); /* wait for signal ops from barrier to complete */
-        cudaDeviceSynchronize();
+        status = cudaDeviceSynchronize();
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Teams cleanup device synchronization failed \n");
+        
+        /* barrier to ensure all previous ops are complete */
+        nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
+
+        /* mps finalize */
+        if (nvshmemi_is_limited_mpg_run) {
+            status = nvshmemi_mpg_finalize();
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "MPS cleanup failed \n");
+        }
 
         /* teams cleanup */
         status = nvshmemi_team_finalize();
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Teams cleanup failed \n");
 
         /*cleaning up proxy*/
-        if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST && nvshmemi_need_proxy(nvshmemi_state)) {
+        if (nvshmemi_proxy_level(nvshmemi_state)) {
             status = nvshmemi_proxy_finalize(nvshmemi_state);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "proxy cleanup failed \n");
         }

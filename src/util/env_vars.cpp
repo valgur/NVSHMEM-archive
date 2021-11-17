@@ -22,6 +22,7 @@
 
 #include "nvshmem_nvtx.hpp"
 #include "util.h"
+#include "nvshmem_internal.h"
 
 struct nvshmemi_options_s nvshmemi_options;
 

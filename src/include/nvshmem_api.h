@@ -28,6 +28,7 @@ extern "C" {
 void nvshmem_init();
 int nvshmem_init_thread(int requested, int *provided);
 void nvshmem_query_thread(int *provided);
+NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_global_exit(int status);
 void nvshmem_finalize();
 
 
@@ -159,7 +160,7 @@ NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_putmem(void *dest, const void *source, s
         TYPE *dest, const TYPE *source, ptrdiff_t dst, ptrdiff_t sst, size_t nelems, int pe);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_TYPE_IPUT)
-#undef NVSHMEMI_DECL_TYPE_PUT
+#undef NVSHMEMI_DECL_TYPE_IPUT
 
 #define NVSHMEMI_DECL_SIZE_IPUT(NAME)                   \
     NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_iput##NAME( \
@@ -395,6 +396,8 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_SOME_VECTOR)
 #define NVSHMEM_TEAM_WORLD  0
 #define NVSHMEM_TEAM_SHARED 1
 #define NVSHMEMX_TEAM_NODE  2
+#define NVSHMEMI_TEAM_SAME_GPU 3
+#define NVSHMEMI_TEAM_GPU_LEADERS 4
 #define NVSHMEM_TEAM_INVALID -1
 
 

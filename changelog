@@ -1,5 +1,34 @@
 ===============================================================================
-				Changes in 2.2.0
+				Changes in 2.4.1
+===============================================================================
+
+# Added limited support for Multiple Processes per GPU (MPG) on x86 platforms.
+The amount of support depends on availability of CUDA MPS. MPG support is
+currently not available on P9 platforms. 
+# Added a local buffer registration API that allows non-symmetric buffers to be
+used as local buffers in NVSHMEM API. 
+# Added support for dynamic symmetric heap allocation, which eliminates the need
+to specify NVSHMEM_SYMMETRIC_SIZE. 
+This feature is available with CUDA >= 11.3 and is enabled by default on x86
+platforms. On P9 platforms, it is disabled by default, and can be enabled using
+NVSHMEM_CUDA_DISABLE_VMM environment variable 
+# Support for very large RMA messages has been added 
+# NVSHMEM can now be built without ibrc support by setting NVSHMEM_IBRC_SUPPORT=0
+in the environment before building.
+This allows users to build and run NVSHMEM without the GDRCopy and OFED dependencies. 
+# Support for calling nvshmem_init/finalize multiple times with MPI bootstrap 
+# Improved testing coverage (large messages, exercising full GPU memory, and so on) 
+# Improved the default PE to NIC assignment for DGX2 systems 
+# Optimized channel request processing by CPU proxy thread 
+# Added support for the shmem_global_exit API 
+# Removed redundant barriers to improve the collectives’ performance 
+# Significant code refactoring to use templates instead of macros for internal
+functions 
+# Improved performance for device-side blocking RMA and strided RMA API 
+# Bug fix for buffers with large offsets into the NVSHMEM symmetric heap 
+
+===============================================================================
+				Changes in 2.2.1
 ===============================================================================
 
 # Implemented dynamic heap memory allocation (requires CUDA version >= 11.3) for

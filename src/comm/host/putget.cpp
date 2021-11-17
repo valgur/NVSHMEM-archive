@@ -10,10 +10,9 @@
 #include "nvshmem_nvtx.hpp"
 #include "transport.h"
 
-template <nvshmemi_op_t desc, int is_nbi>
-int nvshmemi_proxy_rma_launcher(void *args[], cudaStream_t cstrm);
+int nvshmemi_proxy_rma_launcher(void *args[], cudaStream_t cstrm, bool is_nbi, bool is_signal);
 
-static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev, rma_verb_t verb,
+static int nvshmemi_p2p_rma_optimized(CUstream custrm /* internal stream */, CUevent cuev, rma_verb_t verb,
                             rma_memdesc_t *dest, rma_memdesc_t *src, rma_bytesdesc_t bytesdesc,
                             uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
     int status = 0;
@@ -117,129 +116,146 @@ static int nvshmemi_p2p_rma(CUstream custrm /* internal stream */, CUevent cuev,
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamSynchronize() failed \n");
         } /*is_nbi*/
     }     /*is_stream*/
+
 out:
     return status;
 }
 
+static int nvshmemi_p2p_rma_registered(CUstream custrm /* internal stream */, CUevent cuev, rma_verb_t verb,
+                            rma_memdesc_t *dest, rma_memdesc_t *src, rma_bytesdesc_t bytesdesc,
+                            uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
+    cudaStream_t stream_for_op;
+    int status = 0;
+
+    if ((!verb.is_stream) || verb.is_nbi) {
+        stream_for_op = (cudaStream_t)custrm;
+    } else {
+        stream_for_op = verb.cstrm;
+    }
+
+    if (verb.is_nbi && verb.is_stream) {
+        status = cuEventRecord(cuev, (CUstream)verb.cstrm);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuEventRecord() failed\n");
+        status = cuStreamWaitEvent(custrm, cuev, 0);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamWaitEvent() failed\n");
+    }
+
+    if ((bytesdesc.srcstride == 1) && (bytesdesc.deststride == 1)) {
+        status = cudaMemcpyAsync(dest->ptr, src->ptr,
+                                 bytesdesc.nelems * bytesdesc.elembytes,
+                                 cudaMemcpyDefault, stream_for_op);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyAsync() failed\n");
+        if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL) {
+            nvshmemi_signal_op_on_stream(sig_addr, signal, sig_op, pe, stream_for_op);
+        }
+    } else {
+        status = cudaMemcpy2DAsync(dest->ptr, bytesdesc.deststride * bytesdesc.elembytes,
+                                    src->ptr, bytesdesc.srcstride * bytesdesc.elembytes,
+                                    bytesdesc.elembytes, bytesdesc.nelems, cudaMemcpyDefault,
+                                    stream_for_op);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpy2DAsync() failed\n");
+    }
+
+    if (!verb.is_stream && !verb.is_nbi) {
+        status = cuStreamSynchronize(custrm);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamSynchronize() failed \n");
+    }
+
+out:
+    return status;
+}
+
+static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, int nelems, size_t elembytes,
+                                                        uint64_t *sig_addr, uint64_t signal,
+                                                        void *local, void *remote,
+                                                        ptrdiff_t lstride, ptrdiff_t rstride,
+                                                        int sig_op, int pe) {
+    CUstream custrm = nvshmemi_state->custreams[pe % MAX_PEER_STREAMS];
+    CUevent cuev = nvshmemi_state->cuevents[pe % MAX_PEER_STREAMS];
+    void *destptr_actual, *srcptr_actual;
+    rma_memdesc_t dest, src;
+    rma_bytesdesc_t bytesdesc = {(size_t)nelems, (int)elembytes, lstride, rstride};
+
+    if ((verb.desc == NVSHMEMI_OP_P) || (verb.desc == NVSHMEMI_OP_PUT) ||
+        (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)) {
+        NVSHMEMU_MAPPED_PTR_TRANSLATE(destptr_actual, remote, pe)
+        dest.ptr = (void *)destptr_actual;
+        src.ptr = local;
+    } else {
+        NVSHMEMU_MAPPED_PTR_TRANSLATE(srcptr_actual, remote, pe)
+        src.ptr = (void *)srcptr_actual;
+        dest.ptr = local;
+        bytesdesc.srcstride = rstride;
+        bytesdesc.deststride = lstride;
+    }
+
+    /* when memory is in the heap, we can make some assumptions about memory locations that reduce op latency by ~100ns. */
+    if (local >= nvshmemi_state->heap_base && (local < (void *)((char *)nvshmemi_state->heap_base + nvshmemi_state->heap_size))) {
+        return nvshmemi_p2p_rma_optimized(custrm, cuev, verb, &dest, &src, bytesdesc, sig_addr, signal,
+                                           sig_op, pe);
+    }
+    return nvshmemi_p2p_rma_registered(custrm, cuev, verb, &dest, &src, bytesdesc, sig_addr, signal,
+                                       sig_op, pe);
+}
+
 static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t desc, int is_nbi,
-                                          int is_stream, void *destptr, void *srcptr,
-                                          ptrdiff_t deststride, ptrdiff_t srcstride, int nelems,
+                                          int is_stream, void *lptr, void *rptr,
+                                          ptrdiff_t lstride, ptrdiff_t rstride, int nelems,
                                           size_t elembytes, uint64_t *sig_addr, uint64_t signal,
                                           int sig_op, int pe, cudaStream_t cstrm) {
-    int status = 0;
     rma_verb_t verb = {desc, is_nbi, is_stream, cstrm};
-    rma_bytesdesc_t bytesdesc = {(size_t)nelems, (int)elembytes, srcstride, deststride};
-    void *destptr_actual = destptr, *srcptr_actual = srcptr, *sigptr_actual = sig_addr;
-    rma_memdesc_t dest, src, sig;
-    memset(&src, 0, sizeof(rma_memdesc_t));
-    memset(&dest, 0, sizeof(rma_memdesc_t));
-    dest.ptr = (void *)destptr_actual;
-    src.ptr = (void *)srcptr_actual;
-    sig.ptr = (void *)sigptr_actual;
-    if (nvshmemi_state->peer_heap_base[pe]) {
-        CUstream custrm = nvshmemi_state->custreams[pe % MAX_PEER_STREAMS];
-        CUevent cuev = nvshmemi_state->cuevents[pe % MAX_PEER_STREAMS];
-        if ((verb.desc == NVSHMEMI_OP_P) || (verb.desc == NVSHMEMI_OP_PUT) ||
-            (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)) {
-            NVSHMEMU_MAPPED_PTR_TRANSLATE(destptr_actual, destptr, pe)
-            dest.ptr = (void *)destptr_actual;
-        } else {
-            NVSHMEMU_MAPPED_PTR_TRANSLATE(srcptr_actual, srcptr, pe)
-            src.ptr = (void *)srcptr_actual;
-        }
-        if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL && !is_stream) {
-            ERROR_EXIT("Host put_signal API is not supported\n");
-        }
-        status = nvshmemi_p2p_rma(custrm, cuev, verb, &dest, &src, bytesdesc, sig_addr, signal,
-                                  sig_op, pe);
-    } else {
-        int t = nvshmemi_state->selected_transport_for_rma[pe];
-        if (t < 0) {
-            ERROR_EXIT("[%d] rma not supported on transport to pe: %d \n", nvshmemi_state->mype, pe);
-        }
+    int t = nvshmemi_state->selected_transport_for_rma[pe];
+    rma_bytesdesc_t bytesdesc = {(size_t)nelems, (int)elembytes, 1, 1};
+    struct nvshmem_transport *tcurr = nvshmemi_state->transports[t];
+    int status = 0;
 
-        int tcount = NVSHMEM_TRANSPORT_COUNT;
-        int mype = nvshmemi_state->mype;
-        struct nvshmem_transport *tcurr = nvshmemi_state->transports[t];
-        nvshmem_mem_handle_t *handles = nvshmemi_state->handles;
-        if (verb.desc == NVSHMEMI_OP_PUT) {
-            dest.handle = handles[pe * tcount + t];
-            src.handle = handles[mype * tcount + t];
-        } else if (verb.desc == NVSHMEMI_OP_P) {
-            dest.handle = handles[pe * tcount + t];
-        } else if (verb.desc == NVSHMEMI_OP_GET) {
-            dest.handle = handles[mype * tcount + t];
-            src.handle = handles[pe * tcount + t];
-        } else if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL) {
-            dest.handle = handles[mype * tcount + t];
-            src.handle = handles[pe * tcount + t];
-            sig.handle = handles[mype * tcount + t];
-        } else {
-            status = NVSHMEMX_ERROR_INTERNAL;
-            ERROR_PRINT("NOT IMPLEMENTED %s \n", apiname);
-            goto out;
-        }
-        if ((bytesdesc.srcstride > 1) || (bytesdesc.deststride > 1)) {
-            status = NVSHMEMX_ERROR_INTERNAL;
-            ERROR_PRINT("NOT IMPLEMENTED %s \n", apiname);
-            goto out;
-        }
-        if (!verb.is_stream) {
-            rma_memdesc_t remote, local;
-            if ((verb.desc == NVSHMEMI_OP_PUT) || (verb.desc == NVSHMEMI_OP_P)) {
-                NVSHMEMU_UNMAPPED_PTR_TRANSLATE(destptr_actual, destptr, pe)
-                dest.ptr = (void *)destptr_actual;
-                remote = dest;
-                local = src;
-            } else if (verb.desc == NVSHMEMI_OP_GET) {
-                NVSHMEMU_UNMAPPED_PTR_TRANSLATE(srcptr_actual, srcptr, pe)
-                src.ptr = (void *)srcptr_actual;
-                remote = src;
-                local = dest;
-            }
-            status = nvshmemi_state->rma[pe](tcurr, pe, verb, &remote, &local, bytesdesc, 0);
-        } else {
-            void *rptr, *lptr, *sigptr;
-            if ((verb.desc == NVSHMEMI_OP_PUT) || (verb.desc == NVSHMEMI_OP_P) ||
-                (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)) {
-                dest.ptr = (void *)destptr_actual;
-                rptr = dest.ptr;
-                lptr = src.ptr;
-                if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL) sigptr = sig.ptr;
-            } else if (verb.desc == NVSHMEMI_OP_GET) {
-                src.ptr = (void *)srcptr_actual;
-                rptr = src.ptr;
-                lptr = dest.ptr;
-            }
-            if (is_nbi) {
-                if (verb.desc == NVSHMEMI_OP_PUT) {
-                    void *args[] = {&rptr, &lptr, &bytesdesc, &pe};
-                    status = nvshmemi_proxy_rma_launcher<NVSHMEMI_OP_PUT, 1>(args, cstrm);
-                } else if (verb.desc == NVSHMEMI_OP_GET) {
-                    void *args[] = {&rptr, &lptr, &bytesdesc, &pe};
-                    status = nvshmemi_proxy_rma_launcher<NVSHMEMI_OP_GET, 1>(args, cstrm);
-                } else if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL) {
-                    void *args[] = {&rptr, &lptr, &bytesdesc, &sigptr, &signal, &sig_op, &pe};
-                    status = nvshmemi_proxy_rma_launcher<NVSHMEMI_OP_PUT_SIGNAL, 1>(args, cstrm);
-                }
-            } else {
-                /*!is_nbi*/
-                if (verb.desc == NVSHMEMI_OP_PUT) {
-                    void *args[] = {&rptr, &lptr, &bytesdesc, &pe};
-                    status = nvshmemi_proxy_rma_launcher<NVSHMEMI_OP_PUT, 0>(args, cstrm);
-                } else if (verb.desc == NVSHMEMI_OP_GET) {
-                    void *args[] = {&rptr, &lptr, &bytesdesc, &pe};
-                    status = nvshmemi_proxy_rma_launcher<NVSHMEMI_OP_GET, 0>(args, cstrm);
-                } else if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL) {
-                    void *args[] = {&rptr, &lptr, &bytesdesc, &sigptr, &signal, &sig_op, &pe};
-                    status = nvshmemi_proxy_rma_launcher<NVSHMEMI_OP_PUT_SIGNAL, 0>(args, cstrm);
-                }
-            }
-            if (status) {
-                ERROR_PRINT("cudaLaunchKernel() failed in %s \n", apiname);
-            }
-        }
+    /* Mapper Peer */
+    if (nvshmemi_state->peer_heap_base[pe]) {
+        status = nvshmemi_prepare_and_post_mapped_rma(verb, nelems, elembytes, sig_addr, signal, lptr,
+                                                      rptr, lstride, rstride, sig_op, pe);
+        goto out;
     }
+
+    /* Remote Peer strided ops, G operations, and put_signal are not supported for remote transports. */
+    if ((lstride > 1) || (rstride > 1) || desc == NVSHMEMI_OP_G || (verb.desc == NVSHMEMI_OP_PUT_SIGNAL && !is_stream)) {
+        status = NVSHMEMX_ERROR_INTERNAL;
+        ERROR_PRINT("NOT IMPLEMENTED %s \n", apiname);
+        goto out;
+    }
+
+    if (t < 0) {
+        ERROR_EXIT("[%d] rma not supported on transport to pe: %d \n", nvshmemi_state->mype, pe);
+    }
+
+    /* off stream */
+    if (!verb.is_stream) {
+        if (verb.desc == NVSHMEMI_OP_P) {
+            rma_memdesc_t localdesc, remotedesc;
+            localdesc.ptr = lptr;
+            localdesc.handle = NULL;
+            NVSHMEMU_UNMAPPED_PTR_TRANSLATE(remotedesc.ptr, rptr, pe);
+            nvshmemi_get_remote_mem_handle(&remotedesc.handle, NULL, rptr, pe, t);
+            status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytesdesc, 0);
+            if (unlikely(status)) {
+                ERROR_PRINT("aborting due to error in process_channel_dma\n");
+                exit(-1);
+            }
+        } else {
+            nvshmemi_process_multisend_rma(tcurr, t, pe, verb, rptr, lptr, nelems * elembytes, 0);
+        }
+        goto out;
+    }
+
+    /* on stream */
+    if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL) {
+        verb.desc = NVSHMEMI_OP_PUT;
+        void *args[] = {&rptr, &lptr, &bytesdesc, &sig_addr, &signal, &sig_op, &pe, &verb.desc};
+        status = nvshmemi_proxy_rma_launcher(args, cstrm, is_nbi, true);
+    } else {
+        void *args[] = {&rptr, &lptr, &bytesdesc, &pe, &verb.desc};
+        status = nvshmemi_proxy_rma_launcher(args, cstrm, is_nbi, false);
+    }
+
 out:
     if (status) {
         ERROR_PRINT("aborting due to error in %s \n", apiname);
@@ -256,8 +272,8 @@ out:
         /*INFO(NVSHMEM_P2P, "[%d] bulk put : (remote)dest %p, (local)source %p, %d elements,      \
          * remote PE %d", nvshmemi_state->mype, dest, source, nelems, pe);*/                      \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_put", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, \
-                                      (void *)dest, (void *)source, DEST_STRIDE_CONTIG,           \
-                                      SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,   \
+                                      (void *)source, (void *)dest, SRC_STRIDE_CONTIG,            \
+                                      DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,  \
                                       NOT_A_CUDA_STREAM);                                         \
     }
 
@@ -270,8 +286,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_PUT)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_put_on_stream", NVSHMEMI_OP_PUT, NO_NBI, \
-                                      ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,    \
-                                      SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,   \
+                                      ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,     \
+                                      DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,  \
                                       cstrm);                                                     \
     }
 
@@ -283,8 +299,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_PUT_ON_STREAM)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                  \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                          \
         nvshmemi_prepare_and_post_rma("nvshmem_put" #Name "", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, \
-                                      (void *)dest, (void *)source, DEST_STRIDE_CONTIG,          \
-                                      SRC_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,  \
+                                      (void *)source, (void *)dest, SRC_STRIDE_CONTIG,           \
+                                      DEST_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe, \
                                       NOT_A_CUDA_STREAM);                                        \
     }
 
@@ -297,8 +313,8 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_PUTSIZE)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
         nvshmemi_prepare_and_post_rma("nvshmemx_put" #Name "_on_stream", NVSHMEMI_OP_PUT, NO_NBI, \
-                                      ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,    \
-                                      SRC_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,   \
+                                      ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,     \
+                                      DEST_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,  \
                                       cstrm);                                                     \
     }
 
@@ -312,8 +328,8 @@ void nvshmem_putmem(void *dest, const void *source, size_t bytes, int pe) {
     INFO(NVSHMEM_P2P,
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
-    nvshmemi_prepare_and_post_rma("nvshmem_putmem", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, (void *)dest,
-                                  (void *)source, DEST_STRIDE_CONTIG, SRC_STRIDE_CONTIG, bytes, 1,
+    nvshmemi_prepare_and_post_rma("nvshmem_putmem", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, (void *)source,
+                                  (void *)dest, SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG, bytes, 1,
                                   NULL, 0, -1, pe, NOT_A_CUDA_STREAM);
 }
 
@@ -325,8 +341,8 @@ void nvshmemx_putmem_on_stream(void *dest, const void *source, size_t bytes, int
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmemx_putmem_on_stream", NVSHMEMI_OP_PUT, NO_NBI, ASYNC,
-                                  (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
-                                  SRC_STRIDE_CONTIG, bytes, 1, NULL, 0, -1, pe, cstrm);
+                                  (void *)source, (void *)dest, SRC_STRIDE_CONTIG,
+                                  DEST_STRIDE_CONTIG, bytes, 1, NULL, 0, -1, pe, cstrm);
 }
 
 #define NVSHMEM_TYPE_P(Name, TYPE)                                                            \
@@ -334,21 +350,21 @@ void nvshmemx_putmem_on_stream(void *dest, const void *source, size_t bytes, int
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                               \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_p", NVSHMEMI_OP_P, NO_NBI, NO_ASYNC, \
-                                      (void *)dest, (void *)&value, DEST_STRIDE_CONTIG,       \
-                                      SRC_STRIDE_CONTIG, 1, sizeof(TYPE), NULL, 0, -1, pe,    \
+                                      (void *)&value, (void *)dest, SRC_STRIDE_CONTIG,        \
+                                      DEST_STRIDE_CONTIG, 1, sizeof(TYPE), NULL, 0, -1, pe,   \
                                       NOT_A_CUDA_STREAM);                                     \
     }
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_P)
 #undef NVSHMEM_TYPE_P
 
-#define NVSHMEMX_TYPE_P_ON_STREAM(Name, TYPE)                                                      \
-    void nvshmemx_##Name##_p_on_stream(TYPE *dest, const TYPE value, int pe, cudaStream_t cstrm) { \
-        NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
-        nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_p_on_stream", NVSHMEMI_OP_P, NO_NBI,      \
-                                      ASYNC, (void *)dest, (void *)&value, DEST_STRIDE_CONTIG,     \
-                                      SRC_STRIDE_CONTIG, 1, sizeof(TYPE), NULL, 0, -1, pe, cstrm); \
+#define NVSHMEMX_TYPE_P_ON_STREAM(Name, TYPE)                                                       \
+    void nvshmemx_##Name##_p_on_stream(TYPE *dest, const TYPE value, int pe, cudaStream_t cstrm) {  \
+        NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                     \
+        NVSHMEM_CHECK_STATE_AND_INIT();                                                             \
+        nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_p_on_stream", NVSHMEMI_OP_P, NO_NBI,       \
+                                      ASYNC, (void *)&value, (void *)dest, SRC_STRIDE_CONTIG,       \
+                                      DEST_STRIDE_CONTIG, 1, sizeof(TYPE), NULL, 0, -1, pe, cstrm); \
     }
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_P_ON_STREAM)
@@ -360,7 +376,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_P_ON_STREAM)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iput", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, \
-                                      (void *)dest, (void *)source, dst, sst, nelems,              \
+                                      (void *)source, (void *)dest, sst, dst, nelems,              \
                                       sizeof(TYPE), NULL, 0, -1, pe, NOT_A_CUDA_STREAM);           \
     }
 
@@ -374,7 +390,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IPUT)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iput_on_stream", NVSHMEMI_OP_PUT, NO_NBI, \
-                                      ASYNC, (void *)dest, (void *)source, dst, sst, nelems,       \
+                                      ASYNC, (void *)source, (void *)dest, sst, dst, nelems,       \
                                       sizeof(TYPE), NULL, 0, -1, pe, cstrm);                       \
     }
 
@@ -387,7 +403,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_IPUT_ON_STREAM)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
         nvshmemi_prepare_and_post_rma("nvshmem_iput" #Name "", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, \
-                                      (void *)dest, (void *)source, dst, sst, nelems,             \
+                                      (void *)source, (void *)dest, sst, dst, nelems,             \
                                       sizeof(Type), NULL, 0, -1, pe, NOT_A_CUDA_STREAM);          \
     }
 
@@ -401,7 +417,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_IPUTSIZE)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
         nvshmemi_prepare_and_post_rma("nvshmem_iput" #Name "_on_stream", NVSHMEMI_OP_PUT, NO_NBI, \
-                                      ASYNC, (void *)dest, (void *)source, dst, sst, nelems,      \
+                                      ASYNC, (void *)source, (void *)dest, sst, dst, nelems,      \
                                       sizeof(Type), NULL, 0, -1, pe, cstrm);                      \
     }
 
@@ -413,8 +429,8 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEMX_IPUTSIZE_ON_STREAM)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmem_" #type "_put_nbi", NVSHMEMI_OP_PUT, NBI, NO_ASYNC, \
-                                      (void *)dest, (void *)source, DEST_STRIDE_CONTIG,            \
-                                      SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,    \
+                                      (void *)source, (void *)dest, SRC_STRIDE_CONTIG,             \
+                                      DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,   \
                                       NOT_A_CUDA_STREAM);                                          \
     }
 
@@ -429,8 +445,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_PUT_NBI)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_put_signal_on_stream", NVSHMEMI_OP_PUT_SIGNAL,   \
-                                      NO_NBI, ASYNC, (void *)dest, (void *)source,                 \
-                                      DEST_STRIDE_CONTIG, SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), \
+                                      NO_NBI, ASYNC, (void *)source, (void *)dest,                 \
+                                      SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), \
                                       sig_addr, signal, sig_op, pe, cstrm);                        \
     }
 
@@ -444,8 +460,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_PUT_SIGNAL_ON_STREAM)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmemx_put" #Name "_signal_on_stream", NVSHMEMI_OP_PUT_SIGNAL,   \
-                                      NO_NBI, ASYNC, (void *)dest, (void *)source,                 \
-                                      DEST_STRIDE_CONTIG, SRC_STRIDE_CONTIG, nelems, sizeof(Type), \
+                                      NO_NBI, ASYNC, (void *)source, (void *)dest,                 \
+                                      SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG, nelems, sizeof(Type), \
                                       sig_addr, signal, sig_op, pe, cstrm);                        \
     }
 
@@ -461,8 +477,8 @@ void nvshmemx_putmem_signal_on_stream(void *dest, const void *source, size_t byt
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmemx_putmem_signal_on_stream", NVSHMEMI_OP_PUT_SIGNAL, NO_NBI,
-                                  ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
-                                  SRC_STRIDE_CONTIG, bytes, 1, sig_addr, signal, sig_op, pe, cstrm);
+                                  ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,
+                                  DEST_STRIDE_CONTIG, bytes, 1, sig_addr, signal, sig_op, pe, cstrm);
 }
 
 #define NVSHMEMX_TYPE_PUT_NBI_ON_STREAM(type, TYPE)                                                \
@@ -471,8 +487,8 @@ void nvshmemx_putmem_signal_on_stream(void *dest, const void *source, size_t byt
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmem_" #type "_put_nbi_on_stream", NVSHMEMI_OP_PUT, NBI, \
-                                      ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,     \
-                                      SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,    \
+                                      ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,      \
+                                      DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,   \
                                       cstrm);                                                      \
     }
 
@@ -484,8 +500,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_PUT_NBI_ON_STREAM)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
         nvshmemi_prepare_and_post_rma("nvshmem_put" #Name "_nbi", NVSHMEMI_OP_PUT, NBI, NO_ASYNC, \
-                                      (void *)dest, (void *)source, DEST_STRIDE_CONTIG,           \
-                                      SRC_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,   \
+                                      (void *)source, (void *)dest, SRC_STRIDE_CONTIG,            \
+                                      DEST_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,  \
                                       NOT_A_CUDA_STREAM);                                         \
     }
 
@@ -498,8 +514,8 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_PUTSIZE_NBI)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmem_put" #Name "_nbi_on_stream", NVSHMEMI_OP_PUT, NBI,  \
-                                      ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,     \
-                                      SRC_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,    \
+                                      ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,      \
+                                      DEST_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,   \
                                       cstrm);                                                      \
     }
 
@@ -513,8 +529,8 @@ void nvshmem_putmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_putmem_nbi", NVSHMEMI_OP_PUT, NBI, NO_ASYNC,
-                                  (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
-                                  SRC_STRIDE_CONTIG, bytes, 1, NULL, 0, -1, pe, NOT_A_CUDA_STREAM);
+                                  (void *)source, (void *)dest, SRC_STRIDE_CONTIG,
+                                  DEST_STRIDE_CONTIG, bytes, 1, NULL, 0, -1, pe, NOT_A_CUDA_STREAM);
 }
 
 void nvshmemx_putmem_nbi_on_stream(void *dest, const void *source, size_t bytes, int pe,
@@ -525,8 +541,8 @@ void nvshmemx_putmem_nbi_on_stream(void *dest, const void *source, size_t bytes,
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_putmem_nbi_on_stream", NVSHMEMI_OP_PUT, NBI, ASYNC,
-                                  (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
-                                  SRC_STRIDE_CONTIG, bytes, 1, NULL, 0, -1, pe, cstrm);
+                                  (void *)source, (void *)dest, SRC_STRIDE_CONTIG,
+                                  DEST_STRIDE_CONTIG, bytes, 1, NULL, 0, -1, pe, cstrm);
 }
 
 /* PUT_SIGNAL_NBI */
@@ -537,8 +553,8 @@ void nvshmemx_putmem_nbi_on_stream(void *dest, const void *source, size_t bytes,
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmem_" #type "_put_signal_nbi_on_stream",                \
-                                      NVSHMEMI_OP_PUT_SIGNAL, NBI, ASYNC, (void *)dest,            \
-                                      (void *)source, DEST_STRIDE_CONTIG, SRC_STRIDE_CONTIG,       \
+                                      NVSHMEMI_OP_PUT_SIGNAL, NBI, ASYNC, (void *)source,          \
+                                      (void *)dest, SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG,         \
                                       nelems, sizeof(TYPE), sig_addr, signal, sig_op, pe, cstrm);  \
     }
 
@@ -552,8 +568,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_PUT_SIGNAL_NBI_ON_STREAM)
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                \
         NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
         nvshmemi_prepare_and_post_rma("nvshmem_put" #Name "_signal_nbi_on_stream",                \
-                                      NVSHMEMI_OP_PUT_SIGNAL, NBI, ASYNC, (void *)dest,           \
-                                      (void *)source, DEST_STRIDE_CONTIG, SRC_STRIDE_CONTIG,      \
+                                      NVSHMEMI_OP_PUT_SIGNAL, NBI, ASYNC, (void *)source,         \
+                                      (void *)dest, SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG,        \
                                       nelems, sizeof(Type), sig_addr, signal, sig_op, pe, cstrm); \
     }
 
@@ -569,8 +585,8 @@ void nvshmemx_putmem_signal_nbi_on_stream(void *dest, const void *source, size_t
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
     nvshmemi_prepare_and_post_rma("nvshmem_putmem_signal_nbi_on_stream", NVSHMEMI_OP_PUT_SIGNAL, NBI,
-                                  ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,
-                                  SRC_STRIDE_CONTIG, bytes, 1, sig_addr, signal, sig_op, pe, cstrm);
+                                  ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,
+                                  DEST_STRIDE_CONTIG, bytes, 1, sig_addr, signal, sig_op, pe, cstrm);
 }
 
 /***** Get APIs ******/

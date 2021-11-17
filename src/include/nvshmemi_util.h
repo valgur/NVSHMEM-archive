@@ -10,6 +10,8 @@
 #include <assert.h>
 #include <stdio.h>
 
+typedef enum { thread = 0, THREAD = 0, warp = 1, WARP = 1, block = 2, BLOCK = 2 } threadgroup_t;
+
 #ifdef __CUDA_ARCH__
 
 __device__ inline int nvshmemi_thread_id_in_warp() {
@@ -44,6 +46,59 @@ __device__ inline int nvshmemi_thread_size() { return 1; }
 
 __device__ inline void nvshmemi_thread_sync() {}
 
+template <threadgroup_t scope>
+__device__ inline int nvshmemi_thread_id_in_threadgroup() {
+    switch (scope) {
+        case THREAD:
+            return 0;
+        case WARP:
+            int myIdx;
+            asm volatile("mov.u32  %0, %laneid;" : "=r"(myIdx));
+            return myIdx;
+        case BLOCK:
+            return (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);
+        default:
+            printf("unrecognized threadscope passed\n");
+            assert(0);
+            return -1;
+    }
+}
+
+template <threadgroup_t scope>
+__device__ inline int nvshmemi_threadgroup_size() {
+    switch (scope) {
+        case THREAD:
+            return 1;
+        case WARP:
+            return ((blockDim.x * blockDim.y * blockDim.z) < warpSize)
+                       ? (blockDim.x * blockDim.y * blockDim.z)
+                       : warpSize;
+        case BLOCK:
+            return (blockDim.x * blockDim.y * blockDim.z);
+        default:
+            printf("unrecognized threadscope passed\n");
+            assert(0);
+            return -1;
+    }
+}
+
+template <threadgroup_t scope>
+__device__ inline void nvshmemi_threadgroup_sync() {
+    switch (scope) {
+        case THREAD:
+            return;
+        case WARP:
+            __syncwarp();
+            break;
+        case BLOCK:
+            __syncthreads();
+            break;
+        default:
+            printf("unrecognized threadscope passed\n");
+            assert(0);
+            break;
+    }
+}
 #endif
 
 static inline void nvshmemi_bit_set(unsigned char *ptr, size_t size, size_t index)

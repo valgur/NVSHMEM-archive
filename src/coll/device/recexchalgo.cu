@@ -16,13 +16,20 @@
  * Step 2 has log_k (PE_size) phases. In each phase k PEs exchange data with each other.
  * In Step 3, PEs from step 2 send the final reduced data to PEs that did not participate in Step 2.
 */
-__host__ void nvshmemi_recexchalgo_get_neighbors(int my_pe, int num_pes) {
+void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami) {
     int i, j, k;
     int p_of_k = 1, log_p_of_k = 0, rem, T, newpe;
     int step1_sendto, step1_nrecvs, step2_nphases;
+    int *step1_recvfrom, **step2_nbrs;
+    int *step1_recvfrom_device, **step2_nbrs_device;
+
+    int my_pe = teami->my_pe;
+    int num_pes = teami->size;
     INFO(NVSHMEM_COLL, "step 1 nbr calculation started, num_pes = %d", num_pes);
 
     k = gpu_coll_env_params_var.reduce_recexch_kval;
+    assert(k > 1);
+
     if (num_pes < k) /* If size of the active set is less than k, reduce the value of k */
         k = (num_pes > 2) ? num_pes : 2;
 
@@ -35,10 +42,11 @@ __host__ void nvshmemi_recexchalgo_get_neighbors(int my_pe, int num_pes) {
     log_p_of_k--;
 
     step2_nphases = log_p_of_k;
-    int *step1_recvfrom = (int *)malloc(sizeof(int) * (k - 1));
+    step1_recvfrom = (int *)malloc(sizeof(int) * (k - 1));
     assert(step1_recvfrom);
-    int **step2_nbrs = (int **)malloc(sizeof(int *) * step2_nphases);
+    step2_nbrs = (int **)malloc(sizeof(int *) * step2_nphases);
     assert(step2_nbrs);
+
     for (int i = 0; i < step2_nphases; i++) {
         step2_nbrs[i] = (int *)malloc(sizeof(int) * (k - 1));
         assert(step2_nbrs[i]);
@@ -137,21 +145,38 @@ __host__ void nvshmemi_recexchalgo_get_neighbors(int my_pe, int num_pes) {
         }
         free(digit);
     }
+    // Update with global PE numbers
+    if (step1_sendto != -1)
+        step1_sendto = teami->start + step1_sendto * teami->stride;
+    for (int i = 0; i < step1_nrecvs; i++)
+        step1_recvfrom[i] = teami->start + step1_recvfrom[i] * teami->stride;
+    for (int i = 0; i < step2_nphases; i++)
+        for (int j = 0; j < k - 1; j++)
+            step2_nbrs[i][j] = teami->start + step2_nbrs[i][j] * teami->stride;
 
     // Copy the data to device memory
-    nvshmemi_device_state.reduce_recexch_step1_sendto = step1_sendto;
-    CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)nvshmemi_device_state.reduce_recexch_step1_recvfrom,
-                  step1_recvfrom, sizeof(int) * step1_nrecvs));
-    nvshmemi_device_state.reduce_recexch_step1_nrecvs = step1_nrecvs;
+    CUDA_CHECK(cuMemAlloc((CUdeviceptr *)&step1_recvfrom_device, sizeof(int) * (k - 1)));
+    CUDA_CHECK(cuMemAlloc((CUdeviceptr *)&step2_nbrs_device, sizeof(int *) * (step2_nphases + 1))); /* + 1 to make it non-zero otherwise cuMemAlloc returns error when step2_nphases is 0 */
+
+    for (int i = 0; i < step2_nphases; i++) {
+        void *dev_ptr;
+        CUDA_RUNTIME_CHECK(cudaMalloc(&dev_ptr, sizeof(int) * (k - 1)));
+        CUDA_CHECK(
+            cuMemcpyHtoD((CUdeviceptr)((int **)step2_nbrs_device + i), &dev_ptr, sizeof(int *)));
+    }
+    CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)step1_recvfrom_device, step1_recvfrom,
+                            sizeof(int) * step1_nrecvs));
     void *dev_ptr, *dev_ptr_2;
-    dev_ptr = nvshmemi_device_state.reduce_recexch_step2_nbrs;
+    dev_ptr = step2_nbrs_device;
     for (int i = 0; i < step2_nphases; i++) {
         CUDA_CHECK(cuMemcpyDtoH(&dev_ptr_2, (CUdeviceptr)((int **)dev_ptr + i), sizeof(int *)));
         CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)dev_ptr_2, step2_nbrs[i], sizeof(int) * (k - 1)));
     }
-    nvshmemi_device_state.reduce_recexch_step2_nphases = step2_nphases;
-    nvshmemi_set_device_state();
-    CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
+    teami->reduce_recexch.step1_sendto = step1_sendto;
+    teami->reduce_recexch.step1_nrecvs = step1_nrecvs;
+    teami->reduce_recexch.step2_nphases = step2_nphases;
+    teami->reduce_recexch.step1_recvfrom = step1_recvfrom_device;
+    teami->reduce_recexch.step2_nbrs = step2_nbrs_device;
 
     free(step1_recvfrom);
     for (int i = 0; i < step2_nphases; i++) {

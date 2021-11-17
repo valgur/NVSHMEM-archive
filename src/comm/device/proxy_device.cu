@@ -73,6 +73,22 @@ __device__ void nvshmemi_proxy_quiet(bool use_membar) {
     }
 }
 
+__device__ void nvshmemi_proxy_global_exit(int status) {
+    int rc;
+
+    rc = atomicCAS(nvshmemi_device_state_d.global_exit_request_state, PROXY_GLOBAL_EXIT_NOT_REQUESTED, PROXY_GLOBAL_EXIT_INIT);
+    if (rc == PROXY_GLOBAL_EXIT_NOT_REQUESTED) {
+        *nvshmemi_device_state_d.global_exit_code = status;
+        __threadfence_system();
+        rc = atomicCAS(nvshmemi_device_state_d.global_exit_request_state, PROXY_GLOBAL_EXIT_INIT, PROXY_GLOBAL_EXIT_REQUESTED);
+        assert(rc == PROXY_GLOBAL_EXIT_INIT);
+    }
+    /* Note, this will block indefinitely, but that is fine as nvshmemi_global_exit should never return. */
+    nvshmemi_wait_until_greater_than_equals<int>(
+        nvshmemi_device_state_d.global_exit_request_state,
+        PROXY_GLOBAL_EXIT_FINISHED, NVSHMEMI_CALL_SITE_PROXY_GLOBAL_EXIT);
+}
+
 __device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar) {
     uint64_t cst_issue;
     cst_issue = (*(volatile uint64_t *)nvshmemi_device_state_d.proxy_channels_issue);
@@ -133,6 +149,8 @@ __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size_t byte
     int group_size = 1;
     void *buf_ptr = nvshmemi_device_state_d.proxy_channels_buf;
     void *base_ptr = nvshmemi_device_state_d.heap_base;
+    const uint64_t mask_lowest_byte = 0xFFFFFFFFFFFFFF00u;
+    const uint64_t mask_upper_7_bytes = 0x00000000000000FFu;
 
     __threadfence();
 
@@ -151,7 +169,7 @@ __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size_t byte
      * nvshmemi_device_state_d.proxy_channel_buf_size idx values it will be 0, and so on.
      */
     uint64_t roffset = (uint64_t)((char *)rptr - (char *)base_ptr);
-    uint64_t loffset = (uint64_t)((char *)lptr - (char *)base_ptr);
+    uint64_t laddr = (uint64_t)lptr;
     uint64_t op = channel_op;
     uint16_t pe_u16 = pe;
     uint64_t size_u64 = bytes;
@@ -163,21 +181,23 @@ __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size_t byte
         (uint64_t)((roffset << 24) | (op << 16) | (group_size << 8) | curr_flag);
 
     /* put_dma_request_0
-     * 32 | 16 | 8 | 8
-     * loffset_high | loffset_low | resv | flag */
-     idx += CHANNEL_ENTRY_BYTES;
+     * 56 | 8
+     * laddr_high | flag */
+    idx += CHANNEL_ENTRY_BYTES;
+    uint64_t laddr_high = laddr & mask_lowest_byte;
     req = (uint64_t *)((uint8_t *)buf_ptr + (idx & (CHANNEL_BUF_SIZE - 1)));
     curr_flag = !((idx >> nvshmemi_device_state_d.proxy_channel_buf_logsize) & 1);
-    *((volatile uint64_t *)req) = (uint64_t)(loffset << 16 | curr_flag);
+    *((volatile uint64_t *)req) = laddr_high | curr_flag;
 
     /* put_dma_request_1
      * 32 | 16 | 8 | 8
-     * size_high | size_low | resv | flag */
+     * size_high | size_low | laddr_low | flag */
     idx += CHANNEL_ENTRY_BYTES;
+    uint64_t laddr_low = laddr & mask_upper_7_bytes;
     req = (uint64_t *)((uint8_t *)buf_ptr +
                        (idx & (nvshmemi_device_state_d.proxy_channel_buf_size - 1)));
     curr_flag = !((idx >> nvshmemi_device_state_d.proxy_channel_buf_logsize) & 1);
-    *((volatile uint64_t *)req) = (uint64_t)(size_u64 << 16 | curr_flag);
+    *((volatile uint64_t *)req) = (uint64_t)(size_u64 << 16 | laddr_low << 8 | curr_flag);
 
     /* put_dma_request_2
      * 32 | 16 | 8 | 8
@@ -234,11 +254,10 @@ __device__ T nvshmemi_proxy_rma_g(void * source, int pe) {
             /* wait until element can be used */
             nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag, NVSHMEMI_CALL_SITE_G_WAIT_FLAG); 
             static_assert(sizeof(T) <= sizeof(uint64_t), "sizeof(T) exceeds sizeof(uint64_t)");
-            nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_G>(
-                source,
-                (void *)(nvshmemi_device_state_d.proxy_channel_g_coalescing_buf +
-                         coalescing_buf_byte_offset),
-                NVSHMEMI_WARP_SIZE * sizeof(T), pe);
+            nvshmemi_proxy_rma_nbi(source, 
+                                  (void *)(nvshmemi_device_state_d.proxy_channel_g_coalescing_buf +
+                                  coalescing_buf_byte_offset),
+                                  NVSHMEMI_WARP_SIZE * sizeof(T), pe, NVSHMEMI_OP_G);
             nvshmemi_proxy_quiet(false);
         }
         coalescing_buf_byte_offset = __shfl_sync(amask, coalescing_buf_byte_offset, 0);
@@ -268,7 +287,7 @@ __device__ T nvshmemi_proxy_rma_g(void * source, int pe) {
         /* wait until element can be used */
         nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag, NVSHMEMI_CALL_SITE_G_WAIT_FLAG);
 
-        nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_G>(source, (void *)elem, sizeof(T), pe);
+        nvshmemi_proxy_rma_nbi(source, (void *)elem, sizeof(T), pe, NVSHMEMI_OP_G);
         nvshmemi_proxy_quiet(false);
 
         __threadfence();
@@ -293,17 +312,10 @@ template __device__ long long nvshmemi_proxy_rma_g<long long>(void *source, int 
 template __device__ unsigned long long nvshmemi_proxy_rma_g<unsigned long long>(void *source, int pe);
 template __device__ double nvshmemi_proxy_rma_g<double>(void *source, int pe);
 
-template <nvshmemi_op_t channel_op>
-__device__ void nvshmemi_proxy_rma_nbi(void *rptr, void *lptr, size_t bytes, int pe) {
+__device__ void nvshmemi_proxy_rma_nbi(void *rptr, void *lptr, size_t bytes, int pe, nvshmemi_op_t op) {
     if (!bytes) return;
-    transfer_dma(rptr, lptr, bytes, pe, channel_op);
+    transfer_dma(rptr, lptr, bytes, pe, op);
 }
-template __device__ void nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_PUT>(void *rptr, void *lptr, size_t bytes,
-                                                            int pe);
-template __device__ void nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_GET>(void *rptr, void *lptr, size_t bytes,
-                                                            int pe);
-template __device__ void nvshmemi_proxy_rma_nbi<NVSHMEMI_OP_G>(void *rptr, void *lptr, size_t bytes,
-                                                            int pe);
 
 __forceinline__ __device__ void convert_val_to_uint64(uint64_t *dest, void *value, size_t size)
 {
@@ -583,6 +595,29 @@ __device__ void nvshmemi_proxy_fence() {
     return;
 }
 
+int nvshmemi_proxy_prep_minimal_state(proxy_state_t *state) {
+    int *temp_global_exit_request_state;
+    int *temp_global_exit_code;
+    nvshmemi_timeout_t *nvshmemi_timeout_dptr;
+
+    nvshmemi_device_state.global_exit_request_state = state->global_exit_request_state;
+
+    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_global_exit_request_state,
+    state->global_exit_request_state, 0));
+    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_global_exit_code,
+    state->global_exit_code, 0));
+    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&nvshmemi_timeout_dptr,
+    state->nvshmemi_timeout, 0));
+
+    nvshmemi_device_state.global_exit_request_state = temp_global_exit_request_state;
+    nvshmemi_device_state.global_exit_code = temp_global_exit_code;
+    nvshmemi_device_state.timeout = nvshmemi_timeout_dptr;
+
+    /* Set here in case we are in an NVLink only build and don't call nvshmemi_proxy_setup_device_channels*/
+    nvshmemi_set_device_state();
+    return 0;
+}
+
 int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
     int status = 0;
 
@@ -600,7 +635,6 @@ int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
     uint64_t *temp_quiet_ack_dptr;
     uint64_t *temp_cst_issue_dptr;
     uint64_t *temp_cst_ack_dptr;
-    nvshmemi_timeout_t *nvshmemi_timeout_dptr;
 
     CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_buf_dptr, state->channels[0].buf, 0));
     CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_complete_dptr,
@@ -613,8 +647,6 @@ int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
                                          state->channels[0].cst_issue, 0));
     CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_cst_ack_dptr,
                                          state->channels[0].cst_ack, 0));
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&nvshmemi_timeout_dptr,
-                                         state->nvshmemi_timeout, 0));
 
     INFO(NVSHMEM_PROXY,
          "channel device_ptr buf: %p issue: %p complete: %p quiet_issue: %p quiet_ack: %p \n",
@@ -628,7 +660,6 @@ int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
     nvshmemi_device_state.proxy_channels_quiet_ack = temp_quiet_ack_dptr;
     nvshmemi_device_state.proxy_channels_cst_issue = temp_cst_issue_dptr;
     nvshmemi_device_state.proxy_channels_cst_ack = temp_cst_ack_dptr;
-    nvshmemi_device_state.timeout = nvshmemi_timeout_dptr;
 
     proxy_channel_g_buf_size =  NUM_G_BUF_ELEMENTS * sizeof(g_elem_t);
     proxy_channel_g_buf_log_size = (uint64_t)log2((double)proxy_channel_g_buf_size);

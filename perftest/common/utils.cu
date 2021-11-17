@@ -22,6 +22,56 @@ int use_mpi = 0;
 int use_shmem = 0;
 __device__ int clockrate;
 
+#ifdef NVSHMEM_SHMEM_SUPPORT
+#include "unistd.h"
+static uint64_t getHostHash() {
+    char hostname[1024];
+    uint64_t result = 5381;
+    int status = 0;
+
+    status = gethostname(hostname, 1024);
+    if (status) ERROR_EXIT("gethostname failed \n");
+
+    for (int c = 0; c < 1024 && hostname[c] != '\0'; c++) {
+        result = ((result << 5) + result) + hostname[c];
+    }
+
+    return result;
+}
+
+/* This is a special function that is a WAR for a bug in OSHMEM
+implementation. OSHMEM erroneosly sets the context on device 0 during
+shmem_init. Hence before nvshmem_init() is called, device must be
+set correctly */
+void select_device_shmem() {
+    cudaDeviceProp prop;
+    int dev_count;
+    int mype_node;
+    int mype, n_pes;
+
+    mype = shmem_my_pe();
+    n_pes = shmem_n_pes();
+    mype_node = 0;
+    uint64_t host = getHostHash();
+    uint64_t *hosts = (uint64_t *)shmem_malloc(sizeof(uint64_t) * (n_pes + 1));
+    hosts[0] = host;
+    long *pSync = (long *)shmem_malloc(SHMEM_COLLECT_SYNC_SIZE * sizeof(long));
+    shmem_fcollect64(hosts + 1, hosts, 1, 0, 0, n_pes, pSync);
+    for (int i = 0; i < n_pes; i++) {
+        if (i == mype) break;
+        if (hosts[i + 1] == host) mype_node++;
+    }
+
+    CUDA_CHECK(cudaGetDeviceCount(&dev_count));
+    CUDA_CHECK(cudaSetDevice(mype_node % dev_count));
+
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, mype_node % dev_count));
+    fprintf(stderr, "mype: %d mype_node: %d device name: %s bus id: %d \n", mype, mype_node, prop.name, prop.pciBusID);
+    CUDA_CHECK(cudaMemcpyToSymbol(clockrate, (void *)&prop.clockRate, sizeof(int), 0,
+                                  cudaMemcpyHostToDevice));
+}
+#endif
+
 void select_device() {
     cudaDeviceProp prop;
     int dev_count;
@@ -88,10 +138,10 @@ void init_wrapper(int *c, char ***v) {
         avg_time = (double *)shmem_malloc(sizeof(double));
         if (!avg_time) ERROR_EXIT("(shmem_malloc) failed \n");
 
+        select_device_shmem();
+
         nvshmemx_init_attr_t attr;
         nvshmemx_init_attr(NVSHMEMX_INIT_WITH_SHMEM, &attr);
-
-        select_device();
 
         return;
     }

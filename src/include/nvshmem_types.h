@@ -19,8 +19,16 @@ typedef struct {
 #define NCCL_REDOP_xor -1
 
 /* Reduction datatypes */
+/* 
+ * ncclChar is an unsigned type. char in c++ can be signed or unsigned
+ * so pick the "right" nccl type depending on the implementation of char.
+ */
+#if (CHAR_MIN == 0)
+#define NCCL_DT_char ncclUint8
+#else
 #define NCCL_DT_char ncclChar
-#define NCCL_DT_schar -1
+#endif
+#define NCCL_DT_schar ncclChar
 #define NCCL_DT_short -1
 #define NCCL_DT_int ncclInt
 #define NCCL_DT_long ncclInt64
@@ -95,12 +103,22 @@ typedef int ncclUniqueId;
 #endif /* NVSHMEM_USE_NCCL */
 
 typedef struct {
+    int step1_sendto;
+    int *step1_recvfrom;
+    int step1_nrecvs;
+    int **step2_nbrs;
+    int step2_nphases;
+} nvshmemi_reduce_recexch_t;
+
+typedef struct {
     int my_pe;
     int start, stride, size;
-    int psync_idx;
+    int team_idx;
     nvshmem_team_config_t config;
     long config_mask;
     ncclComm_t nccl_comm;
+    nvshmemi_reduce_recexch_t reduce_recexch;
+    size_t rdxn_count;
     /*size_t                       contexts_len;
     struct shmem_transport_ctx_t **contexts;*/
 } nvshmemi_team_t;

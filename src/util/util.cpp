@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include "util.h"
+#include "nvshmem_internal.h"
 #include <execinfo.h>
 #include <signal.h>
 #include "error_codes_internal.h"

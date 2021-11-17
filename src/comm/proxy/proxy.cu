@@ -18,6 +18,7 @@
 static base_request_t **channel_req;
 
 void *nvshmemi_proxy_progress(void *in);
+void *nvshmemi_proxy_progress_minimal(void *in);
 
 inline void proxy_update_processed(proxy_channel_t *ch, int bytes) {
     ch->processed += bytes;
@@ -37,10 +38,6 @@ int nvshmemi_proxy_create_channels(proxy_state_t *proxy_state) {
     NULL_ERROR_JMP(channels, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                    "failed allocating channels");
     memset(channels, 0, sizeof(proxy_channel_t) * proxy_state->channel_count);
-
-    CUDA_CHECK(cuMemAllocHost((void **)&proxy_state->nvshmemi_timeout,
-                              sizeof(nvshmemi_timeout_t))); /* GPU writes, CPU reads */
-    memset(proxy_state->nvshmemi_timeout, 0, sizeof(nvshmemi_timeout_t));
 
     for (int i = 0; i < proxy_state->channel_count; i++) {
         // for put/get
@@ -128,8 +125,14 @@ out:
     return status;
 }
 
-int nvshmemi_proxy_init(nvshmemi_state_t *state) {
+int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level) {
     int status = 0;
+
+    if (proxy_level == NVSHMEMI_PROXY_NONE) {
+        INFO(NVSHMEM_INIT, "Proxy is disabled. Device side wait_until timeouts and global exit will not function."
+             "If this is undesired behavior, Please unset NVSHMEM_DISABLE_LOCAL_ONLY_PROXY, or set it to false.\n");
+        return 0;
+    }
 
     INFO(NVSHMEM_PROXY, "[%d] in proxy_init", state->mype);
     nvshmemu_debug_log_cpuset(NVSHMEM_PROXY, "proxy");
@@ -140,6 +143,32 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state) {
     proxy_state->channel_bufsize = (1 << CHANNEL_BUF_SIZE_LOG);
     proxy_state->channel_count = CHANNEL_COUNT;
     proxy_state->nvshmemi_state = state;
+
+    CUDA_CHECK(cuMemAllocHost((void **)&proxy_state->global_exit_request_state, sizeof(int)));
+    CUDA_CHECK(cuMemAllocHost((void **)&proxy_state->global_exit_code, sizeof(int)));
+    CUDA_CHECK(cuMemAllocHost((void **)&proxy_state->nvshmemi_timeout,
+                              sizeof(nvshmemi_timeout_t))); /* GPU writes, CPU reads */
+    memset(proxy_state->nvshmemi_timeout, 0, sizeof(nvshmemi_timeout_t));
+    status = nvshmemi_proxy_prep_minimal_state(proxy_state);
+    if (status) {
+        fprintf(stderr, "global exit context creation failed. \n");
+        exit(-1);
+    }
+
+    // create a minimal proxy thread if we only need global_exit support.
+    if (proxy_level == NVSHMEMI_PROXY_MINIMAL) {
+        proxy_state->progress_params.state = proxy_state;
+        proxy_state->progress_params.stop = 0;
+        proxy_state->finalize_count = 0;
+        proxy_state->quiet_in_progress = PROXY_QUIET_STATUS_CHANNELS_INACTIVE;
+        proxy_state->cst_in_progress = PROXY_CST_STATUS_CHANNELS_INACTIVE;
+        proxy_state->issued_get = 0;
+        status = pthread_create(&proxy_state->progress_thread, NULL, nvshmemi_proxy_progress_minimal,
+            (void *)&proxy_state->progress_params);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread creation failed \n");
+        state->proxy = (void *)proxy_state;
+        goto out;
+    }
 
     status = nvshmemi_proxy_create_channels(proxy_state);
     if (status) {
@@ -219,12 +248,12 @@ inline int process_channel_dma(proxy_state_t *state, proxy_channel_t *ch, int *i
     int pe;
     size_t size;
     uint8_t flag;
-    uint64_t roffset, loffset;
+    uint64_t roffset, laddr;
     nvshmemi_state_t *nvshmemi_state = state->nvshmemi_state;
 
 
     base_req = (base_request_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed);
-    roffset = (uint64_t)((base_req->roffset_high << 8) | (base_req->roffset_low));
+    roffset = (uint64_t)(((uint64_t)(base_req->roffset_high) << 8) | (base_req->roffset_low));
 
     dma_req_0 = (put_dma_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 8);
     flag = COUNTER_TO_FLAG(state, ch->processed + 8);
@@ -247,40 +276,19 @@ inline int process_channel_dma(proxy_state_t *state, proxy_channel_t *ch, int *i
 #elif defined(NVSHMEM_X86_64)
     asm volatile("" : : : "memory");
 #endif
-    loffset = (uint64_t)((dma_req_0->loffset_high << 16) | (dma_req_0->loffset_low));
-    size = (size_t)((dma_req_1->size_high << 16) | (dma_req_1->size_low));
+    laddr = (uint64_t)(((uint64_t)(dma_req_0->laddr_high) << 32) | ((uint64_t)(dma_req_0->laddr_3) << 16) | ((uint64_t)(dma_req_0->laddr_2) << 8) | dma_req_1->laddr_low);
+    size = (size_t)(((size_t)(dma_req_1->size_high) << 16) | (dma_req_1->size_low));
     pe = dma_req_2->pe;
-    TRACE(NVSHMEM_PROXY, "process_channel_dma loffset %p pe %d", loffset, pe);
+    TRACE(NVSHMEM_PROXY, "process_channel_dma laddr %p pe %d", laddr, pe);
 
     // issue transport DMA
     {
-        rma_memdesc_t localdesc, remotedesc;
-        rma_bytesdesc_t bytes;
         rma_verb_t verb;
-        void *remote_actual =
-            (void *)((char *)(nvshmemi_state->peer_heap_base_actual[pe]) + roffset);
-        void *local = (void *)((char *)(nvshmemi_state->heap_base) + loffset);
-        struct nvshmem_transport *tcurr = state->transport[pe];
-        int t = state->transport_id[pe];
-        nvshmem_mem_handle_t *handles = nvshmemi_state->handles;
-        int tcount = NVSHMEM_TRANSPORT_COUNT;
-
         verb.desc = (nvshmemi_op_t)base_req->op;
         verb.is_nbi = 1;
-
-        localdesc.ptr = local;
-        localdesc.handle = handles[nvshmemi_state->mype * tcount + t];
-        remotedesc.ptr = remote_actual;
-        remotedesc.handle = handles[pe * tcount + t];
-
-        bytes.nelems = size;
-        bytes.elembytes = 1;
-
-        status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytes, 1);
-        if (unlikely(status)) {
-            ERROR_PRINT("aborting due to error in process_channel_dma\n");
-            exit(-1);
-        }
+        void *rptr =
+            (void *)((char *)(nvshmemi_state->heap_base) + roffset);
+        nvshmemi_process_multisend_rma(state->transport[pe], state->transport_id[pe], pe, verb, rptr, (void *)laddr, size, 1);
     }
 #if defined(NVSHMEM_PPC64LE)
     __sync_synchronize();  // XXX: prevents complete_d store reordered to before return from
@@ -307,7 +315,7 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
     nvshmemi_state_t *nvshmemi_state = state->nvshmemi_state;
 
     base_req = (base_request_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed);
-    roffset = (uint64_t)((base_req->roffset_high << 8) | (base_req->roffset_low));
+    roffset = (uint64_t)(((uint64_t)(base_req->roffset_high) << 8) | (base_req->roffset_low));
 
     inline_req_0 = (put_inline_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 8);
     flag = COUNTER_TO_FLAG(state, ch->processed + 8);
@@ -328,12 +336,12 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
 #endif
 
     uint32_t pe = inline_req_0->pe;
-    uint32_t size = inline_req_1->size;
+    uint64_t size = inline_req_1->size;
     uint64_t lvalue;
 
     lvalue = inline_req_0->lvalue_low;
     if (size == 8) {
-        lvalue = lvalue | ((uint64_t)inline_req_1->lvalue_high << 32);
+        lvalue = lvalue | ((uint64_t)(inline_req_1->lvalue_high) << 32);
     }
 
     // issue transport DMA
@@ -341,20 +349,21 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
         rma_memdesc_t localdesc, remotedesc;
         rma_bytesdesc_t bytes;
         rma_verb_t verb;
+        void *remote = 
+            (void *)((char *)(nvshmemi_state->heap_base) + roffset);
         void *remote_actual =
             (void *)((char *)(nvshmemi_state->peer_heap_base_actual[pe]) + roffset);
         void *local = (void *)&lvalue;
         struct nvshmem_transport *tcurr = state->transport[pe];
         int t = state->transport_id[pe];
-        nvshmem_mem_handle_t *handles = nvshmemi_state->handles;
-        int tcount = NVSHMEM_TRANSPORT_COUNT;
 
         verb.desc = NVSHMEMI_OP_P;
         verb.is_nbi = 0;
 
         localdesc.ptr = local;
+        localdesc.handle = NULL;
         remotedesc.ptr = remote_actual;
-        remotedesc.handle = handles[pe * tcount + t];
+        nvshmemi_get_remote_mem_handle(&remotedesc.handle, NULL, remote, pe, t);
 
         bytes.nelems = 1;
         bytes.elembytes = size;
@@ -391,7 +400,7 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
     nvshmemi_state_t *nvshmemi_state = state->nvshmemi_state;
 
     base_req = (base_request_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed);
-    roffset = (uint64_t)((base_req->roffset_high << 8) | (base_req->roffset_low));
+    roffset = (uint64_t)(((uint64_t)(base_req->roffset_high) << 8) | (base_req->roffset_low));
 
     req_0 = (amo_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 8);
     flag = COUNTER_TO_FLAG(state, ch->processed + 8);
@@ -423,7 +432,7 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
 #endif
 
     uint32_t pe = req_0->pe;
-    uint32_t size = req_1->size;
+    uint64_t size = req_1->size;
     nvshmemi_amo_t amo_op = (nvshmemi_amo_t)req_0->amo;
     uint64_t lvalue, cvalue = 0;
 
@@ -441,12 +450,12 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
         amo_verb_t verb;
         amo_bytesdesc_t bytes;
         amo_memdesc_t memdesc;
+        void *remote = 
+            (void *)((char *)(nvshmemi_state->heap_base) + roffset);
         void *remote_actual =
             (void *)((char *)(nvshmemi_state->peer_heap_base_actual[pe]) + roffset);
         int t = state->transport_id[pe];
         struct nvshmem_transport *tcurr = state->transport[pe];
-        nvshmem_mem_handle_t *handles = nvshmemi_state->handles;
-        int tcount = NVSHMEM_TRANSPORT_COUNT;
 
         verb.desc = amo_op;
 
@@ -454,7 +463,7 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
         memdesc.ptr = remote_actual;
         memdesc.val = lvalue;
         memdesc.cmp = cvalue;
-        memdesc.handle = handles[pe * tcount + t];
+        nvshmemi_get_remote_mem_handle(&memdesc.handle, NULL, remote, pe, t);
         // pick spot in g buffer for fetch value
         if ((amo_op > NVSHMEMI_AMO_END_OF_NONFETCH)) {
             uint64_t g_buf_counter = ((*reinterpret_cast<uint64_t *>(req_3)) & 0xFFFFFFFFFFFFFF00u);
@@ -575,6 +584,12 @@ inline int quiet_channels_test(proxy_state_t *proxy_state) {
     }
 
     return processed;
+}
+
+inline void progress_global_exit(proxy_state_t *proxy_state) {
+    if (*proxy_state->global_exit_request_state == PROXY_GLOBAL_EXIT_REQUESTED) {
+        nvshmem_global_exit(*proxy_state->global_exit_code);
+    }
 }
 
 inline void progress_quiet(proxy_state_t *proxy_state) {
@@ -738,110 +753,87 @@ inline void progress_channels(proxy_state_t *proxy_state) {
         int flag;
         uint8_t flag_value;
 
-        counter = ch->processed;
+        for (int j = 0; j < nvshmemi_options.PROXY_REQUEST_BATCH_MAX; j++) {
+            counter = ch->processed;
 
-        if (likely(channel_req[i] == NULL)) {
-            flag = COUNTER_TO_FLAG(proxy_state, counter);
-            channel_req[i] = (base_request_t *)WRAPPED_CHANNEL_BUF(proxy_state, ch, counter);
-            /* edit out continuation bit. */
-            flag_value = (uint8_t)(*((volatile uint8_t *)&channel_req[i]->flag) & 1);
-            if (flag_value != flag) {
-                channel_req[i] =
-                    NULL;  // XXX:this store should prevent the next load to be reordered, so fence
-                           // should not be needed; but fence below unhangs barrier test
-            } else {
-                TRACE(NVSHMEM_PROXY, "[%d] progress_channels found new channeL_req %p counter %ld",
-                      proxy_state->nvshmemi_state->mype, channel_req[i], counter);
+            if (likely(channel_req[i] == NULL)) {
+                flag = COUNTER_TO_FLAG(proxy_state, counter);
+                channel_req[i] = (base_request_t *)WRAPPED_CHANNEL_BUF(proxy_state, ch, counter);
+                /* edit out continuation bit. */
+                flag_value = (uint8_t)(*((volatile uint8_t *)&channel_req[i]->flag) & 1);
+                if (flag_value != flag) {
+                    channel_req[i] =
+                        NULL;  // XXX:this store should prevent the next load to be reordered, so fence
+                               // should not be needed; but fence below unhangs barrier test
+                } else {
+                    TRACE(NVSHMEM_PROXY, "[%d] progress_channels found new channeL_req %p counter %ld",
+                        proxy_state->nvshmemi_state->mype, channel_req[i], counter);
+                }
             }
-        }
 
 #if defined(NVSHMEM_PPC64LE)
-        __sync_synchronize();  // XXX: this makes a difference for barrier but not for get_nbi; this
-                               // is Load/Load ordering point, fence could be needed for x86_64 (if
-                               // data dependency is not enough)
+            __sync_synchronize();  // XXX: this makes a difference for barrier but not for get_nbi; this
+                                   // is Load/Load ordering point, fence could be needed for x86_64 (if
+                                   // data dependency is not enough)
 #endif
-        // NOTE: all process function except process_channel_dma either processes
-        // the complete request of does not process it at all
-        if (channel_req[i]) {
-            TRACE(NVSHMEM_PROXY, "[%d] progress_channels new request channel_req %p counter %ld",
-                  proxy_state->nvshmemi_state->mype, channel_req[i], counter);
-            int is_processed = 1;
-            switch (channel_req[i]->op) {
-                case NVSHMEMI_OP_PUT:
-                    TRACE(NVSHMEM_PROXY, "host proxy: received PUT \n");
-                    is_processed = 0;
-                    status = process_channel_dma(proxy_state, ch, &is_processed);
-                    NZ_EXIT(status, "error in process_channel_dma<PUT>\n");
-                    break;
-                case NVSHMEMI_OP_G:
-                case NVSHMEMI_OP_GET:
-                    TRACE(NVSHMEM_PROXY, "host proxy: received GET \n");
-                    is_processed = 0;
-                    status = process_channel_dma(proxy_state, ch, &is_processed);
-                    if (likely(is_processed)) proxy_state->issued_get = 1;
-                    NZ_EXIT(status, "error in process_channel_dma<GET>\n");
-                    break;
-                case NVSHMEMI_OP_P:
-                    TRACE(NVSHMEM_PROXY, "host proxy: received P_CHAR \n");
-                    is_processed = 0;
-                    status = process_channel_inline(proxy_state, ch, &is_processed);
-                    NZ_EXIT(status, "error in process_channel_inline<char>\n");
-                    break;
-                case NVSHMEMI_OP_AMO:
-                    is_processed = 0;
-                    status = process_channel_amo(proxy_state, ch, &is_processed);
-                    NZ_EXIT(status, "error in process_channel_inline<char>\n");
-                    break;
-                case NVSHMEMI_OP_FENCE:
-                    TRACE(NVSHMEM_PROXY, "host proxy: received FENCE \n");
-                    status = process_channel_fence(proxy_state, ch);
-                    NZ_EXIT(status, "error in process_channel_fence\n");
-                    break;
-                default:
-                    fprintf(stderr, "invalid op type encountered in proxy \n");
-                    exit(-1);
-            }
+            // NOTE: all process function except process_channel_dma either processes
+            // the complete request of does not process it at all
+            if (channel_req[i]) {
+                TRACE(NVSHMEM_PROXY, "[%d] progress_channels new request channel_req %p counter %ld",
+                    proxy_state->nvshmemi_state->mype, channel_req[i], counter);
+                int is_processed = 1;
+                switch (channel_req[i]->op) {
+                    case NVSHMEMI_OP_PUT:
+                        TRACE(NVSHMEM_PROXY, "host proxy: received PUT \n");
+                        is_processed = 0;
+                        status = process_channel_dma(proxy_state, ch, &is_processed);
+                        NZ_EXIT(status, "error in process_channel_dma<PUT>\n");
+                        break;
+                    case NVSHMEMI_OP_G:
+                    case NVSHMEMI_OP_GET:
+                        TRACE(NVSHMEM_PROXY, "host proxy: received GET \n");
+                        is_processed = 0;
+                        status = process_channel_dma(proxy_state, ch, &is_processed);
+                        if (likely(is_processed)) proxy_state->issued_get = 1;
+                        NZ_EXIT(status, "error in process_channel_dma<GET>\n");
+                        break;
+                    case NVSHMEMI_OP_P:
+                        TRACE(NVSHMEM_PROXY, "host proxy: received P_CHAR \n");
+                        is_processed = 0;
+                        status = process_channel_inline(proxy_state, ch, &is_processed);
+                        NZ_EXIT(status, "error in process_channel_inline<char>\n");
+                        break;
+                    case NVSHMEMI_OP_AMO:
+                        is_processed = 0;
+                        status = process_channel_amo(proxy_state, ch, &is_processed);
+                        NZ_EXIT(status, "error in process_channel_inline<char>\n");
+                        break;
+                    case NVSHMEMI_OP_FENCE:
+                        TRACE(NVSHMEM_PROXY, "host proxy: received FENCE \n");
+                        status = process_channel_fence(proxy_state, ch);
+                        NZ_EXIT(status, "error in process_channel_fence\n");
+                        break;
+                    default:
+                        fprintf(stderr, "invalid op type encountered in proxy \n");
+                        exit(-1);
+                }
 
-            if (likely(is_processed)) {
-                channel_req[i] = NULL;
-            } else {
-                // request is only partially processed, use the same request in the next
-                // iteration
+                if (likely(is_processed)) {
+                    channel_req[i] = NULL;
+                } else {
+                    // request is only partially processed, use the same request in the next
+                    // iteration
+                }
+            } /*if(channel_req[i])*/ else {
+                break;
             }
-        } /*if(channel_req[i])*/
+        }
     }
 }
 
-void progress_transports(proxy_state_t *proxy_state) {
-    int status = 0;
-    nvshmemi_state_t *state = proxy_state->nvshmemi_state;
-
-    for (int i = 0; i < NVSHMEM_TRANSPORT_COUNT; i++) {
-        if (!((proxy_state->transport_bitmap) & (1 << i))) continue;
-
-        struct nvshmem_transport *tcurr = state->transports[i];
-
-        if (tcurr->host_ops.progress == NULL) continue;
-
-        status = tcurr->host_ops.progress(tcurr);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport %d progress failed \n", i);
-    }
-out:
-    NZ_EXIT(status, "error in progress_transport \n");
-}
-
-// this has to be call before channels are torn down
-void force_flush(proxy_state_t *proxy_state) {}
-
-inline void progress(proxy_state_t *proxy_state) {
-    // progress quiet ops
-    progress_quiet(proxy_state);
-
-    // progress cst ops
-    progress_cst(proxy_state);
-
-#ifdef NVSHMEM_TIMEOUT_DEVICE_POLLING
+void progress_timeout_polling(proxy_state_t *proxy_state) {
     nvshmemi_timeout_t *timeout = proxy_state->nvshmemi_timeout;
+
     if (timeout->signal) {
         const char *str = "";
         switch (timeout->caller) {
@@ -884,6 +876,9 @@ inline void progress(proxy_state_t *proxy_state) {
             case NVSHMEMI_CALL_SITE_PROXY_ENFORCE_CONSISTENCY_AT_TARGET:
                 str = "nvshmemi_proxy_enforce_consistency_at_target";
                 break;
+            case NVSHMEMI_CALL_SITE_PROXY_GLOBAL_EXIT:
+                str = "nvshmemi_proxy_global_exit";
+                break;
             case NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_FLAG:
                 str = "nvshmemi_call_site_amo_fetch_wait_flag";
                 break;
@@ -900,6 +895,41 @@ inline void progress(proxy_state_t *proxy_state) {
                     timeout->signal_addr, timeout->signal_val_found, timeout->signal_val_expected);
         exit(-1);
     }
+}
+
+void progress_transports(proxy_state_t *proxy_state) {
+    int status = 0;
+    nvshmemi_state_t *state = proxy_state->nvshmemi_state;
+
+    for (int i = 0; i < NVSHMEM_TRANSPORT_COUNT; i++) {
+        if (!((proxy_state->transport_bitmap) & (1 << i))) continue;
+
+        struct nvshmem_transport *tcurr = state->transports[i];
+
+        if (tcurr->host_ops.progress == NULL) continue;
+
+        status = tcurr->host_ops.progress(tcurr);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport %d progress failed \n", i);
+    }
+out:
+    NZ_EXIT(status, "error in progress_transport \n");
+}
+
+// this has to be call before channels are torn down
+void force_flush(proxy_state_t *proxy_state) {}
+
+inline void progress(proxy_state_t *proxy_state) {
+    // progress global exit request
+    progress_global_exit(proxy_state);
+
+    // progress quiet ops
+    progress_quiet(proxy_state);
+
+    // progress cst ops
+    progress_cst(proxy_state);
+
+#ifdef NVSHMEM_TIMEOUT_DEVICE_POLLING
+    progress_timeout_polling(proxy_state);
 #endif
 
     // progress channels
@@ -937,14 +967,32 @@ void *nvshmemi_proxy_progress(void *in) {
     return NULL;
 }
 
+void *nvshmemi_proxy_progress_minimal(void *in) {
+    proxy_progress_params_t *params = (proxy_progress_params_t *)in;
+    proxy_state_t *proxy_state = params->state;
+
+    nvshmem_nvtx_set_thread_name(proxy_state->nvshmemi_state->mype, "proxy");
+    do {
+        progress_global_exit(proxy_state);
+#ifdef NVSHMEM_TIMEOUT_DEVICE_POLLING
+        progress_timeout_polling(proxy_state);
+#endif
+    } while (!*((volatile int *)&params->stop));
+
+    return NULL;
+}
+
 int nvshmemi_proxy_finalize(nvshmemi_state_t *state) {
+    INFO(NVSHMEM_INIT, "In nvshmemi_proxy_finalize");
     proxy_state_t *proxy_state = (proxy_state_t *)state->proxy;
 
     proxy_state->progress_params.stop = 1;
 
     pthread_join(proxy_state->progress_thread, NULL);
 
-    CUDA_CHECK(cuStreamDestroy(proxy_state->stream));
+    if (proxy_state->stream != NULL) {
+        CUDA_CHECK(cuStreamDestroy(proxy_state->stream));
+    }
 
     // free up all proxy state
     return 0;

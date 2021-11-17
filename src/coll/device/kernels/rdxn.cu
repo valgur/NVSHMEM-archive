@@ -1,0 +1,61 @@
+/*
+ * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include "rdxn_device.cuh"
+
+template <typename TYPE, rdxn_ops_t OP>
+__global__ void rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
+                                      size_t nreduce) {
+#ifdef __CUDA_ARCH__
+    if (!blockIdx.x) nvshmemi_reduce_threadgroup<TYPE, OP, BLOCK>(team, dest, source, nreduce);
+#endif
+}
+
+template <typename TYPE, rdxn_ops_t OP>
+void nvshmemi_call_rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
+                                         size_t nreduce, cudaStream_t stream) {
+    size_t num_threads_per_block = (MAX_THREADS_PER_CTA > nreduce) ? nreduce : MAX_THREADS_PER_CTA;
+    int num_blocks = 1;
+    rdxn_on_stream_kernel<TYPE, OP>
+        <<<num_blocks, num_threads_per_block, 0, stream>>>(team, dest, source, nreduce);
+    CUDA_RUNTIME_CHECK(cudaGetLastError());
+}
+
+#define INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL(TYPE, OP) \
+    template void nvshmemi_call_rdxn_on_stream_kernel<TYPE, OP>(  \
+        nvshmem_team_t, TYPE *, const TYPE *, size_t, cudaStream_t);
+
+#define REPT_FOR_BITWISE_TYPES(FN, OP) \
+    FN(int8_t, RDXN_OPS_##OP)          \
+    FN(uint8_t, RDXN_OPS_##OP)         \
+    FN(uint16_t, RDXN_OPS_##OP)        \
+    FN(int16_t, RDXN_OPS_##OP)         \
+    FN(uint32_t, RDXN_OPS_##OP)        \
+    FN(int32_t, RDXN_OPS_##OP)         \
+    FN(uint64_t, RDXN_OPS_##OP)        \
+    FN(int64_t, RDXN_OPS_##OP)         \
+    FN(char, RDXN_OPS_##OP)            \
+    FN(long long, RDXN_OPS_##OP)       \
+    FN(unsigned long long, RDXN_OPS_##OP)
+
+REPT_FOR_BITWISE_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, AND)
+REPT_FOR_BITWISE_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, OR)
+REPT_FOR_BITWISE_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, XOR)
+REPT_FOR_BITWISE_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, MIN)
+REPT_FOR_BITWISE_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, MAX)
+REPT_FOR_BITWISE_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, SUM)
+REPT_FOR_BITWISE_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, PROD)
+
+#define REPT_FOR_FLOATING_TYPES(FN, OP) \
+    FN(float, RDXN_OPS_##OP)            \
+    FN(double, RDXN_OPS_##OP)
+
+REPT_FOR_FLOATING_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, MAX)
+REPT_FOR_FLOATING_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, MIN)
+REPT_FOR_FLOATING_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, SUM)
+REPT_FOR_FLOATING_TYPES(INSTANTIATE_NVSHMEMI_CALL_RDXN_ON_STREAM_KERNEL, PROD)

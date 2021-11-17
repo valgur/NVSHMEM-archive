@@ -13,16 +13,11 @@
 #ifndef NVSHMEMI_COLL_H
 #define NVSHMEMI_COLL_H
 
+void nvshmemxi_barrier_on_stream(nvshmem_team_t team, cudaStream_t stream);
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void nvshmemxi_barrier_on_stream(int PE_start, int PE_stride, int PE_size, long *pSync, cudaStream_t stream);
-
-#define DECL_NVSHMEMI_TYPENAME_OP_REDUCE(TYPENAME, TYPE, OP)                                            \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemi_##TYPENAME##_##OP##_reduce(TYPE *dest, const TYPE *source, \
-                                size_t nreduce, int start, int stride, int size, TYPE *pWrk, long *pSync);
+#define DECL_NVSHMEMI_TYPENAME_OP_REDUCE(TYPENAME, TYPE, OP)             \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemi_##TYPENAME##_##OP##_reduce( \
+        nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce);
 
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(DECL_NVSHMEMI_TYPENAME_OP_REDUCE, and)
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(DECL_NVSHMEMI_TYPENAME_OP_REDUCE, or)
@@ -55,42 +50,38 @@ DECL_NVSHMEMI_REDUCE_THREADGROUP(block)
 #undef DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP
 #undef DECL_NVSHMEMI_REDUCE_THREADGROUP
 
-#define DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP(SC, TYPENAME, TYPE)           \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_broadcast_##SC(TYPE *dest, const TYPE * source, size_t nelems, \
-                                               int PE_root, int PE_Start, int PE_stride, int PE_size, long *pSync); 
+#define DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP(SC, TYPENAME, TYPE)  \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_broadcast_##SC( \
+        nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, int PE_root);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP, warp)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP, block)
 #undef DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP
 
-#define DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP(SC, TYPENAME, TYPE)           \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_fcollect_##SC(TYPE *dest, const TYPE * source, size_t nelems, \
-                                               int PE_Start, int PE_stride, int PE_size, long *pSync); 
+#define DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP(SC, TYPENAME, TYPE)  \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_fcollect_##SC( \
+        nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP, warp)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP, block)
 #undef DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP
 
-#define DECL_NVSHMEMXI_TYPENAME_ALLTOALL_THREADGROUP(SC, TYPENAME, TYPE)           \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_alltoall_##SC(TYPE *dest, const TYPE * source, size_t nelems, \
-                                               int PE_Start, int PE_stride, int PE_size, long *pSync); 
+#define DECL_NVSHMEMXI_TYPENAME_ALLTOALL_THREADGROUP(SC, TYPENAME, TYPE)  \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemxi_##TYPENAME##_alltoall_##SC( \
+        nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_ALLTOALL_THREADGROUP, warp)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_ALLTOALL_THREADGROUP, block)
 #undef DECL_NVSHMEMXI_TYPENAME_ALLTOALL_THREADGROUP
 
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemi_barrier(int PE_start, int PE_stride, int PE_size, long *pSync, long *counter);
+NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemi_barrier(nvshmem_team_t team);
 
 #ifdef __CUDA_ARCH__
-__device__ void nvshmemxi_barrier_warp(int PE_start, int PE_stride, int PE_size, long *pSync, long *counter);
-__device__ void nvshmemxi_barrier_block(int PE_start, int PE_stride, int PE_size, long *pSync, long *counter);
-__device__ void nvshmemi_sync(int PE_start, int PE_stride, int PE_size, long *pSync, long *counter);
-__device__ void nvshmemxi_sync_warp(int PE_start, int PE_stride, int PE_size, long *pSync, long *counter);
-__device__ void nvshmemxi_sync_block(int PE_start, int PE_stride, int PE_size, long *pSync, long *counter);
-#endif
-
-#ifdef __cplusplus
-}
+__device__ void nvshmemxi_barrier_warp(nvshmem_team_t team);
+__device__ void nvshmemxi_barrier_block(nvshmem_team_t team);
+__device__ void nvshmemi_sync(nvshmem_team_t team);
+__device__ void nvshmemxi_sync_warp(nvshmem_team_t team);
+__device__ void nvshmemxi_sync_block(nvshmem_team_t team);
 #endif
 
 #endif /* NVSHMEMI_COLL_H */

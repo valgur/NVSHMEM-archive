@@ -45,6 +45,9 @@ NVSHMEMI_ENV_DEF(BOOTSTRAP, string, "PMI", NVSHMEMI_ENV_CAT_BOOTSTRAP,
 #ifdef NVSHMEM_MPI_SUPPORT
                  "MPI, "
 #endif
+#ifdef NVSHMEM_SHMEM_SUPPORT
+                 "SHMEM, "
+#endif
                  "plugin"
                  )
 
@@ -69,9 +72,6 @@ NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI, string, NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT, NVSH
 NVSHMEMI_ENV_DEF(BOOTSTRAP_PLUGIN, string, "", NVSHMEMI_ENV_CAT_BOOTSTRAP,
                  "Name of the bootstrap plugin file to load")
 
-NVSHMEMI_ENV_DEF(SHMEM_LIB_NAME, string, "liboshmem.so", NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Name of the OpenSHMEM shared library to be used for bootstrap")
-
 /** Debugging **/
 
 NVSHMEMI_ENV_DEF(DEBUG_SUBSYS, string, "", NVSHMEMI_ENV_CAT_HIDDEN,
@@ -89,10 +89,19 @@ NVSHMEMI_ENV_DEF(MAX_P2P_GPUS, int, 128, NVSHMEMI_ENV_CAT_OTHER,
                  "Maximum number of P2P GPUs")
 NVSHMEMI_ENV_DEF(MAX_MEMORY_PER_GPU, size, (size_t)((size_t)128 * (1 << 30)), NVSHMEMI_ENV_CAT_OTHER,
                  "Maximum memory per GPU")
+#if defined(NVSHMEM_PPC64LE)
 NVSHMEMI_ENV_DEF(DISABLE_CUDA_VMM, bool, true, NVSHMEMI_ENV_CAT_OTHER,
-                 "Disable use of CUDA VMM for P2P memory mapping (CUDA VMM is disabled by default."
-                  " It can be used whenever CUDA RT version and CUDA Driver version are greater than or equal to 11.3,"
-                  " and GPUS are P2P connected)")
+                 "Disable use of CUDA VMM for P2P memory mapping (By default, CUDA VMM is enabled\n"
+                 "on x86 and disabled on P9. CUDA VMM feature in NVSHMEM requires CUDA RT version and\n"
+                 "CUDA Driver version to be greater than or equal to 11.3.")
+#else
+NVSHMEMI_ENV_DEF(DISABLE_CUDA_VMM, bool, false, NVSHMEMI_ENV_CAT_OTHER,
+                 "Disable use of CUDA VMM for P2P memory mapping (By default, CUDA VMM is enabled\n"
+                 "on x86 and disabled on P9. CUDA VMM feature in NVSHMEM requires CUDA RT version and\n"
+                 "CUDA Driver version to be greater than or equal to 11.3.")
+#endif
+NVSHMEMI_ENV_DEF(CUMEM_GRANULARITY, size, (size_t)((size_t)1 << 29), NVSHMEMI_ENV_CAT_OTHER,
+                 "Granularity for cuMemAlloc/cuMemCreate")
 
 NVSHMEMI_ENV_DEF(BYPASS_ACCESSIBILITY_CHECK, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass peer GPU accessbility checks")
@@ -166,7 +175,15 @@ NVSHMEMI_ENV_DEF(QP_DEPTH, int, 1024, NVSHMEMI_ENV_CAT_HIDDEN,
 NVSHMEMI_ENV_DEF(SRQ_DEPTH, int, 16384, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Number of WRs in SRQ")
 
+NVSHMEMI_ENV_DEF(DISABLE_LOCAL_ONLY_PROXY, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
+                "When running on an nvlink-only configuaration (No-IB, No-UCX), completely disable\n"
+                "\tthe proxy thread. This will disable device side global exit and device side wait\n"
+                "\ttimeout polling.")
+
 /** Runtime optimimzations **/
+NVSHMEMI_ENV_DEF(PROXY_REQUEST_BATCH_MAX, int, 32, NVSHMEMI_ENV_CAT_OTHER,
+                 "Max number of requests to process per\n"
+                 "channel per proxy progress loop.")
 
 /** NVTX instrumentation **/
 NVSHMEMI_ENV_DEF(NVTX, string, "off", NVSHMEMI_ENV_CAT_NVTX,

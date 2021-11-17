@@ -48,6 +48,11 @@ typedef struct {
     nvshmemx_init_handle_t handle;
 } nvshmemx_init_attr_t;
 
+// Local buffer registration
+int nvshmemx_buffer_register(void *addr, size_t length);
+int nvshmemx_buffer_unregister(void *addr);
+void nvshmemx_buffer_unregister_all();
+
 /* Renamed from nvshmemx_<FUNC> to nvshmem_<FUNC> */
 int nvshmemx_init_thread(int requested, int *provided) __attribute__((deprecated));
 void nvshmemx_query_thread(int *provided) __attribute__((deprecated));

@@ -20,6 +20,7 @@
 #endif
 #include "nvshmem_constants.h"
 #include "nvshmemi_constants.h"
+#include "nvshmemi_util.h"
 
 #ifdef __CUDA_ARCH__
 #  ifdef NVSHMEMI_HOST_ONLY
@@ -416,8 +417,9 @@ enum nvshmemi_call_site_id {
     NVSHMEMI_CALL_SITE_WAIT_UNTIL_LE,
     NVSHMEMI_CALL_SITE_WAIT_NE,
     NVSHMEMI_CALL_SITE_PROXY_CHECK_CHANNEL_AVAILABILITY,
-    NVSHMEMI_CALL_SITE_PROXY_QUIET,
     NVSHMEMI_CALL_SITE_PROXY_ENFORCE_CONSISTENCY_AT_TARGET,
+    NVSHMEMI_CALL_SITE_PROXY_GLOBAL_EXIT,
+    NVSHMEMI_CALL_SITE_PROXY_QUIET,
     NVSHMEMI_CALL_SITE_SIGNAL_WAIT_UNTIL_GE,
     NVSHMEMI_CALL_SITE_SIGNAL_WAIT_UNTIL_EQ,
     NVSHMEMI_CALL_SITE_SIGNAL_WAIT_UNTIL_NE,
@@ -461,6 +463,8 @@ typedef struct {
     nvshmemi_team_t team_world;
     nvshmemi_team_t team_shared;
     nvshmemi_team_t team_node;
+    nvshmemi_team_t team_same_gpu;
+    nvshmemi_team_t team_gpu_leaders;
 
     nvshmemi_team_t **team_pool;
     long *psync_pool;
@@ -469,15 +473,6 @@ typedef struct {
     int barrier_dissem_kval;
     int barrier_tg_dissem_kval;
     gpu_coll_env_params_t gpu_coll_env_params_var;
-
-    int reduce_recexch_step1_sendto;
-    int *reduce_recexch_step1_recvfrom;
-    int reduce_recexch_step1_nrecvs;
-    int **reduce_recexch_step2_nbrs;
-    int reduce_recexch_step2_nphases;
-    int reduce_recexch_p_of_k;
-    int reduce_recexch_reduce_recexch_digit;
-    int *digit;
 
     /* channel */
     void *proxy_channels_buf; /* requests are written in this buffer */
@@ -498,6 +493,8 @@ typedef struct {
     uint64_t proxy_channel_buf_size; /* Maximum number of inflight requests in bytes OR
                                                    maximum channel length */
     uint32_t proxy_channel_buf_logsize;
+    int *global_exit_request_state;
+    int * global_exit_code;
 } nvshmemi_device_state_t;
 
 extern nvshmemi_device_state_t nvshmemi_device_state;
@@ -710,84 +707,13 @@ __device__ inline void nvshmemi_syncapi_update_mem() {
 }
 #endif
 
-#ifdef __CUDACC__
-__device__ inline void nvshmemi_memcpy_thread(void * __restrict__ dst, const void * __restrict__ src, size_t len) {
+#ifdef __CUDA_ARCH__
 
-    /*
-     * If src and dst are 16B aligned copy as much as possible using 16B chunks
-     */
-    if ((uintptr_t) dst % 16 == 0 && (uintptr_t) src % 16 == 0) {
-              int4 * __restrict__ dst_p =       (int4 *) dst;
-        const int4 * __restrict__ src_p = (const int4 *) src;
-
-        for ( ; len >= 16; len -= 16)
-            *dst_p++ = *src_p++;
-
-        if (0 == len) return;
-
-        dst = (void *) dst_p;
-        src = (void *) src_p;
-    }
-
-    /*
-     * If src and dst are 8B aligned copy as much as possible using 8B chunks
-     */
-    if ((uintptr_t) dst % 8 == 0 && (uintptr_t) src % 8 == 0) {
-              uint64_t * __restrict__ dst_p =       (uint64_t *) dst;
-        const uint64_t * __restrict__ src_p = (const uint64_t *) src;
-
-        for ( ; len >= 8; len -= 8)
-            *dst_p++ = *src_p++;
-
-        if (0 == len) return;
-
-        dst = (void *) dst_p;
-        src = (void *) src_p;
-    }
-
-    /*
-     * If src and dst are 4B aligned copy as much as possible using 4B chunks
-     */
-    if ((uintptr_t) dst % 4 == 0 && (uintptr_t) src % 4 == 0) {
-              uint32_t * __restrict__ dst_p =       (uint32_t *) dst;
-        const uint32_t * __restrict__ src_p = (const uint32_t *) src;
-
-        for ( ; len >= 4; len -= 4)
-            *dst_p++ = *src_p++;
-
-        if (0 == len) return;
-
-        dst = (void *) dst_p;
-        src = (void *) src_p;
-    }
-
-    /*
-     * If src and dst are 2B aligned copy as much as possible using 2B chunks
-     */
-    if ((uintptr_t) dst % 2 == 0 && (uintptr_t) src % 2 == 0) {
-              uint16_t * __restrict__ dst_p =       (uint16_t *) dst;
-        const uint16_t * __restrict__ src_p = (const uint16_t *) src;
-
-        for ( ; len >= 2; len -= 2)
-            *dst_p++ = *src_p++;
-
-        if (0 == len) return;
-
-        dst = (void *) dst_p;
-        src = (void *) src_p;
-    }
-
-          unsigned char * __restrict__ dst_c =       (unsigned char *) dst;
-    const unsigned char * __restrict__ src_c = (const unsigned char *) src;
-
-    for ( ; len > 0; len--)
-        *dst_c++ = *src_c++;
-}
-
-
-__device__ inline void nvshmemi_memcpy_warp(void * __restrict__ dst, const void * __restrict__ src, size_t len) {
-    NVSHMEMI_DECL_THREAD_IDX_warp();
-    NVSHMEMI_DECL_THREADGROUP_SIZE_warp();
+template <threadgroup_t SCOPE>
+__device__ inline void nvshmemi_memcpy_threadgroup(void *__restrict__ dst,
+                                                   const void *__restrict__ src, size_t len) {
+    int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    int groupSize = nvshmemi_threadgroup_size<SCOPE>();
 
     /*
      * If src and dst are 16B aligned copy as much as possible using 16B chunks
@@ -870,96 +796,6 @@ __device__ inline void nvshmemi_memcpy_warp(void * __restrict__ dst, const void 
 
     for (size_t i = myIdx; i < len; i += groupSize)
         dst_c[i] = src_c[i];
-
-}
-
-
-__device__ inline void nvshmemi_memcpy_block(void * __restrict__ dst, const void * __restrict__ src, size_t len) {
-    NVSHMEMI_DECL_THREAD_IDX_block();
-    NVSHMEMI_DECL_THREADGROUP_SIZE_block();
-
-    /*
-     * If src and dst are 16B aligned copy as much as possible using 16B chunks
-     */
-    if ((uintptr_t) dst % 16 == 0 && (uintptr_t) src % 16 == 0) {
-              int4 * __restrict__ dst_p =       (int4 *) dst;
-        const int4 * __restrict__ src_p = (const int4 *) src;
-        const size_t nelems = len / 16;
-
-        for (size_t i = myIdx; i < nelems; i += groupSize)
-            dst_p[i] = src_p[i];
-
-        len -= nelems * 16;
-
-        if (0 == len) return;
-
-        dst = (void *) (dst_p + nelems);
-        src = (void *) (src_p + nelems);
-    }
-
-    /*
-     * If src and dst are 8B aligned copy as much as possible using 8B chunks
-     */
-    if ((uintptr_t) dst % 8 == 0 && (uintptr_t) src % 8 == 0) {
-              uint64_t * __restrict__ dst_p =       (uint64_t *) dst;
-        const uint64_t * __restrict__ src_p = (const uint64_t *) src;
-        const size_t nelems = len / 8;
-
-        for (size_t i = myIdx; i < nelems; i += groupSize)
-            dst_p[i] = src_p[i];
-
-        len -= nelems * 8;
-
-        if (0 == len) return;
-
-        dst = (void *) (dst_p + nelems);
-        src = (void *) (src_p + nelems);
-    }
-
-    /*
-     * If src and dst are 4B aligned copy as much as possible using 4B chunks
-     */
-    if ((uintptr_t) dst % 4 == 0 && (uintptr_t) src % 4 == 0) {
-              uint32_t * __restrict__ dst_p =       (uint32_t *) dst;
-        const uint32_t * __restrict__ src_p = (const uint32_t *) src;
-        const size_t nelems = len / 4;
-
-        for (size_t i = myIdx; i < nelems; i += groupSize)
-            dst_p[i] = src_p[i];
-
-        len -= nelems * 4;
-
-        if (0 == len) return;
-
-        dst = (void *) (dst_p + nelems);
-        src = (void *) (src_p + nelems);
-    }
-
-    /*
-     * If src and dst are 2B aligned copy as much as possible using 2B chunks
-     */
-    if ((uintptr_t) dst % 2 == 0 && (uintptr_t) src % 2 == 0) {
-              uint16_t * __restrict__ dst_p =       (uint16_t *) dst;
-        const uint16_t * __restrict__ src_p = (const uint16_t *) src;
-        const size_t nelems = len / 2;
-
-        for (size_t i = myIdx; i < nelems; i += groupSize)
-            dst_p[i] = src_p[i];
-
-        len -= nelems * 2;
-
-        if (0 == len) return;
-
-        dst = (void *) (dst_p + nelems);
-        src = (void *) (src_p + nelems);
-    }
-
-          unsigned char * __restrict__ dst_c =       (unsigned char *) dst;
-    const unsigned char * __restrict__ src_c = (const unsigned char *) src;
-
-    for (size_t i = myIdx; i < len; i += groupSize)
-        dst_c[i] = src_c[i];
-
 }
 #endif /* __CUDACC__ */
 

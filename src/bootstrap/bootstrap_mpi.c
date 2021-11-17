@@ -49,6 +49,16 @@ out:
     return status;
 }
 
+static void bootstrap_mpi_global_exit(int status) {
+    int rc = MPI_SUCCESS;
+
+    rc = MPI_Abort(bootstrap_comm, status);
+    if (rc != MPI_SUCCESS) {
+        BOOTSTRAP_ERROR_PRINT("MPI_Abort failed. Manually exiting this process.\n");
+        exit(1);
+    }
+}
+
 static int bootstrap_mpi_finalize(bootstrap_handle_t *handle) {
     int status = MPI_SUCCESS, finalized;
 
@@ -121,10 +131,11 @@ int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle) {
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, error,
             "MPI_Comm_size failed\n");
 
-    handle->allgather = bootstrap_mpi_allgather;
-    handle->alltoall  = bootstrap_mpi_alltoall;
-    handle->barrier   = bootstrap_mpi_barrier;
-    handle->finalize  = bootstrap_mpi_finalize;
+    handle->allgather   = bootstrap_mpi_allgather;
+    handle->alltoall    = bootstrap_mpi_alltoall;
+    handle->barrier     = bootstrap_mpi_barrier;
+    handle->global_exit = bootstrap_mpi_global_exit;
+    handle->finalize    = bootstrap_mpi_finalize;
 
     goto out;
 

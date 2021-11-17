@@ -1,38 +1,44 @@
 /*
- * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
  *
  * See COPYRIGHT for license information
  */
 
-#include "nvshmem.h"
-#include "nvshmemx.h"
-#include "gpu_coll.h"
-#include "nvshmemi_coll.h"
-#include <cstdio>
-#include <cassert>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include "fcollect_device.cuh"
 
-#define FCOLLECT_ON_STREAM_KERNEL(TYPENAME, TYPE)                                                   \
-    __global__ void fcollect_##TYPENAME##_on_stream_kernel(TYPE *dest, const TYPE *source,          \
-                                                          size_t nelems, int PE_start,             \
-                                                          int PE_stride, int PE_size, long *pSync) {    \
-        if (!blockIdx.x)                                                                           \
-            nvshmemxi_##TYPENAME##_fcollect_block(dest, source, nelems, PE_start, PE_stride, PE_size,\
-                                           pSync);                                                 \
-    }
+template <typename TYPE>
+__global__ void fcollect_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
+                                          size_t nelems) {
+#ifdef __CUDA_ARCH__
+    if (!blockIdx.x) nvshmemi_fcollect_threadgroup<TYPE, BLOCK>(team, dest, source, nelems);
+#endif
+}
 
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(FCOLLECT_ON_STREAM_KERNEL)
-#undef FCOLLECT_ON_STREAM_KERNEL
+template <typename TYPE>
+void nvshmemi_call_fcollect_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
+                                             size_t nelems, cudaStream_t stream) {
+    int num_threads_per_block = (MAX_THREADS_PER_CTA > nelems) ? nelems : MAX_THREADS_PER_CTA;
+    int num_blocks = 1;
+    fcollect_on_stream_kernel<TYPE>
+        <<<num_blocks, num_threads_per_block, 0, stream>>>(team, dest, source, nelems);
+    CUDA_RUNTIME_CHECK(cudaGetLastError());
+}
 
-#define CALL_FCOLLECT_ON_STREAM(TYPENAME, TYPE)                                                     \
-    extern "C" void call_##TYPENAME##_fcollect_on_stream_kern(                                      \
-        TYPE *dest, const TYPE *source, size_t nelems, int PE_start, int PE_stride,                \
-        int PE_size, long *pSync, cudaStream_t stream) {                                           \
-        int num_threads_per_block = (MAX_THREADS_PER_CTA > nelems) ? nelems : MAX_THREADS_PER_CTA; \
-        int num_blocks = 1;                                                                        \
-        fcollect_##TYPENAME##_on_stream_kernel<<<num_blocks, num_threads_per_block, 0, stream>>>(   \
-            dest, source, nelems, PE_start, PE_stride, PE_size, pSync);                            \
-        CUDA_RUNTIME_CHECK(cudaGetLastError());                                                    \
-    }
-
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(CALL_FCOLLECT_ON_STREAM)
-#undef CALL_FCOLLECT_ON_STREAM
+#define INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(TYPE) \
+    template void nvshmemi_call_fcollect_on_stream_kernel<TYPE>(  \
+        nvshmem_team_t, TYPE *, const TYPE *, size_t, cudaStream_t);
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(uint8_t)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(uint16_t)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(uint32_t)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(uint64_t)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(int8_t)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(int16_t)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(int32_t)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(int64_t)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(float)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(char)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(double)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(long long)
+INSTANTIATE_NVSHMEMI_CALL_FCOLLECT_ON_STREAM_KERNEL(unsigned long long)

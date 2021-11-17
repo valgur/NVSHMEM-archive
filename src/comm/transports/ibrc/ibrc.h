@@ -12,6 +12,7 @@
 #include "infiniband/verbs.h"
 
 struct ibrc_function_table {
+    int (*fork_init)(void);
     struct ibv_device **(*get_device_list)(int *num_devices);
     const char *(*get_device_name)(struct ibv_device *device);
     struct ibv_context *(*open_device)(struct ibv_device *device);

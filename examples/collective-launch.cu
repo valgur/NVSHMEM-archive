@@ -47,6 +47,7 @@ __global__ void reduce_ring(int *target, int mype, int npes) {
         nvshmem_int_p(target, lvalue, peer);
         nvshmem_barrier_all();
         lvalue = *target + mype;
+        nvshmem_barrier_all();
     }
 }
 
@@ -82,7 +83,8 @@ int main(int c, char *v[]) {
 
     // application picks the device each PE will use
     CUDA_CHECK(cudaSetDevice(mype_node));
-    double *u = (double *)nvshmem_malloc(sizeof(double));
+    int *u = (int *)nvshmem_calloc(1, sizeof(int));
+    int *h = (int *)calloc(1, sizeof(int));
 
     void *args[] = {&u, &mype, &npes};
     dim3 dimBlock(1);
@@ -92,10 +94,11 @@ int main(int c, char *v[]) {
         nvshmemx_collective_launch((const void *)reduce_ring, dimGrid, dimBlock, args, 0, 0));
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    printf("[%d of %d] run complete \n", mype, npes);
+    cudaMemcpy(h, u,  sizeof(int), cudaMemcpyDeviceToHost);
+    printf("results on device [%d] is %d \n",mype, h[0]);
 
     nvshmem_free(u);
-
+    free(h);
     nvshmem_finalize();
 
 #ifdef NVSHMEM_MPI_SUPPORT

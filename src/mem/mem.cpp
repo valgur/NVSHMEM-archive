@@ -27,8 +27,10 @@
         exit(EXIT_FAILURE);                     \
     }
 
-#define CUMEM_ALIGNMENT (1 << 29) // 512 MB
-std::map<pid_t, int> p2p_processes; /* Map from p2p processes to PE id - required when using VMM */
+size_t cumem_granularity;
+size_t log2_cumem_granularity;
+static std::map<pid_t, int>
+    p2p_processes; /* Map from p2p processes to PE id - required when using VMM */
 static int is_mem_handle_null(nvshmem_mem_handle_t *handle) {
     assert(sizeof(nvshmem_mem_handle_t) % sizeof(uint64_t) == 0);
 
@@ -110,18 +112,12 @@ out:
 }
 
 int nvshmemi_cleanup_memory_space(nvshmemi_state_t *state) {
-    int status = 0;
-    size_t size;
-
-    size = destroy_mspace(state->heap_mspace);
-    status = (size == state->heap_size) ? 0 : 1;
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "destroy_mspace failed \n");
-
-out:
-    return status;
+    destroy_mspace(state->heap_mspace);
+    return 0;
 }
 
 int nvshmemi_cleanup_symmetric_heap(nvshmemi_state_t *state) {
+    INFO(NVSHMEM_INIT, "In nvshmemi_cleanup_symmetric_heap()");
     int status = 0;
 
     if (!state->peer_heap_base) goto out;
@@ -132,9 +128,12 @@ int nvshmemi_cleanup_symmetric_heap(nvshmemi_state_t *state) {
 
     for (int i = 0; i < state->npes; i++) {
         if ((i == state->mype) && (state->heap_base != NULL)) {
-            status = cleanup_local_handles(state->handles + i * NVSHMEM_TRANSPORT_COUNT, state);
-            NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                         "cleanup local handles failed \n");
+            for (size_t j = 0; j < state->handles.size(); j++) {
+                status =
+                    cleanup_local_handles(&state->handles[j][i * NVSHMEM_TRANSPORT_COUNT], state);
+                NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                             "cleanup local handles failed \n");
+            }
 #if CUDART_VERSION >= 11030
             if (nvshmemi_use_cuda_vmm) {
                 for (uint32_t i = 0; i < state->cumem_handles.size(); i++) {
@@ -161,23 +160,29 @@ int nvshmemi_cleanup_symmetric_heap(nvshmemi_state_t *state) {
                 status = state->transports[j]->host_ops.unmap((state->peer_heap_base[i]), state->heap_size);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "unmap failed \n");
 
-                close(*(int *)&state->handles[i * NVSHMEM_TRANSPORT_COUNT]);
+                for (size_t k = 0; k < state->handles.size(); k++) {
+                    close(*(int *)&state->handles[k][i * NVSHMEM_TRANSPORT_COUNT]);
+                }
             }
         }
     }
 
+    nvshmemi_cleanup_memory_space(state);
+
     free(state->peer_heap_base);
+    INFO(NVSHMEM_INIT, "Leaving nvshmemi_cleanup_symmetric_heap()");
 
 out:
     return status;
 }
 
-static size_t granularity;
 int nvshmemi_setup_local_heap(nvshmemi_state_t *state) {
     int status;
     size_t alignbytes = MALLOC_ALIGNMENT;
     size_t heapextra;
+    size_t tmp;
 
+    cumem_granularity = nvshmemi_options.CUMEM_GRANULARITY;
 #if CUDART_VERSION >= 11030
     CUmemAllocationProp prop = {};
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
@@ -186,10 +191,17 @@ int nvshmemi_setup_local_heap(nvshmemi_state_t *state) {
     prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
     prop.allocFlags.gpuDirectRDMACapable = 1;
 
-    status = cuMemGetAllocationGranularity(&granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+    status = cuMemGetAllocationGranularity(&cumem_granularity, &prop,
+                                           CU_MEM_ALLOC_GRANULARITY_RECOMMENDED);
     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                  "cuMemGetAllocationGranularity failed \n");
+    cumem_granularity = std::max(nvshmemi_options.CUMEM_GRANULARITY, cumem_granularity);
 #endif
+
+    assert((cumem_granularity & (cumem_granularity - 1)) == 0);
+    tmp = cumem_granularity;
+    log2_cumem_granularity = 0;
+    while (tmp >> 1) { tmp >>= 1; log2_cumem_granularity++; }
 
     heapextra = NUM_G_BUF_ELEMENTS * sizeof(g_elem_t) +
                 nvshmemi_get_teams_mem_requirement() +
@@ -201,11 +213,11 @@ int nvshmemi_setup_local_heap(nvshmemi_state_t *state) {
     INFO(NVSHMEM_INIT, "nvshmemi_setup_local_heap, heapextra = %lld", heapextra);
     if (nvshmemi_use_cuda_vmm) {
         state->heap_size = std::max(nvshmemi_options.MAX_MEMORY_PER_GPU, heapextra);
-        state->heap_size = (state->heap_size / granularity) * granularity; /* calculate floor */
     } else {
         state->heap_size = nvshmemi_options.SYMMETRIC_SIZE + heapextra;
-        state->heap_size = ((state->heap_size + CUMEM_ALIGNMENT - 1) / CUMEM_ALIGNMENT) * CUMEM_ALIGNMENT;
     }
+    state->heap_size =
+        ((state->heap_size + cumem_granularity - 1) / cumem_granularity) * cumem_granularity;
 
 #if CUDART_VERSION >= 11030
     if (nvshmemi_use_cuda_vmm) {
@@ -215,7 +227,7 @@ int nvshmemi_setup_local_heap(nvshmemi_state_t *state) {
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                      "cuMemAddressReserve failed \n");
 
-        state->heap_base = (void *)((uintptr_t)state->global_heap_base + state->mype * state->heap_size);
+        state->heap_base = (void *)((uintptr_t)state->global_heap_base);
         state->physical_heap_size = 0;
 
         status = nvshmemi_setup_memory_space(state, state->heap_base, state->physical_heap_size);
@@ -252,22 +264,18 @@ out:
 }
 
 int nvshmemi_gather_mem_handles(nvshmem_mem_handle_t *local_handles, nvshmemi_state_t *state) {
-    int status = state->boot_handle.allgather((void *)local_handles, (void *)state->handles,
-                                              sizeof(nvshmem_mem_handle_t) * NVSHMEM_TRANSPORT_COUNT,
-                                              &state->boot_handle);
+    int status = state->boot_handle.allgather(
+        (void *)local_handles, (void *)(state->handles.back().data()),
+        sizeof(nvshmem_mem_handle_t) * NVSHMEM_TRANSPORT_COUNT, &state->boot_handle);
     return status;
 }
 
 int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
     int status;
+    int p2p_counter;
     nvshmem_transport_t *transports = (nvshmem_transport_t *)state->transports;
     nvshmem_mem_handle_t local_handles[NVSHMEM_TRANSPORT_COUNT];
     // assuming symmetry of transports across all PEs
-    state->handles = (nvshmem_mem_handle_t *)calloc(NVSHMEM_TRANSPORT_COUNT * state->npes,
-                                                    sizeof(nvshmem_mem_handle_t));
-    NULL_ERROR_JMP(state->handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "failed allocating space for peer heap base \n");
-
     memset(local_handles, 0, sizeof(nvshmem_mem_handle_t) * NVSHMEM_TRANSPORT_COUNT);
 
     if (!nvshmemi_use_cuda_vmm){
@@ -275,18 +283,19 @@ int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
 
         for (int i = 0; i < NVSHMEM_TRANSPORT_COUNT; i++) {
             if ((state->transport_bitmap & (1 << i)) && transports[i]->host_ops.get_mem_handle) {
-                INFO(NVSHMEM_INIT, "calling get_mem_handle for transport: %d buf: %p size: %d", i,
+                INFO(NVSHMEM_INIT, "calling get_mem_handle for transport: %d buf: %p size: %lu", i,
                      state->heap_base, state->heap_size);
                 status = transports[i]->host_ops.get_mem_handle(
                     (nvshmem_mem_handle_t *)(local_handles + i),
                     local_handles /*dummy - used only by p2p transport when using vmm*/,
-                    state->heap_base, state->heap_size, transports[i]);
+                    state->heap_base, state->heap_size, transports[i], false);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport get memhandle failed \n");
                 INFO(NVSHMEM_INIT, "[%d] get_mem_handle transport %d handles %p", state->mype, i,
                      local_handles + i);
             }
         }
     
+        state->handles.push_back(vector<nvshmem_mem_handle_t>(NVSHMEM_TRANSPORT_COUNT * state->npes));
         status = nvshmemi_gather_mem_handles(local_handles, state);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of mem handles failed \n");
     }
@@ -307,6 +316,7 @@ int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
     
     // pick a transport that allows LD/ST and map to get local pointers to remote heaps
     // assumes symmetry of handles received from each peer, should be true (mostly)
+    p2p_counter = 1;
     for (int i = 0; i < state->npes; i++) {
         if (i == state->mype) {
             state->peer_heap_base[i] = state->heap_base;
@@ -318,12 +328,12 @@ int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
                 if (transports[j]->cap[i] & NVSHMEM_TRANSPORT_CAP_MAP) {
                     if (nvshmemi_use_cuda_vmm) {
                         state->peer_heap_base[i] = (void *)((uintptr_t)state->global_heap_base 
-                                                            + state->heap_size * i);
+                                                            + state->heap_size * p2p_counter++);
                         break;
                     } else {
                         status = transports[j]->host_ops.map(
                             (state->peer_heap_base + i), state->heap_size,
-                            &state->handles[i * NVSHMEM_TRANSPORT_COUNT + j]);
+                            &state->handles.back()[i * NVSHMEM_TRANSPORT_COUNT + j]);
                         if (status) {
                                //map operation failed, remove cap of transport
                                state->transports[j]->cap[i] ^= NVSHMEM_TRANSPORT_CAP_MAP;
@@ -331,8 +341,9 @@ int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
                                continue;
                         }
 
-                        char *hex = nvshmemu_hexdump(&state->handles[i * NVSHMEM_TRANSPORT_COUNT + j],
-                                                     sizeof(CUipcMemHandle));
+                        char *hex = nvshmemu_hexdump(
+                            &state->handles.back()[i * NVSHMEM_TRANSPORT_COUNT + j],
+                            sizeof(CUipcMemHandle));
                         INFO(NVSHMEM_INIT, "[%d] cuIpcOpenMemHandle fromhandle 0x%s", state->mype, hex);
                         free(hex);
 
@@ -363,7 +374,7 @@ int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
                 p2p_processes[peer_pids[pe]] = pe;
             }
         }
-        INFO(NVSHMEM_MEM, "I am connected to %p p2p processes (including myself)", p2p_processes.size());
+        INFO(NVSHMEM_MEM, "I am connected to %lu p2p processes (including myself)", p2p_processes.size());
         free(peer_pids);
         free(hostHash);
     }
@@ -372,12 +383,8 @@ out:
     if (status) {
         // if handles has been allocated, try and cleanup all heap state
         // else cleanup local handles only
-        if (state->handles) {
-            nvshmemi_cleanup_symmetric_heap(state);
-        } else {
-            cleanup_local_handles(local_handles, state);
-            if (state->heap_base) cuMemFree((CUdeviceptr)state->heap_base);
-        }
+        nvshmemi_cleanup_symmetric_heap(state);
+        if (state->heap_base) cuMemFree((CUdeviceptr)state->heap_base);
     }
     return status;
 }
@@ -400,15 +407,7 @@ int nvshmemi_add_physical_memory(size_t size) {
     prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
     prop.allocFlags.gpuDirectRDMACapable = 1;
     
-    /* Quiesce all existing communication (needed for network transports
-    so that we can release current memory region and reassign it) */
-    nvshmem_quiet();
-    cudaDeviceSynchronize();
-    nvshmemx_quiet_on_stream(NULL);
-    cudaStreamSynchronize(NULL);
-    status = state->boot_handle.barrier(&state->boot_handle);
-
-    size = ((size + granularity - 1) / granularity) * granularity;
+    size = ((size + cumem_granularity - 1) / cumem_granularity) * cumem_granularity;
     INFO(NVSHMEM_MEM, "Adding new physical backing of size %zu bytes", size);
     status =
         cuMemCreate(&cumem_handle, size, (const CUmemAllocationProp *)&prop, 0);
@@ -429,42 +428,22 @@ int nvshmemi_add_physical_memory(size_t size) {
 
     memset(local_handles, 0, sizeof(nvshmem_mem_handle_t) * NVSHMEM_TRANSPORT_COUNT);
 
-    /* Get P2P handle */
-    assert(NVSHMEM_TRANSPORT_ID_P2P == 0);
-    i = 0;
-    if ((state->transport_bitmap & (1 << i)) && transports[i]->host_ops.get_mem_handle) {
-        INFO(NVSHMEM_INIT, "calling get_mem_handle for transport: %d buf: %p size: %d", i,
-             (char *)state->heap_base + state->physical_heap_size, size);
-        status = transports[i]->host_ops.get_mem_handle(
-            (nvshmem_mem_handle_t *)(local_handles + i),
-            (nvshmem_mem_handle_t *)&cumem_handle /*used only by p2p transport*/,
-            (char *)state->heap_base + state->physical_heap_size, size, transports[i]);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport get memhandle failed \n");
-        INFO(NVSHMEM_INIT, "[%d] get_mem_handle transport %d handles %p", state->mype, i,
-             local_handles + i);
-    }
-    /* Get Remote transport handles */
-    for (i = 1; i < NVSHMEM_TRANSPORT_COUNT; i++) {
+    /* Get mem handles */
+    for (i = 0; i < NVSHMEM_TRANSPORT_COUNT; i++) {
         if ((state->transport_bitmap & (1 << i)) && transports[i]->host_ops.get_mem_handle) {
             INFO(NVSHMEM_INIT, "calling get_mem_handle for transport: %d buf: %p size: %d", i,
-                 state->heap_base, state->physical_heap_size + size);
-            if (!is_mem_handle_null(&state->handles[state->mype * NVSHMEM_TRANSPORT_COUNT + i])) {
-                status = state->transports[i]->host_ops.release_mem_handle(
-                                &state->handles[state->mype * NVSHMEM_TRANSPORT_COUNT + i],
-                                transports[i]);
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                             "transport release memhandle failed \n");
-            }
+                 (char *)state->heap_base + state->physical_heap_size, size);
             status = transports[i]->host_ops.get_mem_handle(
                 (nvshmem_mem_handle_t *)(local_handles + i),
-                (nvshmem_mem_handle_t *)&cumem_handle /*unused and hence dummy*/,
-                state->heap_base, state->physical_heap_size + size, transports[i]);
+                (nvshmem_mem_handle_t *)&cumem_handle /*used only by p2p transport*/,
+                (char *)state->heap_base + state->physical_heap_size, size, transports[i], false);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport get memhandle failed \n");
             INFO(NVSHMEM_INIT, "[%d] get_mem_handle transport %d handles %p", state->mype, i,
                  local_handles + i);
         }
     }
-    
+
+    state->handles.push_back(vector<nvshmem_mem_handle_t>(NVSHMEM_TRANSPORT_COUNT * state->npes));
     status = nvshmemi_gather_mem_handles(local_handles, state);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of mem handles failed \n");
 
@@ -487,7 +466,8 @@ int nvshmemi_add_physical_memory(size_t size) {
                 }
             }
         } else  {
-           IPC_CHECK(ipcRecvFd(myIpcHandle, (int *)&state->handles[it1->second * NVSHMEM_TRANSPORT_COUNT]));
+            IPC_CHECK(ipcRecvFd(
+                myIpcHandle, (int *)&state->handles.back()[it1->second * NVSHMEM_TRANSPORT_COUNT]));
         }
         /* Putting a global barrier means assuming that all nodes are running with config */
         status = state->boot_handle.barrier(&state->boot_handle);
@@ -505,7 +485,7 @@ int nvshmemi_add_physical_memory(size_t size) {
                     char *map_addr = (char *)state->peer_heap_base[i] + state->physical_heap_size;
                     status = transports[j]->host_ops.map(
                         (void **)&map_addr, size,
-                        &state->handles[i * NVSHMEM_TRANSPORT_COUNT + j]);
+                        &state->handles.back()[i * NVSHMEM_TRANSPORT_COUNT + j]);
                     if (status) {
                            //map operation failed, remove cap of transport
                            state->transports[j]->cap[i] ^= NVSHMEM_TRANSPORT_CAP_MAP;
@@ -513,8 +493,9 @@ int nvshmemi_add_physical_memory(size_t size) {
                            continue;
                     }
 
-                    char *hex = nvshmemu_hexdump(&state->handles[i * NVSHMEM_TRANSPORT_COUNT + j],
-                                                 sizeof(CUipcMemHandle));
+                    char *hex =
+                        nvshmemu_hexdump(&state->handles.back()[i * NVSHMEM_TRANSPORT_COUNT + j],
+                                         sizeof(CUipcMemHandle));
                     INFO(NVSHMEM_INIT, "[%d] cuIpcOpenMemHandle fromhandle 0x%s", state->mype, hex);
                     free(hex);
 
@@ -526,18 +507,16 @@ int nvshmemi_add_physical_memory(size_t size) {
         }
     }
     mspace_add_new_chunk(state->heap_mspace, (char *)state->heap_base + state->physical_heap_size, size);
+    for (size_t i = 0; i < (size / cumem_granularity); i++)
+        nvshmemi_state->idx_in_handles.push_back(make_tuple(nvshmemi_state->handles.size() - 1,
+                                                            (char *)state->heap_base + state->physical_heap_size,
+                                                            size));
     state->physical_heap_size += size;
     status = state->boot_handle.barrier(&state->boot_handle); /* Wait for all PEs to setup the new memory */
 out:
     if (status) {
-        // if handles has been allocated, try and cleanup all heap state
-        // else cleanup local handles only
-        if (state->handles) {
-            nvshmemi_cleanup_symmetric_heap(state);
-        } else {
-            cleanup_local_handles(local_handles, state);
-            if (state->heap_base) cuMemFree((CUdeviceptr)state->heap_base);
-        }
+        nvshmemi_cleanup_symmetric_heap(state);
+        if (state->heap_base) cuMemFree((CUdeviceptr)state->heap_base);
     }
     return status;
 }
@@ -720,4 +699,324 @@ void *nvshmem_ptr(const void *ptr, int pe) {
     }
 
     return NULL;
+}
+
+static struct nvshmem_transport *nvshmemi_get_remote_transport() {
+    struct nvshmem_transport *t = NULL;
+
+    /* Built in assumption that we only allow for one remote transport. TODO: codify that. */
+    if (nvshmemi_state->transport_bitmap & (1 << NVSHMEM_TRANSPORT_ID_IBRC)) {
+        t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_IBRC];
+    } else if (nvshmemi_state->transport_bitmap & (1 << NVSHMEM_TRANSPORT_ID_UCX)) {
+        t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_UCX];
+    }
+
+    return t;
+}
+
+int nvshmemx_buffer_register(void *addr, size_t length) {
+    struct nvshmem_transport *t = nvshmemi_get_remote_transport();
+    nvshmem_local_buf_handle_t *handle;
+    size_t i;
+    void *heap_end;
+    int status = 0;
+    int lock_status = EBUSY;
+    cudaPointerAttributes attr;
+#if CUDART_VERSION < 11000
+    bool register_with_cuda = false;
+#endif
+
+    status = cudaPointerGetAttributes(&attr, addr);
+#if CUDART_VERSION >= 11000
+    if (status != cudaSuccess) {
+        ERROR_PRINT("Unable to query pointer attributes.\n");
+        /* clear CUDA error string. */
+        cudaGetLastError();
+        return NVSHMEMX_ERROR_INTERNAL;
+    }
+#else
+    if (status != cudaSuccess) {
+        /* clear CUDA error string. */
+        cudaGetLastError();
+        if (status == cudaErrorInvalidValue) {
+            register_with_cuda = true;
+        } else {
+            ERROR_PRINT("Unable to query pointer attributes.\n");
+            return NVSHMEMX_ERROR_INTERNAL;
+        }
+    }
+#endif
+
+    if (attr.type == cudaMemoryTypeManaged) {
+        ERROR_PRINT("Unable to register managed memory as it can migrate.\n");
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    heap_end = (void *) ((char *)nvshmemi_state->heap_base + nvshmemi_state->heap_size);
+    if (addr >= nvshmemi_state->heap_base && addr < heap_end) {
+        ERROR_PRINT("Unable to register nvshmem heap memory. It is registered by default.\n");
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    handle = (nvshmem_local_buf_handle_t *)calloc(1, sizeof(nvshmem_local_buf_handle_t));
+    if (handle == NULL) {
+        ERROR_PRINT("Unable to resize the registered buffer array.\n");
+        return NVSHMEMX_ERROR_OUT_OF_MEMORY;
+    }
+
+    if (t) {
+        handle->handle = (nvshmem_mem_handle_t *)calloc(1, sizeof(nvshmem_mem_handle_t));
+        if (handle->handle == NULL) {
+            ERROR_PRINT("Unable to resize the registered buffer array.\n");
+            status = NVSHMEMX_ERROR_OUT_OF_MEMORY;
+            goto out_error_unlocked;
+        }
+    }
+
+    while (lock_status == EBUSY) {
+        lock_status = pthread_rwlock_wrlock(&nvshmemi_state->registered_buffer_lock);
+    }
+
+    if (lock_status != 0) {
+        ERROR_PRINT("Unable to acquire buffer registration lock with errno %d\n", lock_status);
+        status = NVSHMEMX_ERROR_INTERNAL;
+        goto out_error_unlocked;
+    }
+
+#if CUDART_VERSION >= 11000
+    if (attr.type == cudaMemoryTypeUnregistered) {
+#else
+    if (register_with_cuda) {
+#endif
+        if (!nvshmemi_state->host_memory_registration_supported) {
+            ERROR_PRINT("Unable to register host memory for this device as it doesn't support UVA.\n");
+            status = NVSHMEMX_ERROR_INVALID_VALUE;
+            goto out_unlock;
+        }
+        status = cudaHostRegister(addr, length, cudaHostRegisterDefault);
+        if (status) {
+            ERROR_PRINT("Unable to register host memory with CUDA.\n");
+            status = NVSHMEMX_ERROR_INTERNAL;
+            goto out_unlock;
+        }
+        handle->registered_by_us = true;
+    }
+
+    /* We only need to register unregistered host buffers if there is no remote transport.
+     * CUDA memory and registered host memory are already mapped into the address space
+     * so nothing to register.
+     */
+    if (t == NULL && handle->registered_by_us == false) {
+        status = 0;
+        free(handle);
+        goto out_unlock;
+    }
+
+    if (nvshmemi_state->registered_buffer_array_used == nvshmemi_state->registered_buffer_array_size) {
+        size_t new_array_size = nvshmemi_state->registered_buffer_array_size * 2;
+        void *new_buf;
+
+        assert(new_array_size < (SIZE_MAX / sizeof(nvshmem_local_buf_handle_t)));
+        new_buf = realloc(nvshmemi_state->registered_buffers, new_array_size * sizeof(nvshmem_local_buf_handle_t *));
+        if (new_buf == NULL) {
+            ERROR_PRINT("Unable to resize the registered buffer array.\n");
+            status = NVSHMEMX_ERROR_OUT_OF_MEMORY;
+            goto out_unlock;
+        }
+        nvshmemi_state->registered_buffers = (nvshmem_local_buf_handle_t **)new_buf;
+        nvshmemi_state->registered_buffer_array_size = new_array_size;
+    }
+
+    /* TODO: This could be a binary search. */
+    for (i = 0; i < nvshmemi_state->registered_buffer_array_used; i++) {
+        nvshmem_local_buf_handle_t *tmp_handle = nvshmemi_state->registered_buffers[i];
+        if (addr > tmp_handle->ptr) {
+            continue;
+        } else if (addr == tmp_handle->ptr) {
+            if (length != tmp_handle->length) {
+                ERROR_PRINT("Unable to register overlapping memory regions.\n");
+                status = NVSHMEMX_ERROR_INVALID_VALUE;
+                goto out_unlock;
+            }
+            free(handle);
+            goto out_unlock;
+        /* addr < tmp_handle->ptr */
+        } else {
+            break;
+        }
+    }
+
+    if (t) {
+        status = t->host_ops.get_mem_handle(handle->handle, NULL, addr, length, t, true);
+        if (status) {
+            ERROR_PRINT("Unable to assign new memory handle.\n");
+            goto out_unlock;
+        }
+    }
+    handle->ptr = addr;
+    handle->length = length;
+
+    assert(i < nvshmemi_state->registered_buffer_array_size);
+    if (i < nvshmemi_state->registered_buffer_array_used) {
+        memmove(&nvshmemi_state->registered_buffers[i + 1],
+                &nvshmemi_state->registered_buffers[i],
+                sizeof(nvshmem_local_buf_handle_t *) * (nvshmemi_state->registered_buffer_array_used - i));
+    }
+    nvshmemi_state->registered_buffers[i] = handle;
+    nvshmemi_state->registered_buffer_array_used++;
+
+out_unlock:
+    pthread_rwlock_unlock(&nvshmemi_state->registered_buffer_lock);
+    if (status == 0) {
+        return 0;
+    }
+
+out_error_unlocked:
+    if (handle->registered_by_us) {
+        cudaHostUnregister(addr);
+    }
+    if (handle) {
+        if (handle->handle) {
+            free(handle->handle);
+        }
+        free(handle);
+    }
+    return status;
+}
+
+int nvshmemx_buffer_unregister(void *addr) {
+    struct nvshmem_transport *t = nvshmemi_get_remote_transport();
+    size_t i;
+    int lock_status = EBUSY;
+    int status = 0;
+
+    while (lock_status == EBUSY) {
+        lock_status = pthread_rwlock_wrlock(&nvshmemi_state->registered_buffer_lock);
+    }
+
+    if (lock_status != 0) {
+        ERROR_PRINT("Unable to acquire buffer registration lock with errno %d\n", lock_status);
+        return NVSHMEMX_ERROR_INTERNAL;
+    }
+
+    /* TODO: This could be a binary search. */
+    for (i = 0; i < nvshmemi_state->registered_buffer_array_used; i++) {
+        nvshmem_local_buf_handle_t *tmp_handle = nvshmemi_state->registered_buffers[i];
+        if (addr > tmp_handle->ptr) {
+            continue;
+        } else if (addr == tmp_handle->ptr) {
+            if ((i + 1) < nvshmemi_state->registered_buffer_array_used) {
+                memmove(&nvshmemi_state->registered_buffers[i],
+                        &nvshmemi_state->registered_buffers[i + 1],
+                        sizeof(nvshmem_local_buf_handle_t *) * (nvshmemi_state->registered_buffer_array_used - i));
+            }
+                if (t) {
+                    t->host_ops.release_mem_handle(tmp_handle->handle, t);
+                    free(tmp_handle->handle);
+                }
+
+                if (tmp_handle->registered_by_us) {
+                    cudaHostUnregister(tmp_handle->ptr);
+                }
+                free(tmp_handle);
+                nvshmemi_state->registered_buffer_array_used--;
+                goto out_unlock;
+        /* addr < tmp_handle->ptr*/
+        } else {
+            break;
+        }
+    }
+
+    status = NVSHMEMX_ERROR_INVALID_VALUE;
+out_unlock:
+    pthread_rwlock_unlock(&nvshmemi_state->registered_buffer_lock);
+    return status;
+}
+
+void nvshmemx_buffer_unregister_all() {
+    struct nvshmem_transport *t = nvshmemi_get_remote_transport();
+    int lock_status = EBUSY;
+
+    while (lock_status == EBUSY) {
+        lock_status = pthread_rwlock_wrlock(&nvshmemi_state->registered_buffer_lock);
+    }
+
+    if (lock_status != 0) {
+        ERROR_PRINT("Unable to acquire buffer registration lock with errno %d. Unregister all function failed.\n", lock_status);
+        return;
+    }
+
+    for (size_t i = 0; i < nvshmemi_state->registered_buffer_array_used; i++) {
+        if (t) {
+            t->host_ops.release_mem_handle(nvshmemi_state->registered_buffers[i]->handle, t);
+            free(nvshmemi_state->registered_buffers[i]->handle);
+        }
+        if (nvshmemi_state->registered_buffers[i]->registered_by_us) {
+            cudaHostUnregister(nvshmemi_state->registered_buffers[i]->ptr);
+        }
+        free(nvshmemi_state->registered_buffers[i]);
+    }
+
+    nvshmemi_state->registered_buffer_array_used = 0;
+    pthread_rwlock_unlock(&nvshmemi_state->registered_buffer_lock);
+
+    return;
+}
+
+struct nvshmem_mem_handle *nvshmemi_get_registered_buffer_handle(void *addr, size_t *len) {
+    nvshmem_local_buf_handle_t *tmp_handle;
+    size_t min, max, mid;
+    void *max_addr;
+    size_t max_len;
+    int lock_status = EBUSY;
+    struct nvshmem_mem_handle *ret_handle = NULL;
+
+    while (lock_status == EBUSY) {
+        lock_status = pthread_rwlock_rdlock(&nvshmemi_state->registered_buffer_lock);
+    }
+
+    if (lock_status != 0) {
+        ERROR_PRINT("Unable to acquire buffer registration lock with errno %d.\n", lock_status);
+        return ret_handle;
+    }
+
+    if (nvshmemi_state->registered_buffer_array_used == 0) {
+        goto out_unlock;
+    }
+
+    min = 0;
+    max = nvshmemi_state->registered_buffer_array_used;
+    do {
+            mid = (max - min) / 2 + min;
+            /* We have gone past the end of the loop. */
+            if (mid >= nvshmemi_state->registered_buffer_array_used) {
+                break;
+            }
+            tmp_handle = nvshmemi_state->registered_buffers[mid];
+            if (addr > tmp_handle->ptr) {
+                max_addr = (void *)((char *)tmp_handle->ptr + tmp_handle->length);
+                max_len = (uint64_t)((char *)max_addr - (char *)addr);
+                if (addr < max_addr) {
+                    *len = *len < max_len ? *len : max_len;
+                    ret_handle = tmp_handle->handle;
+                    goto out_unlock;
+                }
+                min = mid + 1;
+            } else if (addr == tmp_handle->ptr) {
+                *len = *len < tmp_handle->length ? *len : tmp_handle->length;
+                ret_handle = tmp_handle->handle;
+                goto out_unlock;
+            } else {
+                if (mid == 0) {
+                    break;
+                }
+                max = mid - 1;
+            }
+    } while (max >= min);
+
+    ERROR_PRINT("Unable to find a reference to the requested buffer address.\n");
+
+out_unlock:
+    pthread_rwlock_unlock(&nvshmemi_state->registered_buffer_lock);
+    return ret_handle;
 }

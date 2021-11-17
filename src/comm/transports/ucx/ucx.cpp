@@ -31,6 +31,23 @@ static bool use_local_atomics = 0;
 
 int nvshmemt_ucx_progress(nvshmem_transport_t transport);
 
+static nvshmemt_ucx_mem_handle_info_t get_mem_handle_info(transport_ucx_state_t *ucx_state, void *gpu_ptr) {
+    /* assumes that gpu_ptr is in symmetric heap */
+    assert(!ucx_state->mem_handle_info_cache.empty());
+    nvshmemt_ucx_mem_handle_info_t mem_handle_info;
+    if (nvshmemi_use_cuda_vmm) {
+        size_t offset = (char *) gpu_ptr - (char *) nvshmemi_state->heap_base; 
+        size_t addr_idx = offset >> log2_cumem_granularity;
+        size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
+        mem_handle_info = ucx_state->mem_handle_info_cache[handle_idx];
+    } else {
+        mem_handle_info = ucx_state->mem_handle_info_cache.back();
+    }
+
+    return mem_handle_info;
+}
+
+
 static void nvshmemt_ucx_send_request_cb(void *request, ucs_status_t status, void *user_data) {
     if (status != UCS_OK) {
         ERROR_PRINT("UCX send request completed with error.\n");
@@ -58,12 +75,12 @@ static void nvshmemt_ucx_atomic_request_cb(void *request, ucs_status_t status, v
             if (buffer) {
                 if (buffer->amo_has_retval) {
                     transport_ucx_state_t           *ucx_state = (transport_ucx_state_t *)buffer->ucx_state;;
-                    nvshmemt_ucx_mem_handle_info_t  *mem_handle_info = &ucx_state->mem_handle_info;
+                    nvshmemt_ucx_mem_handle_info_t  mem_handle_info = get_mem_handle_info(ucx_state, buffer->amo_device_retptr);
                     g_elem_t                        *elem;
                     void                            *valid_cpu_ptr;
 
-                    valid_cpu_ptr = (void *)((char *)mem_handle_info->cpu_ptr +
-                                            ((char *)buffer->amo_device_retptr - (char *)mem_handle_info->ptr));
+                    valid_cpu_ptr = (void *)((char *)mem_handle_info.cpu_ptr +
+                                            ((char *)buffer->amo_device_retptr - (char *)mem_handle_info.ptr));
                     elem = (g_elem_t *)valid_cpu_ptr;
                     elem->data = buffer->retvalue;
                     elem->flag = buffer->amo_retflag;
@@ -156,7 +173,6 @@ ucs_status_t ucx_recv_resp_am_data_cb(void *arg, const void *header,
                                       size_t length, const ucp_am_recv_param_t *param) {
     struct nvshmem_transport        *transport = (struct nvshmem_transport *)arg;
     transport_ucx_state_t           *ucx_state = (transport_ucx_state_t *)transport->state;
-    nvshmemt_ucx_mem_handle_info_t  *mem_handle_info = &ucx_state->mem_handle_info;
     nvshmemt_ucx_am_header_t        *header_info;
     volatile g_elem_t               *recv_elem_ptr;
     void                            *valid_cpu_ptr;
@@ -168,9 +184,11 @@ ucs_status_t ucx_recv_resp_am_data_cb(void *arg, const void *header,
     }
     if (header_length == sizeof(nvshmemt_ucx_am_header_t)) {
         header_info = (nvshmemt_ucx_am_header_t *)header;
+        nvshmemt_ucx_mem_handle_info_t  mem_handle_info =
+                    get_mem_handle_info(ucx_state, header_info->header.resp_h.retptr);
 
-        valid_cpu_ptr = (void *)((char *)mem_handle_info->cpu_ptr +
-                                ((char *)header_info->header.resp_h.retptr - (char *)mem_handle_info->ptr));
+        valid_cpu_ptr = (void *)((char *)mem_handle_info.cpu_ptr +
+                                ((char *)header_info->header.resp_h.retptr - (char *)mem_handle_info.ptr));
         recv_elem_ptr = (volatile g_elem_t *)valid_cpu_ptr;
         recv_elem_ptr->data = header_info->header.resp_h.retval;
         recv_elem_ptr->flag = header_info->header.resp_h.retflag;
@@ -195,9 +213,27 @@ out:
 int nvshmemt_ucx_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
     nvshmemt_ucx_mem_handle_t *handle = (nvshmemt_ucx_mem_handle_t *)mem_handle;
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)t->state;
-    nvshmemt_ucx_mem_handle_info_t *handle_info = &ucx_state->mem_handle_info;
     ucs_status_t ucs_rc;
     int status = 0;
+
+    for (std::vector<nvshmemt_ucx_mem_handle_info_t>::iterator it = ucx_state->mem_handle_info_cache.begin();
+         it != ucx_state->mem_handle_info_cache.end();
+         it++) {
+       if (handle->mem_handle == it->mem_handle) {
+#ifdef NVSHMEM_USE_GDRCOPY
+            if (use_gdrcopy) {
+                status = gdrcopy_ftable.unmap(gdr_desc, it->mh, it->cpu_ptr_base,
+                                              it->size);
+                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unmap failed\n");
+
+                status = gdrcopy_ftable.unpin_buffer(gdr_desc, it->mh);
+                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
+            }
+#endif
+               ucx_state->mem_handle_info_cache.erase(it);
+               break;
+       }
+    }
 
     ucs_rc = ucp_mem_unmap(ucx_state->library_context, handle->mem_handle);
     if (ucs_rc != UCS_OK) {
@@ -205,34 +241,33 @@ int nvshmemt_ucx_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_tr
         return status;
     }
 
-#ifdef NVSHMEM_USE_GDRCOPY
-    if (use_gdrcopy) {
-        status = gdrcopy_ftable.unmap(gdr_desc, handle_info->mh, handle_info->cpu_ptr_base,
-                                        handle_info->size);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unmap failed\n");
-
-        status = gdrcopy_ftable.unpin_buffer(gdr_desc, handle_info->mh);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
+    if (handle->ep_rkey_host) {
+        ucp_rkey_destroy(handle->ep_rkey_host);
     }
-#endif
+
+    if (handle->ep_rkey_proxy) {
+        ucp_rkey_destroy(handle->ep_rkey_proxy);
+    }
 
 out:
     return status;
 }
 
 int nvshmemt_ucx_get_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t *mem_handle_in,
-                                void *buf, size_t length, nvshmem_transport_t t) {
+                                void *buf, size_t length, nvshmem_transport_t t, bool local_only) {
     ucs_status_t ucs_rc;
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)t->state;
     nvshmemt_ucx_mem_handle_t *handle = (nvshmemt_ucx_mem_handle_t *)mem_handle;
-    nvshmemt_ucx_mem_handle_info_t *handle_info = &ucx_state->mem_handle_info; 
+    nvshmemt_ucx_mem_handle_info_t handle_info; 
     ucp_mem_map_params_t params;
     int status = 0;
     void *rkey = NULL;
 
+    handle->ep_rkey_proxy = NULL;
+    handle->ep_rkey_host = NULL;
     handle->mem_handle = NULL;
-    handle_info->ptr = buf;
-    handle_info->size = length;
+    handle_info.ptr = buf;
+    handle_info.size = length;
     params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
                         UCP_MEM_MAP_PARAM_FIELD_LENGTH  |
                         UCP_MEM_MAP_PARAM_FIELD_FLAGS;
@@ -246,35 +281,38 @@ int nvshmemt_ucx_get_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_ha
                   "Failed to map memory in UCX transport.\n");
     }
 
+    /* Needed for lookup later. */
+    handle_info.mem_handle = handle->mem_handle;
     ucs_rc = ucp_rkey_pack(ucx_state->library_context, handle->mem_handle, &rkey, &handle->rkey_packed_buf_len);
     if (ucs_rc != UCS_OK) {
         ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
                   "Failed to pack rkey for memory region in UCX transport.\n");
     }
 #ifdef NVSHMEM_USE_GDRCOPY
-    if (use_gdrcopy) {
-        status = gdrcopy_ftable.pin_buffer(gdr_desc, (unsigned long)buf, length, 0, 0, &handle_info->mh);
+    if (use_gdrcopy && !local_only) {
+        status = gdrcopy_ftable.pin_buffer(gdr_desc, (unsigned long)buf, length, 0, 0, &handle_info.mh);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "gdrcopy pin_buffer failed \n");
 
-        status = gdrcopy_ftable.map(gdr_desc, handle_info->mh, &handle_info->cpu_ptr_base, length);
+        status = gdrcopy_ftable.map(gdr_desc, handle_info.mh, &handle_info.cpu_ptr_base, length);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "gdrcopy map failed \n");
 
         gdr_info_t info;
-        status = gdrcopy_ftable.get_info(gdr_desc, handle_info->mh, &info);
+        status = gdrcopy_ftable.get_info(gdr_desc, handle_info.mh, &info);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "gdrcopy get_info failed \n");
 
         // remember that mappings start on a 64KB boundary, so let's
         // calculate the offset from the head of the mapping to the
         // beginning of the buffer
-        handle_info->cpu_ptr = (void *)((char *)handle_info->cpu_ptr_base + ((char *)buf - (char *)info.va));
+        handle_info.cpu_ptr = (void *)((char *)handle_info.cpu_ptr_base + ((char *)buf - (char *)info.va));
     } else {
         /* If we aren't using GDRCopy, we need to initialize these values. */
-        handle_info->cpu_ptr = NULL;
-        handle_info->cpu_ptr_base = NULL;
-        memset(&handle_info->mh, 0, sizeof(gdr_mh_t));
+        handle_info.cpu_ptr = NULL;
+        handle_info.cpu_ptr_base = NULL;
+        memset(&handle_info.mh, 0, sizeof(gdr_mh_t));
     }
 #endif
-
+    if (!local_only)
+        ucx_state->mem_handle_info_cache.push_back(handle_info);
     /* TODO: Find a way that doesn't rely on the rkey being smaller than an arbitrary value. */
     assert(handle->rkey_packed_buf_len < NVSHMEMT_UCP_RKEY_PACKED_MAX_LEN);
 
@@ -308,10 +346,6 @@ int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t) {
     ucx_state->endpoints = (ucp_ep_h *)calloc(nvshmemi_state->npes * ep_count, sizeof(ucp_ep_h));
     NULL_ERROR_JMP(ucx_state->endpoints, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                    "Failed to allocate endpoints for UCX transport.\n");
-
-    ucx_state->ep_rkeys = (ucp_rkey_h *)calloc(nvshmemi_state->npes * ep_count, sizeof(ucp_rkey_h));
-    NULL_ERROR_JMP(ucx_state->endpoints, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "Failed to allocate rkey pointers for UCX transport.\n");
 
     ep_handles = (ucx_ep_handle_t *)calloc(nvshmemi_state->npes, sizeof(ucx_ep_handle_t));
     NULL_ERROR_JMP(ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -424,30 +458,33 @@ int nvshmemt_ucx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, r
     ucs_status_ptr_t ucs_ptr_rc = NULL;
     ucp_request_param_t param;
     nvshmemt_ucx_bounce_buffer_t *buffer = NULL;
+    nvshmemt_ucx_mem_handle_t *mem_handle;
     int ep_index;
     ucp_rkey_h rkey;
+    ucp_rkey_h *rkey_ptr;
 
     param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_MEMORY_TYPE;
     param.cb.send = nvshmemt_ucx_send_request_cb;
     param.memory_type = UCS_MEMORY_TYPE_CUDA;
 
+    assert(remote->handle);
+    mem_handle = (nvshmemt_ucx_mem_handle_t *)remote->handle;
     if (is_proxy) {
         ep_index = (ucx_state->ep_count * pe + ucx_state->proxy_ep_idx);
+        rkey_ptr = &mem_handle->ep_rkey_proxy;
     } else {
         ep_index = (ucx_state->ep_count * pe);
+        rkey_ptr = &mem_handle->ep_rkey_host;
     }
-
     ep = ucx_state->endpoints[ep_index];
 
-    if (unlikely(!ucx_state->ep_rkeys[ep_index])) {
-        nvshmemt_ucx_mem_handle_t *mem_handle = (nvshmemt_ucx_mem_handle_t *)&remote->handle;
-        ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, &ucx_state->ep_rkeys[ep_index]);
+    if (unlikely(*rkey_ptr == NULL)) {
+        ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, rkey_ptr);
         if (ucs_rc != UCS_OK) {
             ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
         }
     }
-
-    rkey = ucx_state->ep_rkeys[ep_index];
+    rkey = *rkey_ptr;
 
     /* We aren't worried about completion, correct? */
     if (verb.desc == NVSHMEMI_OP_P) {
@@ -586,14 +623,14 @@ int nvshmemt_ucx_process_amos(struct nvshmem_transport *transport) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)transport->state;
     nvshmemt_ucx_am_header_t *header;
     nvshmemt_ucx_am_send_header_t *send_header;
-    nvshmemt_ucx_mem_handle_info_t *mem_handle_info = &ucx_state->mem_handle_info;
     void *ptr;
     int status;
 
     while(!pending_recv_headers.empty()) {
         header = (nvshmemt_ucx_am_header_t *)pending_recv_headers.front();
         send_header = &header->header.send_h;
-        ptr = (void *)((char *)mem_handle_info->cpu_ptr + ((char *)send_header->addr - (char *)mem_handle_info->ptr));
+        nvshmemt_ucx_mem_handle_info_t mem_handle_info = get_mem_handle_info(ucx_state, send_header->addr);
+        ptr = (void *)((char *)mem_handle_info.cpu_ptr + ((char *)send_header->addr - (char *)mem_handle_info.ptr));
         status = 0;
 
         switch(send_header->op_size) {
@@ -706,31 +743,35 @@ int nvshmemt_ucx_remote_amo(struct nvshmem_transport *transport, int pe, void *c
     ucs_status_ptr_t ucs_ptr_rc = NULL;
     ucp_request_param_t param;
     nvshmemt_ucx_bounce_buffer_t *buffer = NULL;
+    nvshmemt_ucx_mem_handle_t *mem_handle;
     ucp_atomic_op_t opcode;
     int ep_index;
     ucp_rkey_h rkey;
+    ucp_rkey_h *rkey_ptr;
 
     param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_MEMORY_TYPE | UCP_OP_ATTR_FIELD_DATATYPE;
     param.cb.send = nvshmemt_ucx_atomic_request_cb;
     param.memory_type = UCS_MEMORY_TYPE_CUDA;
     param.datatype = ucp_dt_make_contig(bytesdesc.elembytes);
 
+    assert(remote->handle);
+    mem_handle = (nvshmemt_ucx_mem_handle_t *)remote->handle;
     if (is_proxy) {
         ep_index = (ucx_state->ep_count * pe + ucx_state->proxy_ep_idx);
+        rkey_ptr = &mem_handle->ep_rkey_proxy;
     } else {
         ep_index = (ucx_state->ep_count * pe);
+        rkey_ptr = &mem_handle->ep_rkey_host;
     }
-
     ep = ucx_state->endpoints[ep_index];
 
-    if (unlikely(!ucx_state->ep_rkeys[ep_index])) {
-        nvshmemt_ucx_mem_handle_t *mem_handle = (nvshmemt_ucx_mem_handle_t *)&remote->handle;
-        ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, &ucx_state->ep_rkeys[ep_index]);
+    if (unlikely(*rkey_ptr == NULL)) {
+        ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, rkey_ptr);
         if (ucs_rc != UCS_OK) {
             ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
         }
     }
-    rkey = ucx_state->ep_rkeys[ep_index];
+    rkey = *rkey_ptr;
 
     switch (verb.desc) {
         case NVSHMEMI_AMO_ADD:
@@ -976,9 +1017,6 @@ int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
                         }
                     }
                 }
-                if (ucx_state->ep_rkeys[i * ep_count + j] != NULL) {
-                    ucp_rkey_destroy(ucx_state->ep_rkeys[i * ep_count + j]);
-                }
             }
         }
 
@@ -1018,7 +1056,7 @@ int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
 
 int nvshmemt_ucx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)tcurr->state;
-    nvshmemt_ucx_mem_handle_info_t *mem_handle_info = &ucx_state->mem_handle_info;
+    nvshmemt_ucx_mem_handle_info_t *mem_handle_info = &ucx_state->mem_handle_info_cache.back();
 
     if (!mem_handle_info) return 0;
 #ifdef NVSHMEM_USE_GDRCOPY
@@ -1035,18 +1073,20 @@ int nvshmemt_ucx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
     ucp_request_param_t param;
     ucs_status_ptr_t ucs_ptr_rc = NULL;
     ucs_status_t ucs_rc;
+    nvshmemt_ucx_mem_handle_t *mem_handle;
     ucp_rkey_h rkey;
     int local_int;
 
-    if (unlikely(!ucx_state->ep_rkeys[ep_index])) {
-        nvshmemt_ucx_mem_handle_t *mem_handle = (nvshmemt_ucx_mem_handle_t *)&nvshmemi_state->handles[nvshmemi_state->mype * NVSHMEM_TRANSPORT_COUNT + NVSHMEM_TRANSPORT_ID_UCX];
-        ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, &ucx_state->ep_rkeys[ep_index]);
+    mem_handle = (nvshmemt_ucx_mem_handle_t *)&nvshmemi_state
+                 ->handles[0][nvshmemi_state->mype * NVSHMEM_TRANSPORT_COUNT +
+                             NVSHMEM_TRANSPORT_ID_UCX];
+    if (unlikely(mem_handle->ep_rkey_host == NULL)) {
+        ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, &mem_handle->ep_rkey_host);
         if (ucs_rc != UCS_OK) {
             ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
         }
     }
-
-    rkey = ucx_state->ep_rkeys[ep_index];
+    rkey = mem_handle->ep_rkey_host;
 
     param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK;
     param.cb.send = nvshmemt_ucx_send_request_cb;

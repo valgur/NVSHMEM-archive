@@ -15,12 +15,46 @@
         }                                                                             \
     } while (0)
 
-#define perform_gpu_rd_sum(result, op1, op2) result = op1 + op2
-#define perform_gpu_rd_prod(result, op1, op2) result = op1 * op2
-#define perform_gpu_rd_and(result, op1, op2) result = op1 & op2
-#define perform_gpu_rd_or(result, op1, op2) result = op1 | op2
-#define perform_gpu_rd_xor(result, op1, op2) result = op1 ^ op2
-#define perform_gpu_rd_min(result, op1, op2) result = (op1 > op2) ? op2 : op1
-#define perform_gpu_rd_max(result, op1, op2) result = (op1 > op2) ? op1 : op2
+template <typename T, rdxn_ops_t op>
+__device__ typename enable_if<is_integral<T>::value, T>::type perform_gpu_rdxn(T op1, T op2) {
+    switch (op) {
+        case RDXN_OPS_SUM:
+            return op1 + op2;
+        case RDXN_OPS_PROD:
+            return op1 * op2;
+        case RDXN_OPS_AND:
+            return op1 & op2;
+        case RDXN_OPS_OR:
+            return op1 | op2;
+        case RDXN_OPS_XOR:
+            return op1 ^ op2;
+        case RDXN_OPS_MIN:
+            return (op1 < op2) ? op1 : op2;
+        case RDXN_OPS_MAX:
+            return (op1 > op2) ? op1 : op2;
+        default:
+            printf("Unsupported rdxn op\n");
+            assert(0);
+            return T();
+    }
+}
+
+template <typename T, rdxn_ops_t op>
+__device__ typename enable_if<!is_integral<T>::value, T>::type perform_gpu_rdxn(T op1, T op2) {
+    switch (op) {
+        case RDXN_OPS_SUM:
+            return op1 + op2;
+        case RDXN_OPS_PROD:
+            return op1 * op2;
+        case RDXN_OPS_MIN:
+            return (op1 < op2) ? op1 : op2;
+        case RDXN_OPS_MAX:
+            return (op1 > op2) ? op1 : op2;
+        default:
+            printf("Unsupported rdxn op\n");
+            assert(0);
+            return T();
+    }
+}
 
 #endif

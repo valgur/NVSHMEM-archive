@@ -25,15 +25,10 @@
 #include "nvshmem_internal.h"
 
 #include "rdxn.h"
-#include "rdxn_on_stream.h"
 #include "alltoall.h"
-#include "alltoall_on_stream.h"
 #include "barrier.h"
-#include "barrier_on_stream.h"
 #include "broadcast.h"
-#include "broadcast_on_stream.h"
 #include "fcollect.h"
-#include "fcollect_on_stream.h"
 
 /* macro definitions */
 #define NVSHMEMI_COLL_CPU_STATUS_SUCCESS 0

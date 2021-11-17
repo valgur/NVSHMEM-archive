@@ -1,0 +1,44 @@
+/*
+ * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include "broadcast_device.cuh"
+
+template <typename T>
+__global__ void broadcast_on_stream_kernel(nvshmem_team_t team, T *dest, const T *source,
+                                           size_t nelems, int PE_root) {
+#ifdef __CUDA_ARCH__
+    if (!blockIdx.x) nvshmemi_broadcast_threadgroup<T, BLOCK>(team, dest, source, nelems, PE_root);
+#endif
+}
+
+template <typename T>
+void nvshmemi_call_broadcast_on_stream_kernel(nvshmem_team_t team, T *dest, const T *source,
+                                              size_t nelems, int PE_root, cudaStream_t stream) {
+    int num_threads_per_block = (MAX_THREADS_PER_CTA > nelems) ? nelems : MAX_THREADS_PER_CTA;
+    int num_blocks = 1;
+    broadcast_on_stream_kernel<T>
+        <<<num_blocks, num_threads_per_block, 0, stream>>>(team, dest, source, nelems, PE_root);
+    CUDA_RUNTIME_CHECK(cudaGetLastError());
+}
+
+#define INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(TYPE) \
+    template void nvshmemi_call_broadcast_on_stream_kernel<TYPE>(  \
+        nvshmem_team_t, TYPE *, const TYPE *, size_t, int, cudaStream_t);
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(uint8_t)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(uint16_t)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(uint32_t)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(uint64_t)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(int8_t)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(int16_t)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(int32_t)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(int64_t)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(float)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(char)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(double)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(long long)
+INSTANTIATE_NVSHMEMI_CALL_BROADCAST_ON_STREAM_KERNEL(unsigned long long)

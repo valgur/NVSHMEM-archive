@@ -33,7 +33,6 @@
 #include <inttypes.h>
 #include "error_codes_internal.h"
 #include "debug.h"
-#include "nvshmem_internal.h"
 
 #define likely(x)       __builtin_expect((x),1)
 #define unlikely(x)     __builtin_expect((x),0)
@@ -220,6 +219,12 @@
             fprintf(stderr, "[%s:%d] cuda failed with %s \n", __FILE__, __LINE__, p_err_str); \
         }                                                                                     \
     } while (0)
+
+#define NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS()                                            \
+    if (nvshmemi_is_limited_mpg_run) {                                                               \
+        fprintf(stderr, "[%s:%d] Called NVSHMEM API not supported with limited MPG (Multiple Processes Per GPU) runs\n", __FILE__, __LINE__);   \
+        exit(-1);                                                                           \
+    }
 
 #define NVSHMEMU_THREAD_CS_INIT nvshmemu_thread_cs_init
 #define NVSHMEMU_THREAD_CS_ENTER nvshmemu_thread_cs_enter

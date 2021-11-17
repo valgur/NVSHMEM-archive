@@ -9,24 +9,23 @@
 #include "cpu_coll.h"
 #include "nvshmemi_coll.h"
 
-#define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_ON_STREAM(TYPENAME, TYPE, OP)                          \
-    int nvshmemx_##TYPENAME##_##OP##_reduce_on_stream(nvshmem_team_t team, TYPE *dest,          \
-                                        const TYPE *source, size_t nreduce, cudaStream_t stream) { \
-        NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                         \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                         \
-        nvshmemi_team_t * teami = nvshmemi_team_pool[team];                                     \
-        if (nvshmemi_use_nccl && NCCL_REDOP_##OP != -1 && NCCL_DT_##TYPENAME != -1) {           \
-            NCCL_CHECK(nccl_ftable.AllReduce(source, dest, nreduce, (ncclDataType_t) NCCL_DT_##TYPENAME,   \
-                          (ncclRedOp_t)NCCL_REDOP_##OP, teami->nccl_comm, stream));             \
-        }                                                                                       \
-        else {                                                                                  \
-            TYPE *pWrk = (TYPE *)nvshmemi_team_get_psync(teami, REDUCE);                        \
-            long *pSync = (long *)((long *)pWrk + NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE);            \
-            nvshmemx_barrier_on_stream(team, stream);                                           \
-            call_rdxn_##TYPENAME##_##OP##_on_stream_kern(dest, source, nreduce, teami->start,   \
-                                                         teami->stride, teami->size, pWrk, pSync, stream);\
-        }                                                                                       \
-        return 0;                                                                               \
+#define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_ON_STREAM(TYPENAME, TYPE, OP)                            \
+    int nvshmemx_##TYPENAME##_##OP##_reduce_on_stream(nvshmem_team_t team, TYPE *dest,            \
+                                                      const TYPE *source, size_t nreduce,         \
+                                                      cudaStream_t stream) {                      \
+        NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                           \
+        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                        \
+        nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                        \
+        if (nvshmemi_use_nccl && NCCL_REDOP_##OP != -1 && NCCL_DT_##TYPENAME != -1) {             \
+            NCCL_CHECK(                                                                           \
+                nccl_ftable.AllReduce(source, dest, nreduce, (ncclDataType_t)NCCL_DT_##TYPENAME,  \
+                                      (ncclRedOp_t)NCCL_REDOP_##OP, teami->nccl_comm, stream));   \
+        } else {                                                                                  \
+            nvshmemi_call_rdxn_on_stream_kernel<TYPE, RDXN_OPS_##OP>(team, dest, source, nreduce, \
+                                                                     stream);                     \
+        }                                                                                         \
+        return 0;                                                                                 \
     }
 
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_ON_STREAM, and)

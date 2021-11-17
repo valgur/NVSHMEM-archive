@@ -10,7 +10,7 @@ CC ?= /usr/bin/gcc
 ARCH := $(shell uname -m)
 
 #CUDA Vars
-CUDA_HOME ?= /usr/local/cuda-9.0
+CUDA_HOME ?= /usr/local/cuda
 CUDA_DRV ?= $(CUDA_HOME)/lib64/stubs
 CUDA_INC ?= $(CUDA_HOME)/include
 CUDA_LIB ?= $(CUDA_HOME)/lib64
@@ -18,8 +18,9 @@ CUDA_VERSION = $(strip $(shell $(NVCC) --version | grep release | sed 's/^.*rele
 CUDA_MAJOR = $(shell echo $(CUDA_VERSION) | cut -d "." -f 1)
 CUDA_MINOR = $(shell echo $(CUDA_VERSION) | cut -d "." -f 2)
 NVCC ?= $(CUDA_HOME)/bin/nvcc
+CFLAGS ?= 
 CXXFLAGS ?= 
-NVCUFLAGS ?= 
+NVCUFLAGS ?=
 
 # NVSHMEM internal features
 NVSHMEM_HOME ?= /usr/local/nvshmem/
@@ -31,6 +32,8 @@ NVSHMEM_COMPLEX_SUPPORT ?= 0
 
 # whether to build with UCX support. If yes, UCX_HOME should be set
 NVSHMEM_UCX_SUPPORT ?= 0
+# whether to build with ibrc support.
+NVSHMEM_IBRC_SUPPORT ?= 1
 # UCX install location
 UCX_HOME ?= /usr/local/ucx
 # Whether to build with MPI support. If yes, MPI_HOME should be set
@@ -44,6 +47,7 @@ NVSHMEM_LMPI ?= -lmpi
 NVSHMEM_SHMEM_SUPPORT ?= 0
 # SHMEM install location
 SHMEM_HOME ?= $(MPI_HOME)
+OSHCC ?= $(SHMEM_HOME)/bin/oshcc
 # Name of SHMEM library
 NVSHMEM_LSHMEM ?= -loshmem
 
@@ -55,15 +59,17 @@ TESTINC := -I$(CUDA_INC) -I$(mkfile_dir)/common
 
 # Better define NVCC_GENCODE in your environment to the minimal set
 # of archs to reduce compile time.
-NVCC_GENCODE ?= -gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_70,code=sm_70
+NVCC_GENCODE_DEFAULT = -gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_70,code=sm_70
 ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 11; echo $$?),0)
-NVCC_GENCODE += -gencode=arch=compute_80,code=sm_80
+NVCC_GENCODE_DEFAULT += -gencode=arch=compute_80,code=sm_80
 # The threads option was introuced to NVCC in CUDA 11.2
 ifeq ($(shell test "0$(CUDA_MINOR)" -ge 2; echo $$?),0)
 NVCUFLAGS += -t 4
 TESTCUFLAGS += -t 4
 endif
 endif
+
+NVCC_GENCODE ?= $(NVCC_GENCODE_DEFAULT)
 
 TESTCUFLAGS += $(NVCC_GENCODE)
 
@@ -84,14 +90,14 @@ TESTINC += -I$(MPI_HOME)/include -DNVSHMEM_MPI_SUPPORT
 TESTLDFLAGS += -L$(MPI_HOME)/lib $(MPI_LIBS)
 endif
 
-ifeq ($(NVSHMEM_NVTX), 0)
-TESTCUFLAGS  += -DNVTX_DISABLE
-endif
-
 ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
-TESTINC += -I$(UCX_HOME)/include -DNVSHMEM_UCX_SUPPORT
 TESTLDFLAGS += -L$(UCX_HOME)/lib -lucs -lucp
 endif
+
+# NVCC doesn't support redefining -O (even with the same value) so we need to scrub it from cu flag variables.
+OPTIMIZATION_ARGUMENTS= -O -O0 -O1 -O2 -O3 -Os -Ofast
+TESTCUFLAGS := $(filter-out $(OPTIMIZATION_ARGUMENTS),$(TESTCUFLAGS)) 
+NVCUFLAGS := $(filter-out $(OPTIMIZATION_ARGUMENTS),$(NVCUFLAGS)) 
 
 ifeq ($(NVSHMEM_DEBUG), 0)
 TESTCUFLAGS  += -O3

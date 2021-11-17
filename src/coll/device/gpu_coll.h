@@ -11,6 +11,42 @@
 #include "nvshmem_internal.h"
 #include "common.cuh"
 
+/* This is signaling function used in barrier algorithm.
+nvshmem_<type>_signal function cannot be used in barrier because it uses a
+combination of P2P path and IB path depending on how the peer GPU is
+connected. In contrast to that, this fuction uses either P2P path (when all GPUs
+are NVLink connected) or IB path (when any of the GPU is not NVLink connected).
+
+Using this function in barrier is necessary to ensure any previous RMA
+operations are visible. When combination of P2P and IB path are used
+as in nvshmem_<type>_signal function, it can lead to race conditions.
+For example NVLink writes (of data and signal) can overtake IB writes.
+And hence the data may not be visible after the barrier operation.
+*/
+#ifdef __CUDA_ARCH__
+template <typename T>
+__device__ inline void nvshmemi_signal_for_barrier(T *dest, const T value, int pe) {
+    const void *peer_base_addr =
+        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
+    if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS ||
+        (nvshmemi_device_state_d.job_connectivity == NVSHMEMI_JOB_GPU_LDST &&
+         nvshmemi_device_state_d.proxy < NVSHMEMI_PROXY_FULL)) {
+        volatile T *dest_actual =
+            (volatile T *)((char *)(peer_base_addr) +
+                           ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));
+        *dest_actual = value;
+    } else {
+        nvshmemi_proxy_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
+    }
+}
+#endif /* __CUDACC__ */
+
+#include "alltoall_device.cuh"
+#include "barrier_device.cuh"
+#include "broadcast_device.cuh"
+#include "fcollect_device.cuh"
+#include "rdxn_device.cuh"
+
 /* structs */
 
 extern int nvshm_gpu_coll_initialized;
@@ -21,7 +57,7 @@ extern int nvshmemi_coll_common_gpu_init(void);
 extern int nvshmemi_coll_common_gpu_return_modes(void);
 extern int nvshmemi_coll_common_gpu_finalize(void);
 
-void nvshmemi_recexchalgo_get_neighbors(int my_pe, int PE_size);
+void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami);
 
 /* macro definitions */
 #define MAX_THREADS_PER_CTA 512
@@ -39,36 +75,5 @@ int init_shm_kernel_shm_ptr();
 #if __cplusplus
 }
 #endif
-
-
-/* This is signaling function used in barrier algorithm.
-nvshmem_<type>_signal function cannot be used in barrier because it uses a
-combination of P2P path and IB path depending on how the peer GPU is
-connected. In contrast to that, this fuction uses either P2P path (when all GPUs
-are NVLink connected) or IB path (when any of the GPU is not NVLink connected).
-
-Using this function in barrier is necessary to ensure any previous RMA
-operations are visible. When combination of P2P and IB path are used
-as in nvshmem_<type>_signal function, it can lead to race conditions.
-For example NVLink writes (of data and signal) can overtake IB writes.
-And hence the data may not be visible after the barrier operation.
-*/
-#ifdef __CUDACC__
-template <typename T>
-__device__ inline void nvshmemi_signal_for_barrier(T *dest, const T value, int pe) {
-    const void *peer_base_addr =
-        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
-    if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS ||
-        (nvshmemi_device_state_d.job_connectivity == NVSHMEMI_JOB_GPU_LDST &&
-         nvshmemi_device_state_d.proxy == 0)) {
-        volatile T *dest_actual =
-            (volatile T *)((char *)(peer_base_addr) +
-                           ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));
-        *dest_actual = value;
-    } else {
-        nvshmemi_proxy_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
-    }
-}
-#endif /* __CUDACC__ */
 
 #endif /* NVSHMEMI_COLL_GPU_H */

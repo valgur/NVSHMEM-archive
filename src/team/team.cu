@@ -96,6 +96,7 @@ nvshmem_team_split_strided(nvshmem_team_t parent_team, int PE_start,
                           *config, long config_mask, nvshmem_team_t *new_team)
 {
     NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();
     if (parent_team == NVSHMEM_TEAM_INVALID) {
         *new_team = NVSHMEM_TEAM_INVALID;
         return 1;
@@ -112,6 +113,7 @@ nvshmem_team_split_2d(nvshmem_team_t parent_team, int xrange,
                      long yaxis_mask, nvshmem_team_t *yaxis_team)
 {
     NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();
     if (parent_team == NVSHMEM_TEAM_INVALID) {
         *yaxis_team = NVSHMEM_TEAM_INVALID;
         *xaxis_team = NVSHMEM_TEAM_INVALID;

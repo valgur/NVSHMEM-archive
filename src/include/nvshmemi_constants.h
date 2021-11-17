@@ -38,6 +38,23 @@ typedef enum {
     NVSHMEMI_OP_QUIET,
 } nvshmemi_op_t;
 
+typedef enum rdxn_ops {
+    RDXN_OPS_AND = 0,
+    RDXN_OPS_and = 0,
+    RDXN_OPS_OR = 1,
+    RDXN_OPS_or = 1,
+    RDXN_OPS_XOR = 2,
+    RDXN_OPS_xor = 2,
+    RDXN_OPS_MIN = 3,
+    RDXN_OPS_min = 3,
+    RDXN_OPS_MAX = 4,
+    RDXN_OPS_max = 4,
+    RDXN_OPS_SUM = 5,
+    RDXN_OPS_sum = 5,
+    RDXN_OPS_PROD = 6,
+    RDXN_OPS_prod = 6
+} rdxn_ops_t;
+
 typedef enum {
     NVSHMEMI_AMO_ACK = 1,
     NVSHMEMI_AMO_INC,
@@ -66,4 +83,10 @@ typedef enum {
     NVSHMEMI_JOB_GPU_PROXY = 1 << 2,
     NVSHMEMI_JOB_GPU_PROXY_CST = 1 << 3,
 } nvshmemi_job_connectivity_t;
+
+typedef enum {
+    NVSHMEMI_PROXY_NONE = 0,
+    NVSHMEMI_PROXY_MINIMAL = 1,
+    NVSHMEMI_PROXY_FULL = 1 << 1,
+} nvshmemi_proxy_status;
 #endif

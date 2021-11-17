@@ -14,25 +14,34 @@
 
 extern int (*nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_COUNT])(nvshmem_transport_t *transport);
 
-bool nvshmemi_need_proxy(nvshmemi_state_t *state) {
-    bool need_proxy = false;
-
-    need_proxy = (state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
-                  nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_ID_IBRC] &&
-                  state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized);
-    need_proxy |= (state->transports[NVSHMEM_TRANSPORT_ID_UCX] &&
-                   nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_ID_UCX] &&
-                   state->transports[NVSHMEM_TRANSPORT_ID_UCX]->is_successfully_initialized);
-
-    return need_proxy;
-}
-
 void *heap_base_array_dptr = NULL;
 void *heap_base_actual_array_dptr = NULL;
 int nvshmemi_job_connectivity;
 
 nvshmemi_device_state_t nvshmemi_device_state;
 __constant__ nvshmemi_device_state_t nvshmemi_device_state_d;
+
+int nvshmemi_proxy_level(nvshmemi_state_t *state) {
+    bool need_proxy = false;
+    int proxy_level = NVSHMEMI_PROXY_MINIMAL;
+
+    if (nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST) {
+        need_proxy = (state->transports[NVSHMEM_TRANSPORT_ID_IBRC] &&
+                      nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_ID_IBRC] &&
+                      state->transports[NVSHMEM_TRANSPORT_ID_IBRC]->is_successfully_initialized);
+        need_proxy |= (state->transports[NVSHMEM_TRANSPORT_ID_UCX] &&
+                       nvshmemi_transport_init_op[NVSHMEM_TRANSPORT_ID_UCX] &&
+                       state->transports[NVSHMEM_TRANSPORT_ID_UCX]->is_successfully_initialized);
+    }
+
+    if (need_proxy == true) {
+        proxy_level = NVSHMEMI_PROXY_FULL;
+    } else if (nvshmemi_options.DISABLE_LOCAL_ONLY_PROXY) {
+        proxy_level = NVSHMEMI_PROXY_NONE;
+    }
+
+    return proxy_level;
+}
 
 int nvshmemi_set_device_state() {
     CUDA_RUNTIME_CHECK(cudaMemcpyToSymbol(nvshmemi_device_state_d, (void *)&nvshmemi_device_state,
@@ -106,9 +115,8 @@ out:
 
 int nvshmemi_init_device_state(nvshmemi_state_t *state) {
     int status = CUDA_SUCCESS;
-    int use_proxy = 0;
-
     int warp_size = 0;
+
     status = cuDeviceGetAttribute(&warp_size, CU_DEVICE_ATTRIBUTE_WARP_SIZE, state->cudevice );
     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                  "querying warp size failed \n");
@@ -148,10 +156,7 @@ int nvshmemi_init_device_state(nvshmemi_state_t *state) {
     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                  " stream synchronize failed\n");
 
-    if (nvshmemi_need_proxy(state) && nvshmemi_job_connectivity >= NVSHMEMI_JOB_GPU_LDST)
-        use_proxy = 1;
-
-    nvshmemi_device_state.proxy = use_proxy;
+    nvshmemi_device_state.proxy = nvshmemi_proxy_level(state);
 
     if (nvshmemi_options.ASSERT_ATOMICS_SYNC) nvshmemi_device_state.atomics_sync = 1;
     else nvshmemi_device_state.atomics_sync = 0;
@@ -207,3 +212,16 @@ int nvshmemx_cumodule_init(CUmodule module) {
 out:
     return status;
 }
+
+#ifdef __CUDA_ARCH__
+__device__ void nvshmem_global_exit(int status) {
+    if (nvshmemi_device_state_d.proxy > NVSHMEMI_PROXY_NONE) {
+        nvshmemi_proxy_global_exit(status);
+    } else {
+        /* TODO: Add device side printing macros */
+        printf("Device side proxy was called, but is not supported under your configuration. "
+               "Please unset NVSHMEM_DISABLE_LOCAL_ONLY_PROXY, or set it to false.\n");
+        assert(0);
+    }
+}
+#endif
