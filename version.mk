@@ -6,6 +6,6 @@
 
 ##### version
 NVSHMEM_MAJOR   := 2
-NVSHMEM_MINOR   := 4
-NVSHMEM_PATCH   := 1
-PKG_REVISION    := 3
+NVSHMEM_MINOR   := 5
+NVSHMEM_PATCH   := 0
+PKG_REVISION    := 19

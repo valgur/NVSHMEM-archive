@@ -14,8 +14,11 @@
 #define TRANSPORT_STRING_MAX_LENGTH 8
 #define IB_TRANSPORT_STRING "ibrc"
 #define UCX_TRANSPORT_STRING "ucx"
+#define DEVX_TRANSPORT_STRING "ibdevx"
+#define LIBFABRIC_TRANSPORT_STRING "libfabric"
 
 #define NVSHMEM_TRANSPORT_DEVICE_SCORE_MAX 7
+#define NVSHMEM_PCIE_DBF_BUFFER_LEN 50
 
 enum { NVSHMEM_TRANSPORT_WAIT_EQ = 0 };
 
@@ -23,6 +26,8 @@ enum {
     NVSHMEM_TRANSPORT_ID_P2P = 0,
     NVSHMEM_TRANSPORT_ID_IBRC,
     NVSHMEM_TRANSPORT_ID_UCX,
+    NVSHMEM_TRANSPORT_ID_IBDEVX,
+    NVSHMEM_TRANSPORT_ID_FABRIC,
     NVSHMEM_TRANSPORT_COUNT,
 };
 
@@ -30,6 +35,8 @@ enum {
     NVSHMEM_TRANSPORT_MASK_P2P = 1 << NVSHMEM_TRANSPORT_ID_P2P,
     NVSHMEM_TRANSPORT_MASK_IBRC = 1 << NVSHMEM_TRANSPORT_ID_IBRC,
     NVSHMEM_TRANSPORT_MASK_UCX = 1 << NVSHMEM_TRANSPORT_ID_UCX,
+    NVSHMEM_TRANSPORT_MASK_IBDEVX = 1 << NVSHMEM_TRANSPORT_ID_IBDEVX,
+    NVSHMEM_TRANSPORT_MASK_FABRIC = 1 << NVSHMEM_TRANSPORT_ID_FABRIC,
 };
 
 enum {
@@ -169,6 +176,7 @@ typedef struct {
     CUdevice cudevice;
     uint64_t hostHash;
     pcie_id_t *pcie_ids;
+    char pcie_bdf[NVSHMEM_PCIE_DBF_BUFFER_LEN];
 } transport_p2p_state_t;
 
 int nvshmemt_p2p_init(nvshmem_transport_t *transport);
@@ -176,5 +184,9 @@ int nvshmemt_p2p_init(nvshmem_transport_t *transport);
 int nvshmemt_ibrc_init(nvshmem_transport_t *transport);
 
 int nvshmemt_ucx_init(nvshmem_transport_t *transport);
+
+int nvshmemt_ibdevx_init(nvshmem_transport_t *transport);
+
+int nvshmemt_libfabric_init(nvshmem_transport_t *transport);
 
 #endif

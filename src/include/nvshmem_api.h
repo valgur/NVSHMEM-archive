@@ -15,21 +15,89 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "nvshmem_types.h"
 #include "nvshmem_common.cuh"
 #include "nvshmem_constants.h"
-#include "nvshmem_coll_api.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define INIT_HANDLE_BYTES 128
+typedef struct {
+    char content[INIT_HANDLE_BYTES];
+} nvshmemx_init_handle_t;
+
+typedef struct {
+    size_t heap_size;
+    int num_threads;
+    int n_pes;
+    int my_pe;
+    void *mpi_comm;
+    nvshmemx_init_handle_t handle;
+} nvshmemx_init_attr_t;
+
+void nvshmemx_get_device_state(nvshmemi_device_state_t **);
+int nvshmemx_internal_common_init();
+int nvshmemx_internal_init_thread(int requested_thread_support,
+								   int *provided_thread_support,
+						           unsigned int bootstrap_flags,
+								   nvshmemx_init_attr_t *bootstrap_attr);
+
+extern void (*nvshmemi_check_state_and_init_fn_ptr)();
 // Library initialization
-void nvshmem_init();
-int nvshmem_init_thread(int requested, int *provided);
+int nvshmemi_init_thread(int requested_thread_support,
+						 int *provided_thread_support,
+						 unsigned int bootstrap_flags,
+						 nvshmemx_init_attr_t *bootstrap_attr);
+
+#define NONZERO_EXIT(status, ...)                                                                   \
+    do {                                                                                       \
+        if (status != 0) {                                                                     \
+            fprintf(stderr, "%s:%d: non-zero status: %d: %s, exiting... ", __FILE__, __LINE__, \
+                    status, strerror(errno));                                                  \
+            fprintf(stderr, __VA_ARGS__);                                                      \
+            exit(-1);                                                                          \
+        }                                                                                      \
+    } while (0)
+
+static inline int nvshmemx_init_status() {
+    if (!nvshmemi_is_nvshmem_bootstrapped)
+        return NVSHMEM_STATUS_NOT_INITIALIZED;
+    else if (!nvshmemi_is_device_state_set)
+        return NVSHMEM_STATUS_IS_BOOTSTRAPPED;
+    else if (!nvshmemi_is_mpg_run)
+        return NVSHMEM_STATUS_IS_INITIALIZED;
+    else if (nvshmemi_is_limited_mpg_run)
+        return NVSHMEM_STATUS_LIMITED_MPG;
+    else
+        return NVSHMEM_STATUS_FULL_MPG;
+}
+
+static inline void nvshmem_init() {
+    int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
+    status = nvshmemi_init_thread(requested, &provided, 0, NULL);
+    NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
+}
+
+static inline int nvshmem_init_thread(int requested, int *provided) {
+	int status = 0;
+    status = nvshmemi_init_thread(requested, provided, 0, NULL);
+    NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
+	return status;
+}
+
 void nvshmem_query_thread(int *provided);
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_global_exit(int status);
-void nvshmem_finalize();
+void nvshmemi_finalize();
+static inline void nvshmem_finalize() {
+    nvshmemi_finalize();
+    nvshmemi_is_device_state_set = 0;
+}
 
 
 // PE info query
@@ -40,10 +108,11 @@ NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_info_get_name(char *name);
 
 // Heap management
 void *nvshmem_malloc(size_t size);
-void *nvshmem_calloc(size_t count, size_t size);
+void *nvshmem_calloc(size_t, size_t);
+void *nvshmem_align(size_t, size_t);
+
 void nvshmem_free(void *ptr);
 void *nvshmem_realloc(void *ptr, size_t size);
-void *nvshmem_align(size_t alignment, size_t size);
 NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmem_ptr(const void *ptr, int pe);
 
 //////////////////// OpenSHMEM 1.3 Atomics ////////////////////
@@ -458,4 +527,5 @@ static inline void nvshmem_udcflush_line(void *dest) { NVSHMEMI_UNUSED_ARG(dest)
 }
 #endif
 
+#include "nvshmem_coll_api.h"
 #endif

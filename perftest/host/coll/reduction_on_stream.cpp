@@ -76,7 +76,7 @@
 
 int main(int argc, char **argv) {
     int status = 0;
-    int mype, npes;
+    int mype;
     int i = 0;
     size_t size = (MAX_ELEMS * 8) * sizeof(LARGEST_DT);
     size_t alloc_size;
@@ -118,7 +118,6 @@ int main(int argc, char **argv) {
     init_wrapper(&argc, &argv);
 
     mype = nvshmem_my_pe();
-    npes = nvshmem_n_pes();
     CUDA_CHECK(cudaStreamCreate(&stream));
 
     num_elems = MAX_ELEMS / 2;

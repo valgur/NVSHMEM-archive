@@ -34,8 +34,14 @@ NVSHMEM_COMPLEX_SUPPORT ?= 0
 NVSHMEM_UCX_SUPPORT ?= 0
 # whether to build with ibrc support.
 NVSHMEM_IBRC_SUPPORT ?= 1
+# whether to build with ibdevx support.
+NVSHMEM_IBDEVX_SUPPORT ?= 0
+# whether to build with libfabric support.
+NVSHMEM_LIBFABRIC_SUPPORT ?= 0
 # UCX install location
 UCX_HOME ?= /usr/local/ucx
+# libfabric installation location
+LIBFABRIC_HOME ?= /usr/local/libfabric
 # Whether to build with MPI support. If yes, MPI_HOME should be set
 NVSHMEM_MPI_SUPPORT ?= 1
 # MPI install location
@@ -50,11 +56,19 @@ SHMEM_HOME ?= $(MPI_HOME)
 OSHCC ?= $(SHMEM_HOME)/bin/oshcc
 # Name of SHMEM library
 NVSHMEM_LSHMEM ?= -loshmem
+# Whether to build NVSHMEM static library
+NVSHMEM_TEST_STATIC_LIB ?= 0
 
 MPI_LIBS := $(NVSHMEM_LMPI)
 SHMEM_LIBS := $(NVSHMEM_LSHMEM)
-TESTCUFLAGS  := -dc -ccbin $(CXX) -std=c++11
-TESTLDFLAGS := -lcuda -L$(CUDA_HOME)/lib64 -lcudart -L$(NVSHMEM_HOME)/lib -lnvshmem
+LDFLAGS := -lcuda -L$(CUDA_LIB) -lcudart -L$(CUDA_DRV) -lnvidia-ml
+TESTCUFLAGS  := -dc -ccbin $(CXX) -std=c++11 -Xcompiler -fPIC
+TESTLDFLAGS := -ccbin $(CXX) -lcuda -L$(CUDA_LIB) -lcudart -L$(CUDA_DRV) -lnvidia-ml -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
+ifeq ($(NVSHMEM_TEST_STATIC_LIB), 1)
+TESTLDFLAGS += -lnvshmem
+else
+TESTLDFLAGS += -lnvshmem_host -lnvshmem_device
+endif
 TESTINC := -I$(CUDA_INC) -I$(mkfile_dir)/common
 
 # Better define NVCC_GENCODE in your environment to the minimal set
@@ -91,7 +105,18 @@ TESTLDFLAGS += -L$(MPI_HOME)/lib $(MPI_LIBS)
 endif
 
 ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
+LDFLAGS += -L$(UCX_HOME)/lib -lucs -lucp
 TESTLDFLAGS += -L$(UCX_HOME)/lib -lucs -lucp
+endif
+
+ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
+LDFLAGS += -lmlx5
+TESTLDFLAGS += -lmlx5
+endif
+
+ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
+LDFLAGS += -L$(LIBFABRIC_HOME)/lib -lfabric
+TESTLDFLAGS += -L$(LIBFABRIC_HOME)/lib -lfabric
 endif
 
 # NVCC doesn't support redefining -O (even with the same value) so we need to scrub it from cu flag variables.
@@ -116,6 +141,7 @@ endif
 
 #TODO: add -Werror and -Wall to TESTCUFLAGS. Have to fix all warnings first.
 ifneq ($(NVSHMEM_DEVEL), 0)
-NVCUFLAGS += -Werror all-warnings -Xcompiler -Wall,-Wextra,-Wno-unused-function,-Wno-unused-parameter
-CXXFLAGS  += -Werror -Wall -Wextra -Wno-unused-function -Wno-unused-parameter
+TESTCUFLAGS += -Werror all-warnings -Xcompiler -Wall,-Wextra,-Wno-unused-function,-Wno-unused-parameter,-Wno-packed-not-aligned,-Wno-address-of-packed-pointer
+NVCUFLAGS += -Werror all-warnings -Xcompiler -Wall,-Wextra,-Wno-unused-function,-Wno-unused-parameter,-Wno-packed-not-aligned,-Wno-address-of-packed-pointer
+CXXFLAGS  += -Werror -Wall -Wextra -Wno-unused-function -Wno-unused-parameter -Wno-packed-not-aligned -Wno-address-of-packed-pointer
 endif

@@ -102,7 +102,6 @@ __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip
     long long int start, stop;                                                                  \
     double time;                                                                                \
     int i, tid, peer;                                                                           \
-    TYPE ret;                                                                                   \
                                                                                                 \
     assert( 1 == blockDim.x * blockDim.y * blockDim.z * gridDim.x * gridDim.y * gridDim.z );    \
     peer = !pe;                                                                                 \
@@ -111,7 +110,7 @@ __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip
     if ((pe == 0) && !tid) {                                                                    \
         for (i = 0; i < (iter + skip); i++) {                                                   \
             if (i == skip) start = clock64();                                                   \
-            ret = nvshmem_##TYPE_NAME##_atomic_##AMO(flag_d, peer);                             \
+            (void)nvshmem_##TYPE_NAME##_atomic_##AMO(flag_d, peer);                             \
         }                                                                                       \
         stop = clock64();                                                                       \
         nvshmem_quiet();                                                                        \
@@ -151,7 +150,6 @@ __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip
     long long int start, stop;                                                                  \
     double time;                                                                                \
     int i, tid, peer;                                                                           \
-    TYPE ret;                                                                                   \
                                                                                                 \
     assert( 1 == blockDim.x * blockDim.y * blockDim.z * gridDim.x * gridDim.y * gridDim.z );    \
     peer = !pe;                                                                                 \
@@ -160,7 +158,7 @@ __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip
     if ((pe == 0) && !tid) {                                                                    \
         for (i = 0; i < (iter + skip); i++) {                                                   \
             if (i == skip) start = clock64();                                                   \
-            ret = nvshmem_##TYPE_NAME##_atomic_##AMO(flag_d, SET_EXPR, peer);                   \
+            (void)nvshmem_##TYPE_NAME##_atomic_##AMO(flag_d, SET_EXPR, peer);                   \
         }                                                                                       \
         stop = clock64();                                                                       \
         nvshmem_quiet();                                                                        \
@@ -199,7 +197,6 @@ __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip
     long long int start, stop;                                                                  \
     double time;                                                                                \
     int i, tid, peer;                                                                           \
-    TYPE ret;                                                                                   \
                                                                                                 \
     assert( 1 == blockDim.x * blockDim.y * blockDim.z * gridDim.x * gridDim.y * gridDim.z );    \
     peer = !pe;                                                                                 \
@@ -208,7 +205,7 @@ __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip
     if ((pe == 0) && !tid) {                                                                    \
         for (i = 0; i < (iter + skip); i++) {                                                   \
             if (i == skip) start = clock64();                                                   \
-            ret = nvshmem_##TYPE_NAME##_atomic_##AMO(flag_d, COMPARE_EXPR, SET_EXPR, peer);     \
+            (void)nvshmem_##TYPE_NAME##_atomic_##AMO(flag_d, COMPARE_EXPR, SET_EXPR, peer);     \
         }                                                                                       \
         stop = clock64();                                                                       \
         nvshmem_quiet();                                                                        \

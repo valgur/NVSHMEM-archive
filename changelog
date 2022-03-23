@@ -1,4 +1,34 @@
 ===============================================================================
+				Changes in 2.5.0
+===============================================================================
+
+# Added multi-instance support in NVSHMEM. NVSHMEM now builds as two libraries,
+libnvshmem_host.so and libnvshmem_device.a, making it possible for an
+application to have multiple components (for example, shared libraries,
+application itself) that use NVSHMEM. Support for single library, libnvshmem.a,
+still exists for legacy purposes but will be eventually removed.
+# Added nvshmemx_init_status API to query the initialized state of NVSHMEM
+# Added experimental DevX transport that directly uses Mellanox software stack
+for InfiniBand devices
+# Added experimental libfabric transport that will be used to support Slingshot
+networks in a future release
+# Added support for CUDA_VISIBLE_DEVICES. Support for CUDA_VISIBLE_DEVICES is
+not yet available with CUDA VMM and requires setting NVSHMEM_DISABLE_CUDA_VMM=1.
+# Updated PMI and PMI-2 bootstraps to plugins
+# Added nvshmem-info utility to display information about the NVSHMEM library
+# Fixed warnings when using NVSHMEM in applications compiled without RDC
+(Relocatable Device Code) option
+# Renamed internal variables to avoid potential conflicts with variables in
+application
+# Implemented nvshmem_alltoallmem API
+# Improve GPU to NIC assignment logic for Summit/Sierra supercomputer
+# Fixed host barrier API implementation for non-blocking on stream (*_nbi_on_stream)
+point-to-point operations
+# Updated descriptions for NVSHMEM environment variables displayed via
+nvshmem-info or by setting NVSHMEM_INFO=1
+# Added symmetric size check to NVSHMEM memory allocation functions
+
+===============================================================================
 				Changes in 2.4.1
 ===============================================================================
 

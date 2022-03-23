@@ -9,9 +9,18 @@
 #include "nvshmem_internal.h"
 #include "nvshmem_nvtx.hpp"
 
+void nvshmemi_call_proxy_quiet_entrypoint(cudaStream_t cstrm);
+#ifdef __cplusplus
+extern "C" {
+#endif
+void nvshmemx_quiet_on_stream(cudaStream_t cstrm);
+#ifdef __cplusplus
+}
+#endif
+
 void nvshmem_quiet(void) {
     NVTX_FUNC_RANGE_IN_GROUP(MEMORDER);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEMI_CHECK_INIT_STATUS();
 
     int status = 0;
 
@@ -22,6 +31,7 @@ void nvshmem_quiet(void) {
             status = cuStreamSynchronize(custrm);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_quiet() failed \n");
         }
+        nvshmemi_state->used_internal_streams = 0;
     }
 
     for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
@@ -38,5 +48,46 @@ void nvshmem_quiet(void) {
         tbitmap >>= 1;
     }
 out:
+    return;
+}
+
+void nvshmemi_quiesce_internal_streams(cudaStream_t cstrm) {
+    int status = 0;
+    if (nvshmemi_state->npes_node > 1 && nvshmemi_state->used_internal_streams) {
+        for (int s = 0; s < MAX_PEER_STREAMS; s++) {
+            CUstream custrm = nvshmemi_state->custreams[s];
+            CUevent cuev = nvshmemi_state->cuevents[s];
+            status = cuEventRecord(cuev, custrm);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                         "nvshmem_quiet_on_stream() failed \n");
+            status = cuStreamWaitEvent((CUstream)cstrm, cuev, 0);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                         "nvshmem_quiet_on_stream() failed \n");
+        }
+        nvshmemi_state->used_internal_streams = 0;
+    }
+out:
+    return;
+}
+
+void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {
+    NVTX_FUNC_RANGE_IN_GROUP(QUIET_ON_STREAM);
+    NVSHMEMI_CHECK_INIT_STATUS();
+
+    int tbitmap = nvshmemi_state->transport_bitmap;
+    nvshmemi_quiesce_internal_streams(cstrm);
+
+    for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
+        if (tbitmap & 1) {
+            if (j == NVSHMEM_TRANSPORT_ID_IBRC ||
+                j == NVSHMEM_TRANSPORT_ID_UCX ||
+                j == NVSHMEM_TRANSPORT_ID_IBDEVX ||
+                j == NVSHMEM_TRANSPORT_ID_FABRIC) {
+				nvshmemi_call_proxy_quiet_entrypoint(cstrm);
+            }
+            tbitmap >>= 1;
+        }
+    }
+
     return;
 }

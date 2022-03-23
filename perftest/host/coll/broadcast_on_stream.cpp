@@ -15,7 +15,6 @@
 int main(int argc, char **argv) {
     int status = 0;
     int mype, npes;
-    int i = 0;
     size_t size = MAX_ELEMS * 2 * sizeof(DATATYPE);
     size_t alloc_size;
     int num_elems;
@@ -46,6 +45,7 @@ int main(int argc, char **argv) {
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
+    (void)npes; // Silence unused variable warning
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     num_elems = MAX_ELEMS / 2;

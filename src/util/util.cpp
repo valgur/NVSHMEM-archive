@@ -90,19 +90,26 @@ char * nvshmemu_hexdump(void *ptr, size_t len) {
     return str;
 }
 
-/* Wrap 'str' to fit within 'wraplen' columns.  After each line break, insert
- * 'indent' string (if provided).  Caller must free the returned buffer.
+/* Wrap 'str' to fit within 'wraplen' columns. Will not break a line of text
+ * with no whitespace that exceeds the allowed length. After each line break,
+ * insert 'indent' string (if provided).  Caller must free the returned buffer.
  */
 char *
-nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent)
+nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent, const int strip_backticks)
 {
     const size_t indent_len = indent != NULL ? strlen(indent) : 0;
-    const size_t str_len = strlen(str);
-    size_t linelen = 0;
+    size_t str_len = 0, line_len = 0, line_breaks = 0;
     char *str_s = NULL, *out_s = NULL;
 
-    /* Worst case is wrapping at 1/2 wraplen */
-    char *out = (char *) malloc(str_len + 2*(str_len/wraplen + 1) * indent_len);
+    /* Count characters and newlines */
+    for (const char *s = str; *s != '\0'; s++, str_len++)
+        if (*s == '\n') ++line_breaks;
+
+    /* Worst case is wrapping at 1/2 wraplen plus explicit line breaks. Each
+     * wrap adds an indent string. The newline is either already in the source
+     * string or replaces a whitespace in the source string */
+    const size_t out_len = str_len + 1 + (2 * (str_len/wraplen + 1) + line_breaks) * indent_len;
+    char *out = (char *) malloc(out_len);
     char *out_p = out;
     char *str_p = (char*) str;
 
@@ -111,14 +118,37 @@ nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent)
         return NULL;
     }
 
-    while (*str_p != '\0') {
+    while (*str_p != '\0' && /* avoid overflowing out */ out_p - out < (ssize_t) out_len - 1) {
         /* Remember location of last space */
         if (*str_p == ' ') {
             str_s = str_p;
             out_s = out_p;
         }
+        /* Wrap here if there is a newline */
+        else if (*str_p == '\n') {
+            str_s = str_p;
+            out_s = out_p;
+
+            *out_p = '\n'; /* Append newline and indent */
+            out_p++;
+            if (indent) {
+                strcpy(out_p, indent); /* NULL will be overwritten */
+                out_p += indent_len;
+            }
+            str_p++;
+            out_s = str_s = NULL;
+            line_len = 0;
+            continue;
+        }
+        /* Remove backticks from the input string */
+        else if (*str_p == '`' && strip_backticks) {
+            out_p++;
+            str_p++;
+            continue;
+        }
+
         /* Reached end of line, try to wrap */
-        if (linelen >= wraplen) {
+        if (line_len >= wraplen) {
             if (str_s != NULL) {
                 out_p = out_s; /* Jump back to last space */
                 str_p = str_s;
@@ -130,14 +160,14 @@ nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent)
                 }
                 str_p++;
                 out_s = str_s = NULL;
-                linelen = 0;
+                line_len = 0;
                 continue;
             }
         }
         *out_p = *str_p;
         out_p++;
         str_p++;
-        linelen++;
+        line_len++;
     }
     *out_p = '\0';
     return out;
@@ -173,9 +203,9 @@ void nvshmemu_debug_log_cpuset(int category, const char *thread_name) {
             }
         }
 
-        cores_str_wrap = nvshmemu_wrap(cores_str, /* Line wrap */ 80, /* Indent */ "    ");
+        cores_str_wrap = nvshmemu_wrap(cores_str, /* Line wrap */ 80, /* Indent */ "    ", 0);
         INFO(category, "PE %d (%s) affinity to %d CPUs:\n    %s",
-                nvshmemi_state->mype, thread_name, core_count, cores_str_wrap);
+                nvshmemi_boot_handle.pg_rank, thread_name, core_count, cores_str_wrap);
         free(cores_str_wrap);
     }
 }

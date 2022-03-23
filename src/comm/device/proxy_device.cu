@@ -37,6 +37,20 @@
 #include "nvshmem_internal.h"
 #include "nvshmemx_error.h"
 
+#define NTOH64(x) *x = ((*(x) & 0xFF00000000000000) >> 56 | \
+                       (*(x) & 0x00FF000000000000) >> 40 | \
+                       (*(x) & 0x0000FF0000000000) >> 24 | \
+                       (*(x) & 0x000000FF00000000) >> 8 | \
+                       (*(x) & 0x00000000FF000000) << 8 | \
+                       (*(x) & 0x0000000000FF0000) << 24 | \
+                       (*(x) & 0x000000000000FF00) << 40 | \
+                       (*(x) & 0x00000000000000FF) << 56)
+
+#define NTOH32(x) *x = ((*(x) & 0xFF000000) >> 24 | \
+                       (*(x) & 0x00FF0000) >> 8 | \
+                       (*(x) & 0x0000FF00) << 8 | \
+                       (*(x) & 0x000000FF) << 24)
+
 char *proxy_channel_g_buf;
 char *proxy_channel_g_coalescing_buf;
 uint64_t proxy_channel_g_buf_size;   /* Total size of g_buf in bytes */
@@ -540,6 +554,7 @@ __device__ void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T swap_add,
     uint64_t idx_in_buf = idx & (nvshmemi_device_state_d.proxy_channel_g_buf_size - 1);
     g_elem_t *elem = (g_elem_t *)(nvshmemi_device_state_d.proxy_channel_g_buf + idx_in_buf);
     uint64_t flag = (idx >> nvshmemi_device_state_d.proxy_channel_g_buf_log_size) * 2;
+    size_t atomic_size = sizeof(T);
 
     /* wait until element can be used */
     nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_FLAG);
@@ -547,9 +562,27 @@ __device__ void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T swap_add,
 
     amo<T>(rptr, counter, swap_add, compare, pe, op);
 
-    nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag + 1, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_DATA);
+    /* The IBDEVX transport doesn't rely on an active message from the receiver for atomics. */
+    if (nvshmemi_device_state_d.atomics_complete_on_quiet) {
+        nvshmemi_proxy_quiet(false);
+        elem->flag += 1;
+        /* MLNX NICs will typically return 8 byte atomics in host-endian and 4 byte atomics in big-enian. 
+         * This behavior is controlled by flags read from the NIC at runtime.
+         */
+        if (atomic_size < nvshmemi_device_state_d.atomics_le_min_size) {
+            if (atomic_size == 8) {
+                NTOH64(&elem->data);
+            } else if (atomic_size == 4) {
+                NTOH32(&elem->data);
+            } else {
+                /* Our APIs currently only support 4 and 8-byte atomics. Any other size is a fatal error. */
+                assert(false);
+            }
+        }
+    } else {
+        nvshmemi_wait_until_greater_than_equals<uint64_t>((volatile uint64_t *)&(elem->flag), flag + 1, NVSHMEMI_CALL_SITE_AMO_FETCH_WAIT_DATA);
+    }
     __threadfence();
-
     T return_val = *(T *)(&(elem->data));
     __threadfence();
 
@@ -614,7 +647,7 @@ int nvshmemi_proxy_prep_minimal_state(proxy_state_t *state) {
     nvshmemi_device_state.timeout = nvshmemi_timeout_dptr;
 
     /* Set here in case we are in an NVLink only build and don't call nvshmemi_proxy_setup_device_channels*/
-    nvshmemi_set_device_state();
+    nvshmemi_set_device_state(&nvshmemi_device_state);
     return 0;
 }
 
@@ -685,7 +718,7 @@ int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
     nvshmemi_device_state.proxy_channel_g_buf = proxy_channel_g_buf;
     nvshmemi_device_state.proxy_channel_g_coalescing_buf = proxy_channel_g_coalescing_buf;
     assert(proxy_channel_g_buf_size % sizeof(g_elem_t) == 0);
-    nvshmemi_set_device_state();
+    nvshmemi_set_device_state(&nvshmemi_device_state);
 
 out:
     return status;

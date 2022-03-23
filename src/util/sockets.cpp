@@ -32,7 +32,7 @@ int ipcOpenSocket(ipcHandle *&handle) {
         return -1;
     }
 
-    strncpy(cliaddr.sun_path, temp, name_len);
+    strncpy(cliaddr.sun_path, temp, 50);
     if (bind(sock, (struct sockaddr *)&cliaddr, sizeof(cliaddr)) < 0) {
         perror("IPC failure: Binding socket failed. If you have any (stale) files"
                 "with names like /tmp/nvshmem-socket-<0-9>*, delete or rename them!");
@@ -73,7 +73,6 @@ int ipcRecvFd(ipcHandle *handle, int *shHandle) {
     } control_un;
 
     struct cmsghdr *cmptr;
-    ssize_t n;
     int receivedfd;
     char dummy_buffer[1];
 
@@ -86,7 +85,7 @@ int ipcRecvFd(ipcHandle *handle, int *shHandle) {
     msg.msg_iov = iov;
     msg.msg_iovlen = 1;
 
-    if ((n = recvmsg(handle->socket, &msg, 0)) <= 0) {
+    if (recvmsg(handle->socket, &msg, 0) <= 0) {
         perror("IPC failure: Receiving data over socket failed");
         return -1;
     }
@@ -126,7 +125,7 @@ int ipcSendFd(ipcHandle *handle, const int shareableHandle, pid_t process) {
         printf("Error formatting socket file name\n");
         return -1;
     }
-    strncpy(cliaddr.sun_path, temp, name_len);
+    strncpy(cliaddr.sun_path, temp, 50);
 
     // Send corresponding shareable handle to the client
     int sendfd = (int)shareableHandle;

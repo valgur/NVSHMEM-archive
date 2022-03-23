@@ -17,54 +17,34 @@
 extern "C" {
 #endif
 
-
-__device__ __host__ int nvshmem_team_my_pe(nvshmem_team_t team)
+#ifndef __CUDA_ARCH__
+int nvshmem_team_my_pe(nvshmem_team_t team)
 {
     if (team == NVSHMEM_TEAM_INVALID)
         return -1;
-    else
-    #ifdef __CUDA_ARCH__
-        if (team == NVSHMEM_TEAM_WORLD)
-        return nvshmemi_device_state_d.mype;
-        else if (team == NVSHMEMX_TEAM_NODE)
-            return nvshmemi_device_state_d.node_mype;
-        else
-            return nvshmemi_device_state_d.team_pool[team]->my_pe;
-#else
-        if (team == NVSHMEM_TEAM_WORLD)
-        return nvshmemi_state->mype;
+    else if (team == NVSHMEM_TEAM_WORLD)
+        return nvshmemi_boot_handle.pg_rank;
     else if (team == NVSHMEMX_TEAM_NODE)
-        return nvshmemi_state->mype_node;
+        return nvshmemi_boot_handle.mype_node;
     else
         return nvshmemi_team_pool[team]->my_pe;
-#endif
 }
 
-__device__ __host__ int nvshmem_team_n_pes(nvshmem_team_t team)
+int nvshmem_team_n_pes(nvshmem_team_t team)
 {
     if (team == NVSHMEM_TEAM_INVALID)
         return -1;
-    else
-    #ifdef __CUDA_ARCH__
-        if (team == NVSHMEM_TEAM_WORLD)
-        return nvshmemi_device_state_d.npes;
-        else if (team == NVSHMEMX_TEAM_NODE)
-            return nvshmemi_device_state_d.node_npes;
-        else
-            return nvshmemi_device_state_d.team_pool[team]->size;
-#else
-        if (team == NVSHMEM_TEAM_WORLD)
-        return nvshmemi_state->npes;
+    else if (team == NVSHMEM_TEAM_WORLD)
+        return nvshmemi_boot_handle.pg_size;
     else if (team == NVSHMEMX_TEAM_NODE)
-        return nvshmemi_state->npes_node;
+        return nvshmemi_boot_handle.npes_node;
     else
         return nvshmemi_team_pool[team]->size;
-#endif
 }
 
 void nvshmem_team_get_config(nvshmem_team_t team, nvshmem_team_config_t *config)
 {
-    NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEMI_CHECK_INIT_STATUS();
     if (team == NVSHMEM_TEAM_INVALID)
         return;
 
@@ -78,14 +58,9 @@ nvshmem_team_translate_pe(nvshmem_team_t src_team, int src_pe, nvshmem_team_t de
 {
     if (src_team == NVSHMEM_TEAM_INVALID || dest_team == NVSHMEM_TEAM_INVALID) return -1;
     nvshmemi_team_t *src_teami, *dest_teami;
-#ifdef __CUDA_ARCH__
-    src_teami = nvshmemi_device_state_d.team_pool[src_team];
-    dest_teami = nvshmemi_device_state_d.team_pool[dest_team];
-#else
-    NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEMI_CHECK_INIT_STATUS();
     src_teami = nvshmemi_team_pool[src_team];
     dest_teami = nvshmemi_team_pool[dest_team];
-#endif
 
     return nvshmemi_team_translate_pe(src_teami, src_pe, dest_teami);
 }
@@ -95,7 +70,7 @@ nvshmem_team_split_strided(nvshmem_team_t parent_team, int PE_start,
                           int PE_stride, int PE_size, const nvshmem_team_config_t
                           *config, long config_mask, nvshmem_team_t *new_team)
 {
-    NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEMI_CHECK_INIT_STATUS();
     NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();
     if (parent_team == NVSHMEM_TEAM_INVALID) {
         *new_team = NVSHMEM_TEAM_INVALID;
@@ -112,7 +87,7 @@ nvshmem_team_split_2d(nvshmem_team_t parent_team, int xrange,
                      nvshmem_team_t *xaxis_team, const nvshmem_team_config_t *yaxis_config,
                      long yaxis_mask, nvshmem_team_t *yaxis_team)
 {
-    NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEMI_CHECK_INIT_STATUS();
     NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();
     if (parent_team == NVSHMEM_TEAM_INVALID) {
         *yaxis_team = NVSHMEM_TEAM_INVALID;
@@ -129,7 +104,7 @@ nvshmem_team_split_2d(nvshmem_team_t parent_team, int xrange,
 void
 nvshmem_team_destroy(nvshmem_team_t team)
 {
-    NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEMI_CHECK_INIT_STATUS();
     if (team == NVSHMEM_TEAM_WORLD ||
         team == NVSHMEM_TEAM_SHARED ||
         team == NVSHMEMX_TEAM_NODE)
@@ -139,6 +114,7 @@ nvshmem_team_destroy(nvshmem_team_t team)
 
     nvshmemi_team_destroy(nvshmemi_team_pool[team]);
 }
+#endif
 
 #ifdef __cplusplus
 }

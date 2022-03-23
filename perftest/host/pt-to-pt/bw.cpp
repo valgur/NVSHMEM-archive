@@ -87,7 +87,6 @@ int bw(void *data_d, void *data_d_local, int sizeBytes, int pe, int iter, int sk
         *us = (stop.tv_usec - start.tv_usec) + (stop.tv_sec - start.tv_sec) * 1000000;
     }
 
-finalize:
     return status;
 }
 
@@ -177,7 +176,7 @@ int main(int argc, char *argv[]) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     if (mype == 0) {
-        float ms, us, gb;
+        float ms, us;
         cudaEvent_t sev, eev;
         CUDA_CHECK(cudaEventCreate(&sev));
         CUDA_CHECK(cudaEventCreate(&eev));

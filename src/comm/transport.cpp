@@ -37,12 +37,18 @@ void nvshmemi_add_transport(int id, int (*init_op)(nvshmem_transport_t *)) {
 
 void nvshmemi_transports_preinit() {
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_P2P, nvshmemt_p2p_init);
-    #ifdef NVSHMEM_IBRC_SUPPORT
+#ifdef NVSHMEM_IBRC_SUPPORT
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_IBRC, nvshmemt_ibrc_init);
-    #endif
-    #ifdef NVSHMEM_UCX_SUPPORT
+#endif
+#ifdef NVSHMEM_UCX_SUPPORT
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_UCX, nvshmemt_ucx_init);
-    #endif
+#endif
+#ifdef NVSHMEM_IBDEVX_SUPPORT
+    nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_IBDEVX, nvshmemt_ibdevx_init);
+#endif
+#ifdef NVSHMEM_LIBFABRIC_SUPPORT
+    nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_FABRIC, nvshmemt_libfabric_init);
+#endif
 }
 
 int nvshmemi_transport_init(nvshmemi_state_t *state) {
@@ -109,7 +115,7 @@ int nvshmemi_setup_connections(nvshmemi_state_t *state) {
             if (!(tcurr->attr & NVSHMEM_TRANSPORT_ATTR_CONNECTED)) continue;
             status = tcurr->host_ops.connect_endpoints(tcurr);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "endpoint connection failed \n");
-            status = state->boot_handle.barrier(&state->boot_handle);
+            status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "barrier failed \n");
         }
     }

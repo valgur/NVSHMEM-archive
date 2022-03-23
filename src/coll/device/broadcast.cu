@@ -17,7 +17,7 @@
 #define DEFN_NVSHMEMX_TYPENAME_BROADCAST_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE) \
     __device__ int nvshmem##SC_PREFIX##_##TYPENAME##_broadcast##SC_SUFFIX(                     \
         nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, int PE_root) {     \
-        nvshmemi_broadcast_threadgroup<TYPE, SC>(team, dest, source, nelems, PE_root);         \
+        nvshmemi_broadcast_threadgroup<TYPE, nvshmemi_threadgroup_##SC>(team, dest, source, nelems, PE_root);         \
         return 0;                                                                              \
     }
 

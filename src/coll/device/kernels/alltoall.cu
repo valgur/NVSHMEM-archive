@@ -12,7 +12,7 @@ template <typename TYPE>
 __global__ void alltoall_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
                                           size_t nelems) {
 #ifdef __CUDA_ARCH__
-    if (!blockIdx.x) nvshmemi_alltoall_threadgroup<TYPE, BLOCK>(team, dest, source, nelems);
+    if (!blockIdx.x) nvshmemi_alltoall_threadgroup<TYPE, NVSHMEMI_THREADGROUP_BLOCK>(team, dest, source, nelems);
 #endif
 }
 

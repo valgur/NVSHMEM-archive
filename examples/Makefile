@@ -28,6 +28,9 @@ EXAMPLECUSRCFILES := \
     dev-guide-ring.cu           \
     ring-bcast.cu
 
+EXAMPLECXXSRCFILES := \
+    hello.cpp
+
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
 EXAMPLECUSRCFILES += mpi-based-init.cu dev-guide-ring-mpi.cu
 endif
@@ -37,11 +40,18 @@ EXAMPLECUSRCFILES += shmem-based-init.cu
 endif
 
 CUPERFBIN   := $(patsubst %.cu, $(NVSHMEM_EXAMPLES_BUILDDIR)/%, $(filter %.cu, $(EXAMPLECUSRCFILES)))
-CXXPERFBIN  := $(patsubst %.cpp, $(NVSHMEM_EXAMPLES_BUILDDIR)/%, $(filter %.cpp, $(PERFCXXSRCFILES)))
+CXXPERFBIN  := $(patsubst %.cpp, $(NVSHMEM_EXAMPLES_BUILDDIR)/%, $(filter %.cpp, $(EXAMPLECXXSRCFILES)))
 
 examples : $(CUPERFBIN) $(CXXPERFBIN)
  
 $(NVSHMEM_EXAMPLES_BUILDDIR)/% : %.cu
+	@printf "Compiling %-25s > %-25s\n" $< $@
+	mkdir -p `dirname $@`
+	$(NVCC) $(TESTCUFLAGS) $(TESTINC) $< -c -o $@.o
+	$(NVCC) $(NVCC_GENCODE) $@.o $(TESTCPPHELPEROBJ) $(TESTCUHELPEROBJ) -o $@ $(TESTLDFLAGS)
+	@rm $@.o
+
+$(NVSHMEM_EXAMPLES_BUILDDIR)/% : %.cpp
 	@printf "Compiling %-25s > %-25s\n" $< $@
 	mkdir -p `dirname $@`
 	$(NVCC) $(TESTCUFLAGS) $(TESTINC) $< -c -o $@.o

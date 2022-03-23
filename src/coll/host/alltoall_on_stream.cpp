@@ -13,7 +13,7 @@
     int nvshmemx_##TYPENAME##_alltoall_on_stream(                                                  \
         nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, cudaStream_t stream) { \
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                            \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+        NVSHMEMI_CHECK_INIT_STATUS();                                                              \
         NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                                 \
         nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                         \
         int team_n_pes = nvshmem_team_n_pes(team);                                                 \
@@ -39,3 +39,11 @@
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFN_NVSHMEMX_TYPENAME_ALLTOALL_ON_STREAM)
 #undef DEFN_NVSHMEMX_TYPENAME_ALLTOALL_ON_STREAM
+
+int nvshmemx_alltoallmem_on_stream(nvshmem_team_t team, void *dest,
+                                   const void *source, size_t nelems,
+                                   cudaStream_t stream) {
+    return nvshmemx_char_alltoall_on_stream(team, (char *)dest,
+                                            (const char *)source,
+                                            nelems, stream);
+}

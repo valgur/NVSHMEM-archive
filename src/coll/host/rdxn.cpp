@@ -31,7 +31,7 @@ NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(DEFN_NVSHMEMI_TYPENAME_OP_REDUCE, prod)
     int nvshmem_##TYPENAME##_##OP##_reduce(nvshmem_team_t team, TYPE *dest, const TYPE *source, \
                                            size_t nreduce) {                                    \
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                         \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                         \
+        NVSHMEMI_CHECK_INIT_STATUS();                                                           \
         NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                      \
         nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                      \
         if (nvshmemi_use_nccl && NCCL_REDOP_##OP != -1 && NCCL_DT_##TYPENAME != -1) {           \

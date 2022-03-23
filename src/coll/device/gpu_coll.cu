@@ -30,7 +30,7 @@ int nvshmemi_coll_common_gpu_init_memory() {
     init_shm_kernel_shm_ptr();
 
     /*add barrier so that ipsync arrays aren't touched by other procs*/
-    status = nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle);
+    status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
     assert(status == 0);
 
     return status;

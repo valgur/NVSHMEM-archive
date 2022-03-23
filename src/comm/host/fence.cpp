@@ -11,7 +11,7 @@
 
 void nvshmem_fence(void) {
     NVTX_FUNC_RANGE_IN_GROUP(MEMORDER);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
 
     int status;
     int tbitmap = nvshmemi_state->transport_bitmap;

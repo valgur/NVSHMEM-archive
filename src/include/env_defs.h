@@ -32,24 +32,24 @@ NVSHMEMI_ENV_DEF(INFO, bool, false, NVSHMEMI_ENV_CAT_OPENSHMEM,
 NVSHMEMI_ENV_DEF(INFO_HIDDEN, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Print hidden environment variable options at startup")
 NVSHMEMI_ENV_DEF(SYMMETRIC_SIZE, size, (size_t)(SYMMETRIC_SIZE_DEFAULT), NVSHMEMI_ENV_CAT_OPENSHMEM,
-                 "Symmetric heap size")
+                 "Specifies the size (in bytes) of the symmetric heap memory per PE. The resulting size is implementation-defined and must be at least as large as the integer ceiling of the product of the numeric prefix and the scaling factor. The allowed character suffixes for the scaling factor are as follows:\n"
+                 "\n"
+                 "  *  k or K multiplies by 2^10 (kibibytes)\n"
+                 "  *  m or M multiplies by 2^20 (mebibytes)\n"
+                 "  *  g or G multiplies by 2^30 (gibibytes)\n"
+                 "  *  t or T multiplies by 2^40 (tebibytes)\n"
+                 "\n"
+                 "For example, string '20m' is equivalent to the integer value 20971520, or 20 mebibytes. Similarly the string '3.1M' is equivalent to the integer value 3250586. Only one multiplier is recognized and any characters following the multiplier are ignored, so '20kk' will not produce the same result as '20m'. Usage of string '.5m' will yield the same result as the string '0.5m'.\n"
+                 "An invalid value for ``NVSHMEM_SYMMETRIC_SIZE`` is an error, which the NVSHMEM library shall report by either returning a nonzero value from ``nvshmem_init_thread`` or causing program termination.")
 NVSHMEMI_ENV_DEF(DEBUG, string, "", NVSHMEMI_ENV_CAT_OPENSHMEM,
                  "Set to enable debugging messages.\n"
-                 "\tOptional values: VERSION, WARN, INFO, ABORT, TRACE")
+                 "Optional values: VERSION, WARN, INFO, ABORT, TRACE")
 
 /** Bootstrap **/
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP, string, "PMI", NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Name of the default bootstrap that should be used to initialize\n"
-                 "\tNVSHMEM. Allowed values: PMI, "
-#ifdef NVSHMEM_MPI_SUPPORT
-                 "MPI, "
-#endif
-#ifdef NVSHMEM_SHMEM_SUPPORT
-                 "SHMEM, "
-#endif
-                 "plugin"
-                 )
+                 "Name of the default bootstrap that should be used to initialize NVSHMEM.\n"
+                 "Allowed values: PMI, MPI, SHMEM, plugin")
 
 #if   defined(NVSHMEM_DEFAULT_PMIX)
 #define NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT "PMIX"
@@ -60,12 +60,11 @@ NVSHMEMI_ENV_DEF(BOOTSTRAP, string, "PMI", NVSHMEMI_ENV_CAT_BOOTSTRAP,
 #endif
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI, string, NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT, NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Name of the PMI bootstrap that should be used to initialize\n"
-                 "\tNVSHMEM. Allowed values: PMI, PMI-2"
-#ifdef NVSHMEM_PMIX_SUPPORT
-                 ", PMIX"
-#endif
-                 )
+                 "Name of the PMI bootstrap that should be used to initialize NVSHMEM.\n"
+                 "Allowed values: PMI, PMI-2, PMIX")
+
+NVSHMEMI_ENV_DEF(BOOTSTRAP_TWO_STAGE, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Ignore CUDA device setting during initialization, forcing two-state init")
 
 #undef NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT
 
@@ -76,7 +75,7 @@ NVSHMEMI_ENV_DEF(BOOTSTRAP_PLUGIN, string, "", NVSHMEMI_ENV_CAT_BOOTSTRAP,
 
 NVSHMEMI_ENV_DEF(DEBUG_SUBSYS, string, "", NVSHMEMI_ENV_CAT_HIDDEN,
                  "Comma separated list of debugging message sources. Prefix with '^' to exclude.\n"
-                 "\tValues: INIT, COLL, P2P, PROXY, TRANSPORT, MEM, BOOTSTRAP, TOPO, UTIL, ALL")
+                 "Values: INIT, COLL, P2P, PROXY, TRANSPORT, MEM, BOOTSTRAP, TOPO, UTIL, ALL")
 NVSHMEMI_ENV_DEF(DEBUG_FILE, string, "", NVSHMEMI_ENV_CAT_OTHER,
                  "Debugging output filename, may contain %h for hostname and %p for pid")
 NVSHMEMI_ENV_DEF(ENABLE_ERROR_CHECKS, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
@@ -91,17 +90,17 @@ NVSHMEMI_ENV_DEF(MAX_MEMORY_PER_GPU, size, (size_t)((size_t)128 * (1 << 30)), NV
                  "Maximum memory per GPU")
 #if defined(NVSHMEM_PPC64LE)
 NVSHMEMI_ENV_DEF(DISABLE_CUDA_VMM, bool, true, NVSHMEMI_ENV_CAT_OTHER,
-                 "Disable use of CUDA VMM for P2P memory mapping (By default, CUDA VMM is enabled\n"
-                 "on x86 and disabled on P9. CUDA VMM feature in NVSHMEM requires CUDA RT version and\n"
+                 "Disable use of CUDA VMM for P2P memory mapping (By default, CUDA VMM is enabled "
+                 "on x86 and disabled on P9. CUDA VMM feature in NVSHMEM requires CUDA RT version and "
                  "CUDA Driver version to be greater than or equal to 11.3.")
 #else
 NVSHMEMI_ENV_DEF(DISABLE_CUDA_VMM, bool, false, NVSHMEMI_ENV_CAT_OTHER,
-                 "Disable use of CUDA VMM for P2P memory mapping (By default, CUDA VMM is enabled\n"
-                 "on x86 and disabled on P9. CUDA VMM feature in NVSHMEM requires CUDA RT version and\n"
+                 "Disable use of CUDA VMM for P2P memory mapping. By default, CUDA VMM is enabled "
+                 "on x86 and disabled on P9. CUDA VMM feature in NVSHMEM requires CUDA RT version and "
                  "CUDA Driver version to be greater than or equal to 11.3.")
 #endif
 NVSHMEMI_ENV_DEF(CUMEM_GRANULARITY, size, (size_t)((size_t)1 << 29), NVSHMEMI_ENV_CAT_OTHER,
-                 "Granularity for cuMemAlloc/cuMemCreate")
+                 "Granularity for ``cuMemAlloc``/``cuMemCreate``")
 
 NVSHMEMI_ENV_DEF(BYPASS_ACCESSIBILITY_CHECK, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass peer GPU accessbility checks")
@@ -140,16 +139,16 @@ NVSHMEMI_ENV_DEF(ASSERT_ATOMICS_SYNC, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
 NVSHMEMI_ENV_DEF(REMOTE_TRANSPORT, string, NVSHMEMI_ENV_TRANSPORT_DEFAULT, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Selected transport for remote operations: ibrc, ucx, none")
 NVSHMEMI_ENV_DEF(DISABLE_IB_NATIVE_ATOMICS, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
-                 "disable use of InfiniBand native atomics")
+                 "Disable use of InfiniBand native atomics")
 NVSHMEMI_ENV_DEF(DISABLE_GDRCOPY, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
-                 "disable use of GDRCopy in IB RC Transport")
+                 "Disable use of GDRCopy in IB RC Transport")
 NVSHMEMI_ENV_DEF(BYPASS_FLUSH, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass flush in proxy when enforcing consistency")
 NVSHMEMI_ENV_DEF(ENABLE_NIC_PE_MAPPING, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
-                 "When not set or set to 0, a PE is assigned the NIC on the node that is\n"
-                 "\tclosest to it by distance. When set to 1, NVSHMEM either assigns NICs to\n"
-                 "\tPEs on a round-robin basis or uses NVSHMEM_HCA_PE_MAPPING or\n"
-                 "\tNVSHMEM_HCA_LIST when they are specified.")
+                 "When not set or set to 0, a PE is assigned the NIC on the node that is "
+                 "closest to it by distance. When set to 1, NVSHMEM either assigns NICs to "
+                 "PEs on a round-robin basis or uses ``NVSHMEM_HCA_PE_MAPPING`` or "
+                 "``NVSHMEM_HCA_LIST`` when they are specified.")
 NVSHMEMI_ENV_DEF(IB_GID_INDEX, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Source GID Index for ROCE")
 NVSHMEMI_ENV_DEF(IB_TRAFFIC_CLASS, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,
@@ -158,34 +157,35 @@ NVSHMEMI_ENV_DEF(IB_SL, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Service level to use over IB/ROCE")
 
 NVSHMEMI_ENV_DEF(HCA_LIST, string, "", NVSHMEMI_ENV_CAT_TRANSPORT,
-                 "Comma-separated list of HCAs to use in the NVSHMEM application. Entries\n"
-                 "\tare of the form hca_name:port, e.g. mlx5_1:1,mlx5_2:2 and entries\n"
-                 "\tprefixed by ^ are excluded. NVSHMEM_ENABLE_NIC_PE_MAPPING must be set to\n"
-                 "\t1 for this variable to be effective.")
+                 "Comma-separated list of HCAs to use in the NVSHMEM application. Entries "
+                 "are of the form ``hca_name:port``, e.g. ``mlx5_1:1,mlx5_2:2`` and entries "
+                 "prefixed by ^ are excluded. ``NVSHMEM_ENABLE_NIC_PE_MAPPING`` must be set to "
+                 "1 for this variable to be effective.")
 
 NVSHMEMI_ENV_DEF(HCA_PE_MAPPING, string, "", NVSHMEMI_ENV_CAT_TRANSPORT,
-                 "Specifies mapping of HCAs to PEs as a comma-separated list. Each entry\n"
-                 "\tin the comma separated list is of the form hca_name:port:count.  For\n"
-                 "\texample, mlx5_0:1:2,mlx5_0:2:2 indicates that PE0, PE1 are mapped to\n"
-                 "\tport 1 of mlx5_0, and PE2, PE3 are mapped to port 2 of mlx5_0.\n"
-                 "\tNVSHMEM_ENABLE_NIC_PE_MAPPING must be set to 1 for this variable to be\n"
-                 "\teffective.")
+                 "Specifies mapping of HCAs to PEs as a comma-separated list. Each entry "
+                 "in the comma separated list is of the form ``hca_name:port:count``.  For "
+                 "example, ``mlx5_0:1:2,mlx5_0:2:2`` indicates that PE0, PE1 are mapped to "
+                 "port 1 of mlx5_0, and PE2, PE3 are mapped to port 2 of mlx5_0. "
+                 "``NVSHMEM_ENABLE_NIC_PE_MAPPING`` must be set to 1 for this variable to be "
+                 "effective.")
 NVSHMEMI_ENV_DEF(QP_DEPTH, int, 1024, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Number of WRs in QP")
 NVSHMEMI_ENV_DEF(SRQ_DEPTH, int, 16384, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Number of WRs in SRQ")
 
 NVSHMEMI_ENV_DEF(DISABLE_LOCAL_ONLY_PROXY, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
-                "When running on an nvlink-only configuaration (No-IB, No-UCX), completely disable\n"
-                "\tthe proxy thread. This will disable device side global exit and device side wait\n"
-                "\ttimeout polling.")
+                "When running on an NVLink-only configuaration (No-IB, No-UCX), completely disable "
+                "the proxy thread. This will disable device side global exit and device side wait "
+                "timeout polling (enabled by ``NVSHMEM_TIMEOUT_DEVICE_POLLING`` build-time variable) "
+                "because these are processed by the proxy thread.")
 
 /** Runtime optimimzations **/
 NVSHMEMI_ENV_DEF(PROXY_REQUEST_BATCH_MAX, int, 32, NVSHMEMI_ENV_CAT_OTHER,
-                 "Max number of requests to process per\n"
-                 "channel per proxy progress loop.")
+                 "Maxmum number of requests that the proxy thread processes in a single iteration "
+                 "of the progress loop.")
 
 /** NVTX instrumentation **/
 NVSHMEMI_ENV_DEF(NVTX, string, "off", NVSHMEMI_ENV_CAT_NVTX,
-                 "Set to enable NVTX instrumentation. Accepts a comma separated list of\n"
-                 "\tinstrumentation groups. By default the NVTX instrumentation is disabled.")
+                 "Set to enable NVTX instrumentation. Accepts a comma separated list of "
+                 "instrumentation groups. By default the NVTX instrumentation is disabled.")

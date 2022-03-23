@@ -120,6 +120,7 @@ void init_wrapper(int *c, char ***v) {
         nvshmemx_init_attr(NVSHMEMX_INIT_WITH_MPI_COMM, &attr);
 
         select_device();
+        nvshmem_barrier_all();
 
         return;
     }
@@ -143,6 +144,7 @@ void init_wrapper(int *c, char ***v) {
         nvshmemx_init_attr_t attr;
         nvshmemx_init_attr(NVSHMEMX_INIT_WITH_SHMEM, &attr);
 
+        nvshmem_barrier_all();
         return;
     }
 #endif
@@ -153,6 +155,7 @@ void init_wrapper(int *c, char ***v) {
     npes = nvshmem_n_pes();
     select_device();
 
+    nvshmem_barrier_all();
     d_latency = (double *)nvshmem_malloc(sizeof(double));
     if (!d_latency) ERROR_EXIT("nvshmem_malloc failed \n");
 

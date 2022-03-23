@@ -62,10 +62,10 @@ int nvshmemi_call_barrier_on_stream_kernel(nvshmem_team_t team, cudaStream_t str
     }
 
     if (num_threads_per_block <= 32) {
-        barrier_on_stream_kernel_threadgroup<WARP><<<num_blocks, 32, 0, stream>>>(team);
+        barrier_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_WARP><<<num_blocks, 32, 0, stream>>>(team);
     }
     else {
-        barrier_on_stream_kernel_threadgroup<BLOCK>
+        barrier_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_BLOCK>
             <<<num_blocks, num_threads_per_block, 0, stream>>>(team);
     }
 
@@ -84,9 +84,9 @@ int nvshmemi_call_sync_on_stream_kernel(nvshmem_team_t team, cudaStream_t stream
     }
 
     if (num_threads_per_block <= 32) {
-        sync_on_stream_kernel_threadgroup<WARP><<<num_blocks, 32, 0, stream>>>(team);
+        sync_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_WARP><<<num_blocks, 32, 0, stream>>>(team);
     } else {
-        sync_on_stream_kernel_threadgroup<BLOCK>
+        sync_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_BLOCK>
             <<<num_blocks, num_threads_per_block, 0, stream>>>(team);
     }
     CUDA_RUNTIME_CHECK(cudaGetLastError());

@@ -10,7 +10,12 @@
 #include <assert.h>
 #include <stdio.h>
 
-typedef enum { thread = 0, THREAD = 0, warp = 1, WARP = 1, block = 2, BLOCK = 2 } threadgroup_t;
+typedef enum { nvshmemi_threadgroup_thread = 0,
+               NVSHMEMI_THREADGROUP_THREAD = 0,
+               nvshmemi_threadgroup_warp = 1,
+               NVSHMEMI_THREADGROUP_WARP = 1,
+               nvshmemi_threadgroup_block = 2,
+               NVSHMEMI_THREADGROUP_BLOCK = 2 } threadgroup_t;
 
 #ifdef __CUDA_ARCH__
 
@@ -49,13 +54,13 @@ __device__ inline void nvshmemi_thread_sync() {}
 template <threadgroup_t scope>
 __device__ inline int nvshmemi_thread_id_in_threadgroup() {
     switch (scope) {
-        case THREAD:
+        case NVSHMEMI_THREADGROUP_THREAD:
             return 0;
-        case WARP:
+        case NVSHMEMI_THREADGROUP_WARP:
             int myIdx;
             asm volatile("mov.u32  %0, %laneid;" : "=r"(myIdx));
             return myIdx;
-        case BLOCK:
+        case NVSHMEMI_THREADGROUP_BLOCK:
             return (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);
         default:
             printf("unrecognized threadscope passed\n");
@@ -67,13 +72,13 @@ __device__ inline int nvshmemi_thread_id_in_threadgroup() {
 template <threadgroup_t scope>
 __device__ inline int nvshmemi_threadgroup_size() {
     switch (scope) {
-        case THREAD:
+        case NVSHMEMI_THREADGROUP_THREAD:
             return 1;
-        case WARP:
+        case NVSHMEMI_THREADGROUP_WARP:
             return ((blockDim.x * blockDim.y * blockDim.z) < warpSize)
                        ? (blockDim.x * blockDim.y * blockDim.z)
                        : warpSize;
-        case BLOCK:
+        case NVSHMEMI_THREADGROUP_BLOCK:
             return (blockDim.x * blockDim.y * blockDim.z);
         default:
             printf("unrecognized threadscope passed\n");
@@ -85,12 +90,12 @@ __device__ inline int nvshmemi_threadgroup_size() {
 template <threadgroup_t scope>
 __device__ inline void nvshmemi_threadgroup_sync() {
     switch (scope) {
-        case THREAD:
+        case NVSHMEMI_THREADGROUP_THREAD:
             return;
-        case WARP:
+        case NVSHMEMI_THREADGROUP_WARP:
             __syncwarp();
             break;
-        case BLOCK:
+        case NVSHMEMI_THREADGROUP_BLOCK:
             __syncthreads();
             break;
         default:

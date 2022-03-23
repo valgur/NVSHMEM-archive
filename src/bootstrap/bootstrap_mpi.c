@@ -68,8 +68,14 @@ static int bootstrap_mpi_finalize(bootstrap_handle_t *handle) {
             "MPI_Finalized failed\n");
 
     if (finalized) {
-        status = NVSHMEMX_ERROR_INTERNAL;
-        BOOTSTRAP_ERROR_PRINT("MPI is finalized\n");
+        if (nvshmem_initialized_mpi) {
+            status = NVSHMEMX_ERROR_INTERNAL;
+            BOOTSTRAP_ERROR_PRINT("MPI is finalized\n");
+        }
+        else {
+            status = 0;
+        }
+
         goto out;
     }
 

@@ -46,8 +46,9 @@
         char str[1024];                                                           \
         if (CUDA_SUCCESS != result) {                                             \
             CUresult ret = cuGetErrorString(result, (const char **)&str);         \
-            fprintf(stderr, "[%s:%d] cuda failed with %s \n", __FILE__, __LINE__, \
-                    str);                                                         \
+            fprintf(stderr, "[%s:%d] cuda failed with (%d) %s \n", __FILE__,      \
+                    __LINE__, (int) result,                                       \
+                    (ret != CUDA_SUCCESS) ? "cuGetErrorString failed" : str);     \
             exit(-1);                                                             \
         }                                                                         \
         assert(CUDA_SUCCESS == result);                                           \

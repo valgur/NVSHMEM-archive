@@ -22,7 +22,6 @@
 #include "nvshmemx_coll_api.h"
 #include "nvshmemx_error.h"
 
-#define INIT_HANDLE_BYTES 128
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,19 +34,6 @@ enum flags {
     NVSHMEMX_INIT_WITH_HANDLE = 1 << 3
 };
 
-typedef struct {
-    char content[INIT_HANDLE_BYTES];
-} nvshmemx_init_handle_t;
-
-typedef struct {
-    size_t heap_size;
-    int num_threads;
-    int n_pes;
-    int my_pe;
-    void *mpi_comm;
-    nvshmemx_init_handle_t handle;
-} nvshmemx_init_attr_t;
-
 // Local buffer registration
 int nvshmemx_buffer_register(void *addr, size_t length);
 int nvshmemx_buffer_unregister(void *addr);
@@ -57,7 +43,12 @@ void nvshmemx_buffer_unregister_all();
 int nvshmemx_init_thread(int requested, int *provided) __attribute__((deprecated));
 void nvshmemx_query_thread(int *provided) __attribute__((deprecated));
 
-int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attributes);
+static inline int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attributes) {
+    int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
+    status = nvshmemi_init_thread(requested, &provided, flags, attributes);
+    NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
+	return status;
+}
 int nvshmemx_cumodule_init(CUmodule module);
 
 /* Replaced by teams API */
@@ -68,10 +59,19 @@ NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_n_pes(nvshmemx_team_t team) __attribute_
 int nvshmemx_get_init_handle(nvshmemx_init_handle_t *handle);
 int nvshmemx_free_init_handle(nvshmemx_init_handle_t handle);
 
-int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, void **args,
+int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, void **args,
                                size_t sharedMem, cudaStream_t stream);
-int nvshmemx_collective_launch_query_gridsize(const void *func, dim3 blockDims, void **args,
+static inline int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, void **args,
+                               size_t sharedMem, cudaStream_t stream) {
+	(*nvshmemi_check_state_and_init_fn_ptr)();
+    return nvshmemi_collective_launch(func, gridDims, blockDims, args, sharedMem, stream);
+}
+int nvshmemi_collective_launch_query_gridsize(const void *func, dim3 blockDims, void **args,
                                               size_t sharedMem, int *gridsize);
+static inline int nvshmemx_collective_launch_query_gridsize(const void *func, dim3 blockDims, void **args,
+                                              size_t sharedMem, int *gridsize) {
+    return nvshmemi_collective_launch_query_gridsize(func, blockDims, args, sharedMem, gridsize);
+}
 
 //////////////////// Put On Stream ////////////////////
 

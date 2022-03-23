@@ -22,7 +22,6 @@
 int main(int argc, char *argv[]) {
     int status = 0;
     int mype;
-    char *buffer = NULL;
     struct timeval t_start, t_stop;
     char size_string[100];
     size_t min_malloc_size = 1 << 30;

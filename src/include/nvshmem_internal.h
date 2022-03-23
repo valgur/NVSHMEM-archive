@@ -40,15 +40,11 @@ using namespace std;
 
 #define G_COALESCING_BUF_SIZE NUM_G_BUF_ELEMENTS * NVSHMEMI_WARP_SIZE * sizeof(uint64_t)
 
-#define NVSHMEM_CHECK_STATE_AND_INIT()                                               \
-    do {                                                                             \
-        if (!nvshmemi_state) ERROR_EXIT("nvshmem API called before nvshmem_init \n"); \
-        if (!nvshmemi_state->initialized) {                                           \
-            if (nvshmemi_common_init(nvshmemi_state)) {                               \
-                ERROR_EXIT("nvshmem initialization failed, exiting \n");             \
-            }                                                                        \
-        }                                                                            \
-    } while (0)
+#define NVSHMEMI_CHECK_INIT_STATUS()														\
+	do {																					\
+		if (nvshmemi_is_nvshmem_initialized == false)										\
+			ERROR_EXIT("NVSHMEM API called before NVSHMEM initialization has completed\n");	\
+	} while (0)
 
 typedef struct {
     int multi_processor_count;
@@ -88,7 +84,6 @@ typedef struct nvshmemi_state_dec {
     CUcontext cucontext;
     /*symmetric heap state*/
     size_t heap_size;
-    int initialized;
     void *heap_base;
     void *global_heap_base; /* Used when using VMM API */
     /* registered local memory state */
@@ -108,8 +103,8 @@ typedef struct nvshmemi_state_dec {
 #endif
     vector<vector<nvshmem_mem_handle> > handles;
     vector<tuple<size_t, void *, size_t> > idx_in_handles;
-    bootstrap_handle_t boot_handle;
     /*transport info*/
+    uint32_t atomic_host_endian_min_size;
     int transport_bitmap;
     int *transport_map;
     struct nvshmem_transport_pe_info *pe_info;
@@ -146,6 +141,7 @@ typedef struct nvshmemi_state_dec {
           handles(),
           idx_in_handles() {
     }
+    bool used_internal_streams;
 } nvshmemi_state_t;
 
 typedef struct {
@@ -158,13 +154,13 @@ typedef struct {
 } nvshmem_options_t;
 
 extern nvshmemi_state_t *nvshmemi_state;
+extern bootstrap_handle_t nvshmemi_boot_handle;
+extern int nvshmemi_init_counter;
 extern nvshmem_options_t nvshmem_options;
 extern int nvshmemi_job_connectivity;
 extern int nvshmemi_cuda_driver_version;
 extern int nvshmemi_use_nccl;
 extern bool nvshmemi_is_mps_available;
-extern bool nvshmemi_is_mpg_run;
-extern bool nvshmemi_is_limited_mpg_run;
 extern bool nvshmemi_use_cuda_vmm;
 extern int nccl_version;
 extern long nvshmemi_max_teams;
@@ -293,7 +289,7 @@ int nvshmemi_proxy_level(nvshmemi_state_t *state);
 int nvshmemi_common_init(nvshmemi_state_t *state);
 int nvshmemi_init_g_buffer();
 int nvshmemi_init_device_state(nvshmemi_state_t *state);
-int nvshmemi_set_device_state();
+int nvshmemi_set_device_state(nvshmemi_device_state_t *);
 int nvshmemi_setup_local_heap(nvshmemi_state_t *state);
 int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state);
 int nvshmemi_setup_connections(nvshmemi_state_t *state);
@@ -301,7 +297,9 @@ int nvshmemi_cleanup_symmetric_heap(nvshmemi_state_t *state);
 int nvshmemi_setup_collective_launch(nvshmemi_state_t *state);
 int nvshmemi_teardown_collective_launch(nvshmemi_state_t *state);
 int nvshmemi_setup_mops_kernels(nvshmemi_state_t *state);
+extern "C" {
 void *nvshmemi_malloc(size_t size);
+}
 void *nvshmemi_calloc(size_t count, size_t size);
 void *nvshmemi_align(size_t alignment, size_t size);
 void nvshmemi_free(void *ptr);
@@ -347,7 +345,7 @@ static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, 
         }
     }
 
-    if (transport_idx == NVSHMEM_TRANSPORT_ID_IBRC) {
+    if (transport_idx == NVSHMEM_TRANSPORT_ID_IBRC || transport_idx == NVSHMEM_TRANSPORT_ID_IBDEVX) {
         /* 1 GB Max*/
         max_len = 1ULL << 30;
     }

@@ -9,23 +9,16 @@
 #include "nvshmem_internal.h"
 #include "nvshmem_nvtx.hpp"
 
-__host__ __device__ int nvshmem_my_pe(void) {
 #ifdef __CUDA_ARCH__
+__device__ int nvshmem_my_pe(void) {
     return nvshmemi_device_state_d.mype;
-#else
-    return nvshmemi_state->mype;
-#endif
 }
 
-__host__ __device__ int nvshmem_n_pes(void) {
-#ifdef __CUDA_ARCH__
+__device__ int nvshmem_n_pes(void) {
     return nvshmemi_device_state_d.npes;
-#else
-    return nvshmemi_state->npes;
-#endif
 }
 
-__host__ __device__ void nvshmem_info_get_name(char *name) {
+__device__ void nvshmem_info_get_name(char *name) {
     size_t i;
     const char *str = NVSHMEM_VENDOR_STRING;
 
@@ -36,15 +29,16 @@ __host__ __device__ void nvshmem_info_get_name(char *name) {
     name[i] = '\0';
 }
 
-__host__ __device__ void nvshmem_info_get_version(int *major, int *minor) {
+__device__ void nvshmem_info_get_version(int *major, int *minor) {
     *major = NVSHMEM_MAJOR_VERSION;
     *minor = NVSHMEM_MINOR_VERSION;
 }
 
-__host__ __device__ int nvshmemx_my_pe(nvshmemx_team_t team) {
+__device__ int nvshmemx_my_pe(nvshmemx_team_t team) {
     return nvshmem_team_my_pe((nvshmem_team_t) team);
 }
 
-__host__ __device__ int nvshmemx_n_pes(nvshmemx_team_t team) {
+__device__ int nvshmemx_n_pes(nvshmemx_team_t team) {
     return nvshmem_team_n_pes((nvshmem_team_t) team);
 }
+#endif

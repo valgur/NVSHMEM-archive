@@ -11,7 +11,7 @@
     int nvshmem_##TYPENAME##_alltoall(nvshmem_team_t team, TYPE *dest, const TYPE *source, \
                                       size_t nelems) {                                     \
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                    \
+        NVSHMEMI_CHECK_INIT_STATUS();                                                      \
         NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                 \
         nvshmemi_call_alltoall_on_stream_kernel<TYPE>(team, dest, source, nelems,          \
                                                       nvshmemi_state->my_stream);          \
@@ -20,3 +20,13 @@
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFN_NVSHMEM_TYPENAME_ALLTOALL)
 #undef DEFN_NVSHMEM_TYPENAME_ALLTOALL
+
+int nvshmem_alltoallmem(nvshmem_team_t team, void *dest, const void *source, size_t nelems) {
+        NVTX_FUNC_RANGE_IN_GROUP(COLL);
+        NVSHMEMI_CHECK_INIT_STATUS();
+        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();
+        nvshmemi_call_alltoall_on_stream_kernel<char>(team, (char *)dest, (const char *)source,
+                                                      nelems, nvshmemi_state->my_stream);
+        CUDA_CHECK(cuStreamSynchronize(nvshmemi_state->my_stream));
+        return 0;
+}

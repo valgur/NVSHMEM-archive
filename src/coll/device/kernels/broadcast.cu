@@ -12,7 +12,7 @@ template <typename T>
 __global__ void broadcast_on_stream_kernel(nvshmem_team_t team, T *dest, const T *source,
                                            size_t nelems, int PE_root) {
 #ifdef __CUDA_ARCH__
-    if (!blockIdx.x) nvshmemi_broadcast_threadgroup<T, BLOCK>(team, dest, source, nelems, PE_root);
+    if (!blockIdx.x) nvshmemi_broadcast_threadgroup<T, NVSHMEMI_THREADGROUP_BLOCK>(team, dest, source, nelems, PE_root);
 #endif
 }
 

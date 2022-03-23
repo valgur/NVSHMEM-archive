@@ -71,8 +71,8 @@ int nvshmemi_build_transport_map(nvshmemi_state_t *state) {
     }
     INFO(NVSHMEM_TOPO, "[%d] transport bitmap: %x", state->mype, state->transport_bitmap);
 
-    status = state->boot_handle.allgather((void *)local_map, (void *)state->transport_map,
-                                          sizeof(int) * state->npes, &state->boot_handle);
+    status = nvshmemi_boot_handle.allgather((void *)local_map, (void *)state->transport_map,
+                                          sizeof(int) * state->npes, &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of ipc handles failed \n");
 
 out:
@@ -121,8 +121,8 @@ int nvshmemi_detect_same_device(nvshmemi_state_t *state) {
     NULL_ERROR_JMP(state->pe_info, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                    "topo init info allocation failed \n");
 
-    status = state->boot_handle.allgather((void *)&my_info, (void *)state->pe_info,
-                                          sizeof(nvshmem_transport_pe_info_t), &state->boot_handle);
+    status = nvshmemi_boot_handle.allgather((void *)&my_info, (void *)state->pe_info,
+                                          sizeof(nvshmem_transport_pe_info_t), &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of ipc handles failed \n");
 
     for (int i = 0; i < state->npes; i++) {
@@ -170,7 +170,7 @@ out:
 
 static int get_device_path(char *bus_id, char **path) {
     int status = NVSHMEMX_SUCCESS;
-    char pathname[MAXPATHSIZE];
+    char pathname[MAXPATHSIZE + 1];
     char *cuda_rpath;
     char bus_path[] = "/sys/class/pci_bus/0000:00/device";
 
@@ -283,8 +283,8 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
     status = get_cuda_bus_id(state->cudevice, gpu_info.gpu_bus_id);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda busid failed \n");
 
-    status = state->boot_handle.allgather((void *)&gpu_info, (void *)gpu_info_all,
-                                          sizeof(struct gpu_info), &state->boot_handle);
+    status = nvshmemi_boot_handle.allgather((void *)&gpu_info, (void *)gpu_info_all,
+                                          sizeof(struct gpu_info), &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of gpu_info failed \n");
 
     status = tcurr->host_ops.get_device_count(&ndev, tcurr);
@@ -332,6 +332,10 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
                         break;
                     }
                 }
+                INFO(NVSHMEM_TOPO, "PE %d: %s dev %d: %s distance: %d\n",
+                     pe_id, cuda_device_paths[pe_id],
+                     dev_id, dev_info_all[dev_id].dev_path,
+                     distance_compare);
                 pe_dev_pairs.insert(pairs_iter, {pe_id, dev_id, distance_compare});
             }
         }
@@ -345,6 +349,8 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
             continue;
         }
 
+        INFO(NVSHMEM_TOPO, "Pairing PE %d with device %d at distance %d\n",
+             (*pairs_iter).pe_idx, (*pairs_iter).dev_idx, (*pairs_iter).pcie_distance);
         pe_selected_devices[(*pairs_iter).pe_idx] = (*pairs_iter).dev_idx;
         pe_device_distance[(*pairs_iter).pe_idx] = (*pairs_iter).pcie_distance;
         used_devs[(*pairs_iter).dev_idx]++;
@@ -366,11 +372,18 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
 
         for (pairs_iter = pe_dev_pairs.begin(); pairs_iter != pe_dev_pairs.end(); pairs_iter++) {
             /* Never change for a less optimal NIC. */
+
+            if ((*pairs_iter).pe_idx != pe_id) {
+                continue;
+            }
+
             if (pci_distance_perf[(*pairs_iter).pcie_distance] < pci_distance_perf[pe_device_distance[pe_id]]) {
                 break;
             }
 
             if ((nic_density - used_devs[(*pairs_iter).dev_idx]) >= 2) {
+                INFO(NVSHMEM_TOPO, "Re-Pairing PE %d with device %d at distance %d\n",
+                    (*pairs_iter).pe_idx, (*pairs_iter).dev_idx, (*pairs_iter).pcie_distance);
                 used_devs[pe_selected_devices[pe_id]]--;
                 used_devs[(*pairs_iter).dev_idx]++;
                 nic_density = used_devs[(*pairs_iter).dev_idx];

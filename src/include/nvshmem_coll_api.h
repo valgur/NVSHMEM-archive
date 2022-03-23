@@ -35,6 +35,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_ALLTOALL)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_ALLTOALLS)
 #undef DECL_NVSHMEM_TYPENAME_ALLTOALLS
 
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_alltoallmem(nvshmem_team_t team, void *dest, const void *src, size_t nelems);
+
 // barrier collectives
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_barrier(nvshmem_team_t team);
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_barrier_all();

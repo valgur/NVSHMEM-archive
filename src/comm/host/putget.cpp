@@ -30,6 +30,7 @@ static int nvshmemi_p2p_rma_optimized(CUstream custrm /* internal stream */, CUe
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyDtoDAsync() failed\n");
                 if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)
                     nvshmemi_signal_op_on_stream(sig_addr, signal, sig_op, pe, custrm);
+                nvshmemi_state->used_internal_streams = 1;
             }
         } else { /*!is_nbi*/
             if (is_contig) {
@@ -148,12 +149,16 @@ static int nvshmemi_p2p_rma_registered(CUstream custrm /* internal stream */, CU
         if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL) {
             nvshmemi_signal_op_on_stream(sig_addr, signal, sig_op, pe, stream_for_op);
         }
+        if (verb.is_nbi)
+            nvshmemi_state->used_internal_streams = 1;
     } else {
         status = cudaMemcpy2DAsync(dest->ptr, bytesdesc.deststride * bytesdesc.elembytes,
                                     src->ptr, bytesdesc.srcstride * bytesdesc.elembytes,
                                     bytesdesc.elembytes, bytesdesc.nelems, cudaMemcpyDefault,
                                     stream_for_op);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpy2DAsync() failed\n");
+        if (verb.is_nbi)
+            nvshmemi_state->used_internal_streams = 1;
     }
 
     if (!verb.is_stream && !verb.is_nbi) {
@@ -268,7 +273,7 @@ out:
 #define NVSHMEM_TYPE_PUT(Name, TYPE)                                                              \
     void nvshmem_##Name##_put(TYPE *dest, const TYPE *source, size_t nelems, int pe) {            \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+        NVSHMEMI_CHECK_INIT_STATUS();                                                             \
         /*INFO(NVSHMEM_P2P, "[%d] bulk put : (remote)dest %p, (local)source %p, %d elements,      \
          * remote PE %d", nvshmemi_state->mype, dest, source, nelems, pe);*/                      \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_put", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, \
@@ -284,7 +289,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_PUT)
     void nvshmemx_##Name##_put_on_stream(TYPE *dest, const TYPE *source, size_t nelems, int pe,   \
                                          cudaStream_t cstrm) {                                    \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+        NVSHMEMI_CHECK_INIT_STATUS();                                                             \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_put_on_stream", NVSHMEMI_OP_PUT, NO_NBI, \
                                       ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,     \
                                       DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,  \
@@ -297,7 +302,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_PUT_ON_STREAM)
 #define NVSHMEM_PUTSIZE(Name, Type)                                                              \
     void nvshmem_put##Name(void *dest, const void *source, size_t nelems, int pe) {              \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                  \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                          \
+        NVSHMEMI_CHECK_INIT_STATUS();                                                            \
         nvshmemi_prepare_and_post_rma("nvshmem_put" #Name "", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, \
                                       (void *)source, (void *)dest, SRC_STRIDE_CONTIG,           \
                                       DEST_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe, \
@@ -311,7 +316,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_PUTSIZE)
     void nvshmemx_put##Name##_on_stream(void *dest, const void *source, size_t nelems, int pe,    \
                                         cudaStream_t cstrm) {                                     \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+        NVSHMEMI_CHECK_INIT_STATUS();                                                             \
         nvshmemi_prepare_and_post_rma("nvshmemx_put" #Name "_on_stream", NVSHMEMI_OP_PUT, NO_NBI, \
                                       ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,     \
                                       DEST_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,  \
@@ -324,7 +329,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEMX_PUTSIZE_ON_STREAM)
 /*XXX:Should other comm/put APIs call into nvshmem_putmem (suggested by SP)*/
 void nvshmem_putmem(void *dest, const void *source, size_t bytes, int pe) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -336,7 +341,7 @@ void nvshmem_putmem(void *dest, const void *source, size_t bytes, int pe) {
 void nvshmemx_putmem_on_stream(void *dest, const void *source, size_t bytes, int pe,
                                cudaStream_t cstrm) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -348,7 +353,7 @@ void nvshmemx_putmem_on_stream(void *dest, const void *source, size_t bytes, int
 #define NVSHMEM_TYPE_P(Name, TYPE)                                                            \
     void nvshmem_##Name##_p(TYPE *dest, const TYPE value, int pe) {                           \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                               \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
+		NVSHMEMI_CHECK_INIT_STATUS();													      \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_p", NVSHMEMI_OP_P, NO_NBI, NO_ASYNC, \
                                       (void *)&value, (void *)dest, SRC_STRIDE_CONTIG,        \
                                       DEST_STRIDE_CONTIG, 1, sizeof(TYPE), NULL, 0, -1, pe,   \
@@ -361,7 +366,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_P)
 #define NVSHMEMX_TYPE_P_ON_STREAM(Name, TYPE)                                                       \
     void nvshmemx_##Name##_p_on_stream(TYPE *dest, const TYPE value, int pe, cudaStream_t cstrm) {  \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                     \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                             \
+		NVSHMEMI_CHECK_INIT_STATUS();					                            		        \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_p_on_stream", NVSHMEMI_OP_P, NO_NBI,       \
                                       ASYNC, (void *)&value, (void *)dest, SRC_STRIDE_CONTIG,       \
                                       DEST_STRIDE_CONTIG, 1, sizeof(TYPE), NULL, 0, -1, pe, cstrm); \
@@ -374,7 +379,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_P_ON_STREAM)
     void nvshmem_##Name##_iput(TYPE *dest, const TYPE *source, ptrdiff_t dst, ptrdiff_t sst,       \
                                size_t nelems, int pe) {                                            \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();					                            		       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iput", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, \
                                       (void *)source, (void *)dest, sst, dst, nelems,              \
                                       sizeof(TYPE), NULL, 0, -1, pe, NOT_A_CUDA_STREAM);           \
@@ -388,7 +393,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IPUT)
                                           ptrdiff_t sst, size_t nelems, int pe,                    \
                                           cudaStream_t cstrm) {                                    \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();					                            		       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iput_on_stream", NVSHMEMI_OP_PUT, NO_NBI, \
                                       ASYNC, (void *)source, (void *)dest, sst, dst, nelems,       \
                                       sizeof(TYPE), NULL, 0, -1, pe, cstrm);                       \
@@ -401,7 +406,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_IPUT_ON_STREAM)
     void nvshmem_iput##Name(void *dest, const void *source, ptrdiff_t dst, ptrdiff_t sst,         \
                             size_t nelems, int pe) {                                              \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();					                            		      \
         nvshmemi_prepare_and_post_rma("nvshmem_iput" #Name "", NVSHMEMI_OP_PUT, NO_NBI, NO_ASYNC, \
                                       (void *)source, (void *)dest, sst, dst, nelems,             \
                                       sizeof(Type), NULL, 0, -1, pe, NOT_A_CUDA_STREAM);          \
@@ -415,7 +420,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_IPUTSIZE)
                                          ptrdiff_t sst, size_t nelems, int pe,                    \
                                          cudaStream_t cstrm) {                                    \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();					                            		      \
         nvshmemi_prepare_and_post_rma("nvshmem_iput" #Name "_on_stream", NVSHMEMI_OP_PUT, NO_NBI, \
                                       ASYNC, (void *)source, (void *)dest, sst, dst, nelems,      \
                                       sizeof(Type), NULL, 0, -1, pe, cstrm);                      \
@@ -427,7 +432,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEMX_IPUTSIZE_ON_STREAM)
 #define NVSHMEM_TYPE_PUT_NBI(type, TYPE)                                                           \
     void nvshmem_##type##_put_nbi(TYPE *dest, const TYPE *source, size_t nelems, int pe) {         \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();					                            		       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #type "_put_nbi", NVSHMEMI_OP_PUT, NBI, NO_ASYNC, \
                                       (void *)source, (void *)dest, SRC_STRIDE_CONTIG,             \
                                       DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,   \
@@ -443,7 +448,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_PUT_NBI)
                                                 uint64_t *sig_addr, uint64_t signal, int sig_op,   \
                                                 int pe, cudaStream_t cstrm) {                      \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();					                            		       \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_put_signal_on_stream", NVSHMEMI_OP_PUT_SIGNAL,   \
                                       NO_NBI, ASYNC, (void *)source, (void *)dest,                 \
                                       SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), \
@@ -458,7 +463,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_PUT_SIGNAL_ON_STREAM)
                                                uint64_t *sig_addr, uint64_t signal, int sig_op,    \
                                                int pe, cudaStream_t cstrm) {                       \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();					                            		       \
         nvshmemi_prepare_and_post_rma("nvshmemx_put" #Name "_signal_on_stream", NVSHMEMI_OP_PUT_SIGNAL,   \
                                       NO_NBI, ASYNC, (void *)source, (void *)dest,                 \
                                       SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG, nelems, sizeof(Type), \
@@ -472,7 +477,7 @@ void nvshmemx_putmem_signal_on_stream(void *dest, const void *source, size_t byt
                                       uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
                                       cudaStream_t cstrm) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     TRACE(NVSHMEM_P2P,
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -485,7 +490,7 @@ void nvshmemx_putmem_signal_on_stream(void *dest, const void *source, size_t byt
     void nvshmemx_##type##_put_nbi_on_stream(TYPE *dest, const TYPE *source, size_t nelems,        \
                                              int pe, cudaStream_t cstrm) {                         \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();															   \
         nvshmemi_prepare_and_post_rma("nvshmem_" #type "_put_nbi_on_stream", NVSHMEMI_OP_PUT, NBI, \
                                       ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,      \
                                       DEST_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,   \
@@ -498,7 +503,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_PUT_NBI_ON_STREAM)
 #define NVSHMEM_PUTSIZE_NBI(Name, Type)                                                           \
     void nvshmem_put##Name##_nbi(void *dest, const void *source, size_t nelems, int pe) {         \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();															  \
         nvshmemi_prepare_and_post_rma("nvshmem_put" #Name "_nbi", NVSHMEMI_OP_PUT, NBI, NO_ASYNC, \
                                       (void *)source, (void *)dest, SRC_STRIDE_CONTIG,            \
                                       DEST_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,  \
@@ -512,7 +517,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_PUTSIZE_NBI)
     void nvshmemx_put##Name##_nbi_on_stream(void *dest, const void *source, size_t nelems, int pe, \
                                             cudaStream_t cstrm) {                                  \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();															   \
         nvshmemi_prepare_and_post_rma("nvshmem_put" #Name "_nbi_on_stream", NVSHMEMI_OP_PUT, NBI,  \
                                       ASYNC, (void *)source, (void *)dest, SRC_STRIDE_CONTIG,      \
                                       DEST_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,   \
@@ -524,7 +529,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEMX_PUTSIZE_NBI_ON_STREAM)
 
 void nvshmem_putmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -536,7 +541,7 @@ void nvshmem_putmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
 void nvshmemx_putmem_nbi_on_stream(void *dest, const void *source, size_t bytes, int pe,
                                    cudaStream_t cstrm) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -551,7 +556,7 @@ void nvshmemx_putmem_nbi_on_stream(void *dest, const void *source, size_t bytes,
                                                     uint64_t *sig_addr, uint64_t signal,           \
                                                     int sig_op, int pe, cudaStream_t cstrm) {      \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();															   \
         nvshmemi_prepare_and_post_rma("nvshmem_" #type "_put_signal_nbi_on_stream",                \
                                       NVSHMEMI_OP_PUT_SIGNAL, NBI, ASYNC, (void *)source,          \
                                       (void *)dest, SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG,         \
@@ -566,7 +571,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_PUT_SIGNAL_NBI_ON_STREAM)
                                                    uint64_t *sig_addr, uint64_t signal,           \
                                                    int sig_op, int pe, cudaStream_t cstrm) {      \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();															  \
         nvshmemi_prepare_and_post_rma("nvshmem_put" #Name "_signal_nbi_on_stream",                \
                                       NVSHMEMI_OP_PUT_SIGNAL, NBI, ASYNC, (void *)source,         \
                                       (void *)dest, SRC_STRIDE_CONTIG, DEST_STRIDE_CONTIG,        \
@@ -580,7 +585,7 @@ void nvshmemx_putmem_signal_nbi_on_stream(void *dest, const void *source, size_t
                                           uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
                                           cudaStream_t cstrm) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped put : (remote)dest %p, (local)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -594,7 +599,7 @@ void nvshmemx_putmem_signal_nbi_on_stream(void *dest, const void *source, size_t
 #define NVSHMEM_TYPE_GET(Name, TYPE)                                                              \
     void nvshmem_##Name##_get(TYPE *dest, const TYPE *source, size_t nelems, int pe) {            \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();														      \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_get", NVSHMEMI_OP_GET, NO_NBI, NO_ASYNC, \
                                       (void *)dest, (void *)source, DEST_STRIDE_CONTIG,           \
                                       SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,   \
@@ -608,7 +613,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_GET)
     void nvshmemx_##Name##_get_on_stream(TYPE *dest, const TYPE *source, size_t nelems, int pe,   \
                                          cudaStream_t cstrm) {                                    \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();														      \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_get_on_stream", NVSHMEMI_OP_GET, NO_NBI, \
                                       ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,    \
                                       SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,   \
@@ -621,7 +626,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_GET_ON_STREAM)
 #define NVSHMEM_GETSIZE(Name, Type)                                                              \
     void nvshmem_get##Name(void *dest, const void *source, size_t nelems, int pe) {              \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                  \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                          \
+		NVSHMEMI_CHECK_INIT_STATUS();														      \
         nvshmemi_prepare_and_post_rma("nvshmem_get" #Name "", NVSHMEMI_OP_GET, NO_NBI, NO_ASYNC, \
                                       (void *)dest, (void *)source, DEST_STRIDE_CONTIG,          \
                                       SRC_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,  \
@@ -635,7 +640,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_GETSIZE)
     void nvshmemx_get##Name##_on_stream(void *dest, const void *source, size_t nelems, int pe,    \
                                         cudaStream_t cstrm) {                                     \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();														      \
         nvshmemi_prepare_and_post_rma("nvshmemx_get" #Name "_on_stream", NVSHMEMI_OP_GET, NO_NBI, \
                                       ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,    \
                                       SRC_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,   \
@@ -647,7 +652,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEMX_GETSIZE_ON_STREAM)
 
 void nvshmem_getmem(void *dest, const void *source, size_t bytes, int pe) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped get : (local)dest %p, (remote)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -659,7 +664,7 @@ void nvshmem_getmem(void *dest, const void *source, size_t bytes, int pe) {
 void nvshmemx_getmem_on_stream(void *dest, const void *source, size_t bytes, int pe,
                                cudaStream_t cstrm) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped get : (local)dest %p, (remote)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -671,7 +676,7 @@ void nvshmemx_getmem_on_stream(void *dest, const void *source, size_t bytes, int
 #define NVSHMEM_TYPE_G(Name, TYPE)                                                            \
     TYPE nvshmem_##Name##_g(const TYPE *source, int pe) {                                     \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                               \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                       \
+		NVSHMEMI_CHECK_INIT_STATUS();														  \
         TYPE value;                                                                           \
         INFO(NVSHMEM_P2P, "[%d] single get : (remote)source %p, remote PE %d",                \
              nvshmemi_state->mype, source, pe);                                               \
@@ -688,7 +693,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_G)
 #define NVSHMEMX_TYPE_G_ON_STREAM(Name, TYPE)                                                      \
     TYPE nvshmemx_##Name##_g_on_stream(const TYPE *source, int pe, cudaStream_t cstrm) {           \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();												      		   \
         TYPE value;                                                                                \
         INFO(NVSHMEM_P2P, "[%d] single get : (remote)source %p, remote PE %d",                     \
              nvshmemi_state->mype, source, pe);                                                    \
@@ -705,7 +710,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_G_ON_STREAM)
     void nvshmem_##Name##_iget(TYPE *dest, const TYPE *source, ptrdiff_t dst, ptrdiff_t sst,       \
                                size_t nelems, int pe) {                                            \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();												      		   \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iget", NVSHMEMI_OP_GET, NO_NBI, NO_ASYNC, \
                                       (void *)dest, (void *)source, dst, sst, nelems,              \
                                       sizeof(TYPE), NULL, 0, -1, pe, NOT_A_CUDA_STREAM);           \
@@ -719,7 +724,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IGET)
                                           ptrdiff_t sst, size_t nelems, int pe,                    \
                                           cudaStream_t cstrm) {                                    \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                    \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();												      		   \
         nvshmemi_prepare_and_post_rma("nvshmem_" #Name "_iget_on_stream", NVSHMEMI_OP_GET, NO_NBI, \
                                       ASYNC, (void *)dest, (void *)source, dst, sst, nelems,       \
                                       sizeof(TYPE), NULL, 0, -1, pe, cstrm);                       \
@@ -732,7 +737,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_IGET_ON_STREAM)
     void nvshmem_iget##Name(void *dest, const void *source, ptrdiff_t dst, ptrdiff_t sst,         \
                             size_t nelems, int pe) {                                              \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();												      		   \
         nvshmemi_prepare_and_post_rma("nvshmem_iget" #Name "", NVSHMEMI_OP_GET, NO_NBI, NO_ASYNC, \
                                       (void *)dest, (void *)source, dst, sst, nelems,             \
                                       sizeof(Type), NULL, 0, -1, pe, NOT_A_CUDA_STREAM);          \
@@ -746,7 +751,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_IGETSIZE)
                                          ptrdiff_t sst, size_t nelems, int pe,                    \
                                          cudaStream_t cstrm) {                                    \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_BLOCKING);                                                   \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();												      		  \
         nvshmemi_prepare_and_post_rma("nvshmem_iget" #Name "_on_stream", NVSHMEMI_OP_GET, NO_NBI, \
                                       ASYNC, (void *)dest, (void *)source, dst, sst, nelems,      \
                                       sizeof(Type), NULL, 0, -1, pe, cstrm);                      \
@@ -758,7 +763,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEMX_IGETSIZE_ON_STREAM)
 #define NVSHMEM_TYPE_GET_NBI(type, TYPE)                                                           \
     void nvshmem_##type##_get_nbi(TYPE *dest, const TYPE *source, size_t nelems, int pe) {         \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();		 										      		   \
         nvshmemi_prepare_and_post_rma("nvshmem_" #type "_get_nbi", NVSHMEMI_OP_GET, NBI, NO_ASYNC, \
                                       (void *)dest, (void *)source, DEST_STRIDE_CONTIG,            \
                                       SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,    \
@@ -772,7 +777,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_GET_NBI)
     void nvshmemx_##type##_get_nbi_on_stream(TYPE *dest, const TYPE *source, size_t nelems,        \
                                              int pe, cudaStream_t cstrm) {                         \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();		 										      		   \
         nvshmemi_prepare_and_post_rma("nvshmem_" #type "_get_nbi_on_stream", NVSHMEMI_OP_GET, NBI, \
                                       ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,     \
                                       SRC_STRIDE_CONTIG, nelems, sizeof(TYPE), NULL, 0, -1, pe,    \
@@ -785,7 +790,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_TYPE_GET_NBI_ON_STREAM)
 #define NVSHMEM_GETSIZE_NBI(Name, Type)                                                           \
     void nvshmem_get##Name##_nbi(void *dest, const void *source, size_t nelems, int pe) {         \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                           \
+		NVSHMEMI_CHECK_INIT_STATUS();		 										      		  \
         nvshmemi_prepare_and_post_rma("nvshmem_get" #Name "_nbi", NVSHMEMI_OP_GET, NBI, NO_ASYNC, \
                                       (void *)dest, (void *)source, DEST_STRIDE_CONTIG,           \
                                       SRC_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,   \
@@ -799,7 +804,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_GETSIZE_NBI)
     void nvshmemx_get##Name##_nbi_on_stream(void *dest, const void *source, size_t nelems, int pe, \
                                             cudaStream_t cstrm) {                                  \
         NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);                                                 \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+		NVSHMEMI_CHECK_INIT_STATUS();		 										      		   \
         nvshmemi_prepare_and_post_rma("nvshmem_get" #Name "_nbi_on_stream", NVSHMEMI_OP_GET, NBI,  \
                                       ASYNC, (void *)dest, (void *)source, DEST_STRIDE_CONTIG,     \
                                       SRC_STRIDE_CONTIG, nelems, sizeof(Type), NULL, 0, -1, pe,    \
@@ -811,7 +816,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEMX_GETSIZE_NBI_ON_STREAM)
 
 void nvshmem_getmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped get : (local)dest %p, (remote)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);
@@ -823,7 +828,7 @@ void nvshmem_getmem_nbi(void *dest, const void *source, size_t bytes, int pe) {
 void nvshmemx_getmem_nbi_on_stream(void *dest, const void *source, size_t bytes, int pe,
                                    cudaStream_t cstrm) {
     NVTX_FUNC_RANGE_IN_GROUP(RMA_NONBLOCKING);
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	NVSHMEMI_CHECK_INIT_STATUS();
     INFO(NVSHMEM_P2P,
          "[%d] untyped get : (local)dest %p, (remote)source %p, %zu bytes, remote PE %d",
          nvshmemi_state->mype, dest, source, bytes, pe);

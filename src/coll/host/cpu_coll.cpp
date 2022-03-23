@@ -36,6 +36,8 @@ int nvshmemi_coll_common_cpu_init() {
 #ifdef NVSHMEM_USE_NCCL
     void *nccl_handle = NULL;
     int nccl_build_version;
+    int nccl_major;
+    int nccl_build_major;
 #endif
 
     status = nvshmemi_coll_common_cpu_read_env();
@@ -59,11 +61,21 @@ int nvshmemi_coll_common_cpu_init() {
     nccl_build_version = NCCL_VERSION_CODE;
     LOAD_SYM(nccl_handle, "ncclGetVersion", nccl_ftable.GetVersion);
     nccl_ftable.GetVersion(&nccl_version);
-    if (nccl_version < nccl_build_version) {
+    if (nccl_version > 10000) {
+        nccl_major = nccl_version / 10000;
+    } else {
+        nccl_major = nccl_version / 1000;
+    }
+    if (nccl_build_version > 10000) {
+        nccl_build_major = nccl_build_version / 10000;
+    } else {
+        nccl_build_major = nccl_build_version / 1000;
+    }
+    if (nccl_major != nccl_build_major) {
         WARN_PRINT(
-            "NCCL library version (%d) is older than the"
+            "NCCL library major version (%d) is different than the"
             " version (%d) with which NVSHMEM was built, skipping use...\n",
-            nccl_version, nccl_build_version);
+            nccl_major, nccl_build_major);
         nvshmemi_use_nccl = 0;
         goto fn_out;
     }

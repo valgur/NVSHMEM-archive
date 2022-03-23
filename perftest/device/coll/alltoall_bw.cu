@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
 
     }
 
-    if (array_dim_min < npes) {
+    if (array_dim_min < (size_t) npes) {
         fprintf(stderr, "array_dim_min_log is too small. With %d gpus, the minimum dimension size must be at least log2(%d)\n", npes, npes);
         status = -EINVAL;
         goto out;
@@ -145,7 +145,7 @@ int main(int argc, char *argv[]) {
     } else {
         // skip comm to gpus within my node
         int my_node = (mype / ndevices);
-        for(size_t i = my_node * ndevices; i < (my_node + 1) * ndevices; i++) {
+        for(int i = my_node * ndevices; i < (my_node + 1) * ndevices; i++) {
             is_not_p2p_host[i] = 0;
         }
     }
@@ -183,14 +183,14 @@ int main(int argc, char *argv[]) {
 
         // Skip first ones
         nvshmem_barrier_all();
-        for(int i = 0; i < warmup; i++) {
+        for(size_t i = 0; i < warmup; i++) {
             all_to_all<<<num_blocks, num_threads, 0, stream>>>(src, dst, mype, npes, msg_size, num_msgs_per_dst, is_not_p2p);
             nvshmemx_barrier_all_on_stream(stream);
         }
 
         // Run and time
         cudaEventRecord(start);
-        for(int i = 0; i < repeat; i++) {
+        for(size_t i = 0; i < repeat; i++) {
             all_to_all<<<num_blocks, num_threads, 0, stream>>>(src, dst, mype, npes, msg_size, num_msgs_per_dst, is_not_p2p);
             nvshmemx_barrier_all_on_stream(stream);
         }

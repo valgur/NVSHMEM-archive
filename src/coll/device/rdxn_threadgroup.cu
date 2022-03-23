@@ -17,7 +17,7 @@
 #define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP)                      \
     __device__ int nvshmemx_##TYPENAME##_##OP##_reduce_##SC(nvshmem_team_t team, TYPE *dest,      \
                                                             const TYPE *source, size_t nreduce) { \
-        nvshmemi_reduce_threadgroup<TYPE, RDXN_OPS_##OP, SC>(team, dest, source, nreduce);        \
+        nvshmemi_reduce_threadgroup<TYPE, RDXN_OPS_##OP, nvshmemi_threadgroup_##SC>(team, dest, source, nreduce);        \
         return 0;                                                                                 \
     }
 

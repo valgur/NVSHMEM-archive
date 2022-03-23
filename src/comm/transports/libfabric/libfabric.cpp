@@ -1,0 +1,839 @@
+/*
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
+#include "libfabric.h"
+
+#include "nvshmem.h"
+#include "nvshmem_internal.h"
+#include "nvshmemx_error.h"
+#include "topo.h"
+
+static int nvshmemt_libfabric_progress(nvshmem_transport_t transport) {
+    nvshmemt_libfabric_state_t  *libfabric_state = (nvshmemt_libfabric_state_t *)transport->state;
+    struct fi_cq_err_entry buf;
+    uint64_t status;
+
+    for (int i = 0; i < NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS; i++) {
+        status = fi_cntr_readerr(libfabric_state->eps[i].counter);
+        if (status > 0) {
+            fprintf(stderr, "received an error during progress.\n");
+            return NVSHMEMX_ERROR_INTERNAL;
+        }
+    }
+
+    return 0;
+}
+
+static inline int try_again(nvshmem_transport_t transport, int *status, int * num_retries) {
+
+    if (likely(*status == 0)) {
+        return 0;
+    }
+
+    if (*status == -FI_EAGAIN) {
+        if (*num_retries >= NVSHMEMT_LIBFABRIC_MAX_RETRIES) {
+            *status = NVSHMEMX_ERROR_INTERNAL;
+            return 0;
+        }
+        *num_retries++;
+        *status = nvshmemt_libfabric_progress(transport);
+    }
+
+    if (*status != 0) {
+        *status = NVSHMEMX_ERROR_INTERNAL;
+        return 0;
+    }
+
+    return 1;
+}
+
+static int nvshmemt_libfabric_quiet(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
+    nvshmemt_libfabric_state_t      *libfabric_state = (nvshmemt_libfabric_state_t *)tcurr->state;
+    nvshmemt_libfabric_endpoint_t   *ep;
+    int                             status = 0;
+
+    if (is_proxy) {
+        ep = &libfabric_state->eps[NVSHMEMT_LIBFABRIC_PROXY_EP_IDX];
+    } else {
+        ep = &libfabric_state->eps[NVSHMEMT_LIBFABRIC_HOST_EP_IDX];
+    }
+
+    status = fi_cntr_wait(ep->counter, ep->submitted_ops, NVSHMEMT_LIBFABRIC_QUIET_TIMEOUT_MS);
+    if (status) {
+        /* note - Status is negative for this function in error cases but
+         * fi_strerror only accepts positive values.
+         */
+        ERROR_PRINT("Timed out in quiet operation %d: %s.", status, fi_strerror(status * -1));
+        status = NVSHMEMX_ERROR_INTERNAL;
+    }
+
+    return status;
+}
+
+static int nvshmemt_libfabric_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
+                                 int transport_count, int npes, int mype) {
+    INFO(NVSHMEM_TRANSPORT, "libfabric show info not implemented");
+    return 0;
+}
+
+static int nvshmemt_libfabric_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, rma_memdesc_t *remote, rma_memdesc_t *local,
+                                  rma_bytesdesc_t bytesdesc, int is_proxy) {
+    nvshmemt_libfabric_mem_handle_t *remote_handle, *local_handle;
+    nvshmemt_libfabric_state_t      *libfabric_state = (nvshmemt_libfabric_state_t *)tcurr->state;
+    struct iovec                    p_op_l_iov;
+    struct fi_msg_rma               p_op_msg;
+    struct fi_rma_iov               p_op_r_iov;
+    nvshmemt_libfabric_endpoint_t   *ep;
+    size_t                          op_size;
+    int                             status = 0;
+    int                             target_ep;
+    int                             num_retries = 0;
+
+    if (is_proxy) {
+        ep = &libfabric_state->eps[NVSHMEMT_LIBFABRIC_PROXY_EP_IDX];
+        target_ep = pe * NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS + NVSHMEMT_LIBFABRIC_PROXY_EP_IDX;
+    } else {
+        ep = &libfabric_state->eps[NVSHMEMT_LIBFABRIC_HOST_EP_IDX];
+        target_ep = pe * NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS + NVSHMEMT_LIBFABRIC_HOST_EP_IDX;
+    }
+
+    remote_handle = (nvshmemt_libfabric_mem_handle_t *)remote->handle;
+    local_handle = (nvshmemt_libfabric_mem_handle_t *)local->handle;
+    op_size = bytesdesc.elembytes * bytesdesc.nelems;
+
+    if (verb.desc == NVSHMEMI_OP_P) {
+        p_op_msg.msg_iov = &p_op_l_iov;
+        p_op_msg.desc = NULL;
+        p_op_msg.iov_count = 1;
+        p_op_msg.addr = target_ep;
+        p_op_msg.rma_iov = &p_op_r_iov;
+        p_op_msg.rma_iov_count = 1;
+
+        p_op_l_iov.iov_base = local->ptr;
+        p_op_l_iov.iov_len = op_size;
+
+        p_op_r_iov.addr = (uintptr_t)remote->ptr;
+        p_op_r_iov.len = op_size;
+        p_op_r_iov.key = remote_handle->key;
+
+        /* The p buffer is on the stack so use
+         * FI_INJECT to avoid segfaults during async runs.
+         */
+        do {
+            status = fi_writemsg(ep->endpoint, &p_op_msg, FI_INJECT);
+        } while(try_again(tcurr, &status, &num_retries));
+    } else if (verb.desc == NVSHMEMI_OP_PUT) {
+        do {
+            status = fi_write(ep->endpoint, local->ptr, op_size, local_handle->local_desc,
+                              target_ep, (uintptr_t)remote->ptr, remote_handle->key, NULL);
+        } while(try_again(tcurr, &status, &num_retries));
+    } else if (verb.desc == NVSHMEMI_OP_G || verb.desc == NVSHMEMI_OP_GET) {
+        do {
+            status = fi_read(ep->endpoint, local->ptr, op_size, local_handle->local_desc,
+                             target_ep, (uintptr_t)remote->ptr, remote_handle->key, NULL);
+        } while(try_again(tcurr, &status, &num_retries));
+    } else {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "Invalid RMA operation specified.\n");
+    }
+
+out:
+    if (status) {
+        ERROR_PRINT("Received an error when trying to post an RMA operation.\n");
+    }
+
+    return status;
+}
+
+static int nvshmemt_libfabric_amo(struct nvshmem_transport *transport, int pe, void *curetptr, amo_verb_t verb,
+                                  amo_memdesc_t *remote, amo_bytesdesc_t bytesdesc, int is_proxy) {
+    nvshmemt_libfabric_state_t      *libfabric_state = (nvshmemt_libfabric_state_t *)transport->state;
+    nvshmemt_libfabric_mem_handle_t *remote_handle = NULL, *local_handle = NULL;
+    nvshmemt_libfabric_endpoint_t   *ep;
+    struct fi_msg_atomic            amo_msg;
+    struct fi_ioc                   fi_local_iov;
+    struct fi_ioc                   fi_comp_iov;
+    struct fi_ioc                   fi_ret_iov;
+    struct fi_rma_ioc               fi_remote_iov;
+    enum fi_datatype                data;
+    enum fi_op                      op;
+    int                             target_ep;
+    int                             status = 0;
+    int                             num_retries = 0;
+
+    remote_handle = (nvshmemt_libfabric_mem_handle_t *)remote->handle;
+    if (verb.desc > NVSHMEMI_AMO_END_OF_NONFETCH) {
+        local_handle = (nvshmemt_libfabric_mem_handle_t *)remote->ret_handle;
+    }
+
+    if (is_proxy) {
+        ep = &libfabric_state->eps[NVSHMEMT_LIBFABRIC_PROXY_EP_IDX];
+        target_ep = pe * NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS + NVSHMEMT_LIBFABRIC_PROXY_EP_IDX;
+    } else {
+        ep = &libfabric_state->eps[NVSHMEMT_LIBFABRIC_HOST_EP_IDX];
+        target_ep = pe * NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS + NVSHMEMT_LIBFABRIC_HOST_EP_IDX;
+    }
+
+    if (bytesdesc.elembytes == 8) {
+        data = FI_UINT64;
+    } else if (bytesdesc.elembytes == 4) {
+        data = FI_UINT32;
+    } else {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "Invalid atomic size specified.\n");
+    }
+
+
+    switch(verb.desc) {
+        case NVSHMEMI_AMO_SWAP:
+        case NVSHMEMI_AMO_SIGNAL:
+        case NVSHMEMI_AMO_SIGNAL_SET:
+        case NVSHMEMI_AMO_SET: {
+            op = FI_ATOMIC_WRITE;
+            break;
+        }
+        case NVSHMEMI_AMO_FETCH_INC:
+        case NVSHMEMI_AMO_INC:
+        case NVSHMEMI_AMO_FETCH_ADD:
+        case NVSHMEMI_AMO_SIGNAL_ADD:
+        case NVSHMEMI_AMO_ADD: {
+            op = FI_SUM;
+            break;
+        }
+        case NVSHMEMI_AMO_FETCH_AND:
+        case NVSHMEMI_AMO_AND: {
+            op = FI_BAND;
+            break;
+        }
+        case NVSHMEMI_AMO_FETCH_OR:
+        case NVSHMEMI_AMO_OR: {
+            op = FI_BOR;
+            break;
+        }
+        case NVSHMEMI_AMO_FETCH_XOR:
+        case NVSHMEMI_AMO_XOR: {
+            op = FI_BXOR;
+            break;
+        }
+        case NVSHMEMI_AMO_FETCH: {
+            op = FI_ATOMIC_READ;
+            break;
+        }
+        case NVSHMEMI_AMO_COMPARE_SWAP: {
+            op = FI_CSWAP;
+            break;
+        }
+        default: {
+            ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "Opcode %d is invalid.\n", verb.desc);
+        }
+    }
+
+    fi_local_iov.addr = &remote->val;
+    fi_local_iov.count = 1;
+    amo_msg.msg_iov = &fi_local_iov;
+    amo_msg.desc = NULL;
+    amo_msg.iov_count = 1;
+
+    amo_msg.addr = target_ep;
+
+    fi_remote_iov.addr = (uintptr_t)remote->ptr;
+    fi_remote_iov.count = 1;
+    fi_remote_iov.key = remote_handle->key;
+    amo_msg.rma_iov = &fi_remote_iov;
+    amo_msg.rma_iov_count = 1;
+
+    amo_msg.datatype = data;
+    amo_msg.op = op;
+
+    amo_msg.context = NULL;
+    amo_msg.data = 0;
+
+    if (verb.desc > NVSHMEMI_AMO_END_OF_NONFETCH) {
+        fi_ret_iov.addr = remote->retptr;
+        fi_ret_iov.count = 1;
+        if (verb.desc == NVSHMEMI_AMO_COMPARE_SWAP) {
+            fi_comp_iov.addr = &remote->cmp;
+            fi_comp_iov.count = 1;
+        }
+    }
+
+    do {
+        if (verb.desc == NVSHMEMI_AMO_COMPARE_SWAP) {
+            status = fi_compare_atomicmsg(ep->endpoint, &amo_msg,
+                                          &fi_comp_iov, NULL, 1,
+                                          &fi_ret_iov, &local_handle->local_desc,
+                                          1, FI_INJECT);
+        } else if (verb.desc < NVSHMEMI_AMO_END_OF_NONFETCH) {
+            status = fi_atomicmsg(ep->endpoint, &amo_msg, FI_INJECT);
+        } else {
+            status = fi_fetch_atomicmsg(ep->endpoint, &amo_msg,
+                                        &fi_ret_iov, &local_handle->local_desc,
+                                        1, FI_INJECT);
+        }
+    } while(try_again(transport, &status, &num_retries));
+
+out:
+    if (status) {
+        ERROR_PRINT("Received an error when trying to post an AMO operation.\n");
+    }
+    return status;
+}
+
+static int nvshmemt_libfabric_enforce_cst(struct nvshmem_transport *tcurr) {
+    nvshmemt_libfabric_state_t  *libfabric_state = (nvshmemt_libfabric_state_t *)tcurr->state;
+    int                         status;
+    int                         target_ep;
+    int                         num_retries = 0;
+
+    target_ep = target_ep = nvshmemi_state->mype * NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS + NVSHMEMT_LIBFABRIC_PROXY_EP_IDX;
+    do {
+        status = fi_read(libfabric_state->eps[NVSHMEMT_LIBFABRIC_PROXY_EP_IDX].endpoint,
+                         libfabric_state->local_mem_ptr, 8, libfabric_state->local_mr_desc,
+                         target_ep, (uintptr_t)libfabric_state->local_mem_ptr,
+                         libfabric_state->local_mr_key, NULL);
+    } while (try_again(tcurr, &status, &num_retries));
+
+    return status;
+}
+
+static int nvshmemt_libfabric_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
+    nvshmemt_libfabric_mem_handle_t *fabric_handle;
+
+    assert(mem_handle != NULL);
+    fabric_handle = (nvshmemt_libfabric_mem_handle_t *)mem_handle;
+
+    fi_close(&fabric_handle->mr->fid);
+
+    return 0;
+}
+
+static int nvshmemt_libfabric_get_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t *mem_handle_in,
+                                             void *buf, size_t length, nvshmem_transport_t t, bool local_only) {
+    nvshmemt_libfabric_mem_handle_t *fabric_handle;
+    nvshmemt_libfabric_state_t      *libfabric_state = (nvshmemt_libfabric_state_t *)t->state;
+    cudaPointerAttributes           attr = {};
+    struct fi_mr_attr               mr_attr;
+    struct iovec                    mr_iovec;
+    int                             status;
+    bool                            is_host = true;
+
+    assert(mem_handle != NULL);
+    fabric_handle = (nvshmemt_libfabric_mem_handle_t *)mem_handle;
+    status = cudaPointerGetAttributes(&attr, buf);
+#if CUDART_VERSION >= 11000
+    if (status != cudaSuccess) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to query pointer attributes.\n");
+        /* clear CUDA error string. */
+        cudaGetLastError();
+        return NVSHMEMX_ERROR_INTERNAL;
+    }
+#else
+    if (status != cudaSuccess) {
+        /* clear CUDA error string. */
+        cudaGetLastError();
+        if (status == cudaErrorInvalidValue) {
+            is_host = true;
+        } else {
+            ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to query pointer attributes.\n");
+        }
+    }
+#endif
+    if (attr.type == cudaMemoryTypeDevice || attr.type == cudaMemoryTypeManaged) {
+        is_host = false;
+    }
+
+    mr_iovec.iov_base = buf;
+    mr_iovec.iov_len = length;
+    mr_attr.mr_iov = &mr_iovec;
+    mr_attr.iov_count = 1;
+    mr_attr.access = FI_READ | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE;
+    mr_attr.offset = 0;
+    mr_attr.requested_key = 0;
+    mr_attr.context = NULL;
+    if (!is_host) {
+        mr_attr.iface = FI_HMEM_CUDA;
+        mr_attr.device.cuda = nvshmemi_state->cudevice;
+    } else {
+        mr_attr.iface = FI_HMEM_SYSTEM;
+    }
+
+    status = fi_mr_regattr(libfabric_state->domain, &mr_attr, 0, &fabric_handle->mr);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to register memory region with status %d : %s.",
+                 status, fi_strerror(status * -1));
+
+    fabric_handle->key = fi_mr_key(fabric_handle->mr);
+    fabric_handle->local_desc = fi_mr_desc(fabric_handle->mr);
+    if (libfabric_state->local_mr == NULL) {
+        libfabric_state->local_mr = fabric_handle->mr;
+        libfabric_state->local_mr_key = fabric_handle->key;
+        libfabric_state->local_mr_desc = fabric_handle->local_desc;
+        libfabric_state->local_mem_ptr = buf;
+    }
+
+out:
+    return status;
+}
+
+static int nvshmemt_libfabric_can_reach_peer(int *access, struct nvshmem_transport_pe_info *peer_info,
+                                      nvshmem_transport_t t) {
+    *access = NVSHMEM_TRANSPORT_CAP_CPU_WRITE | NVSHMEM_TRANSPORT_CAP_CPU_READ |
+              NVSHMEM_TRANSPORT_CAP_CPU_ATOMICS;
+
+    return 0;
+}
+
+/*
+ * TODO: Only valid for verbs based endpoints
+ * For future providers we will have to use a different
+ * methodology for path detection. Hopefully something
+ * that can plug into the generic code.
+ */
+static int ib_iface_get_mlx_path(const char *ib_name, char **path) {
+    int status;
+
+    char device_path[MAXPATHSIZE];
+    status = snprintf(device_path, MAXPATHSIZE, "/sys/class/infiniband/%s/device", ib_name);
+    if (status < 0 || status >= MAXPATHSIZE) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to fill in device name.\n");
+    } else {
+        status = NVSHMEMX_SUCCESS;
+    }
+
+    *path = realpath(device_path, NULL);
+    NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
+
+out:
+    return status;
+}
+
+static int nvshmemt_libfabric_get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
+    int status = NVSHMEMX_SUCCESS;
+    const char *ib_name;
+    nvshmemt_libfabric_state_t *libfabric_state = (nvshmemt_libfabric_state_t *)t->state;
+
+    /* for now we only support verbs interfaces */
+    assert(strcmp(libfabric_state->provider_name, "verbs") == 0);
+
+    ib_name = (const char *)libfabric_state->domain_names[dev].name;
+
+    status = ib_iface_get_mlx_path(ib_name, pci_path);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ib_iface_get_mlx_path failed \n");
+
+out:
+    return status;
+}
+
+static int nvshmemt_libfabric_get_device_count(int *ndev, nvshmem_transport_t t) {
+    nvshmemt_libfabric_state_t *libfabric_state = (nvshmemt_libfabric_state_t *)t->state;
+
+    /* for verbs, there is a 1:1 mapping of device to domain. For other transports this may
+     * not be the case.
+     */
+    *ndev = libfabric_state->num_domains;
+
+    return 0;
+}
+
+static int nvshmemt_libfabric_connect_endpoints(nvshmem_transport_t t) {
+    nvshmemt_libfabric_state_t      *libfabric_state = (nvshmemt_libfabric_state_t *)t->state;
+    nvshmemt_libfabric_ep_name_t    *all_ep_names = NULL;
+    nvshmemt_libfabric_ep_name_t    *local_ep_names = NULL;
+    struct fi_cq_attr               cq_attr = {0};
+    struct fi_cntr_attr             cntr_attr;
+    size_t                          total_num_eps;
+    size_t                          ep_namelen = NVSHMEMT_LIBFABRIC_EP_LEN;
+    int                             status = 0;
+    int                             global_ep_idx;
+
+    assert(libfabric_state->eps);
+
+    libfabric_state->prov_info->ep_attr->tx_ctx_cnt = 0;
+    libfabric_state->prov_info->caps = FI_RMA | FI_ATOMIC |
+                                       FI_REMOTE_READ | FI_REMOTE_WRITE;
+    libfabric_state->prov_info->tx_attr->op_flags = 0;
+    libfabric_state->prov_info->mode = 0;
+    libfabric_state->prov_info->tx_attr->mode = 0;
+    libfabric_state->prov_info->rx_attr->mode = 0;
+
+    cntr_attr.events    = FI_CNTR_EVENTS_COMP;
+    cntr_attr.wait_obj  = FI_WAIT_UNSPEC;
+    cntr_attr.wait_set  = NULL;
+    cntr_attr.flags     = 0;
+
+    local_ep_names = (nvshmemt_libfabric_ep_name_t *)
+                      calloc(NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS,
+                             sizeof(nvshmemt_libfabric_ep_name_t));
+    NULL_ERROR_JMP(local_ep_names, status,
+                   NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                   "Unable to allocate array of endpoint names.");
+
+    total_num_eps = NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS * nvshmemi_state->npes;
+    all_ep_names = (nvshmemt_libfabric_ep_name_t *)
+                    calloc(total_num_eps, sizeof(nvshmemt_libfabric_ep_name_t));
+    NULL_ERROR_JMP(all_ep_names, status,
+                   NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                   "Unable to allocate array of endpoint names.");
+
+    for(int i = 0; i < NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS; i++) {
+        global_ep_idx = nvshmemi_state->mype * NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS + i;
+        status = fi_endpoint(libfabric_state->domain,
+                             libfabric_state->prov_info,
+                             &libfabric_state->eps[i].endpoint, NULL);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to allocate endpoint: %d: %s\n", status, fi_strerror(status * -1));
+
+        status = fi_cq_open(libfabric_state->domain, &cq_attr,
+                            &libfabric_state->eps[i].cq, NULL);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                     "Unable to open completion queue for endpoint: %d: %s\n", status, fi_strerror(status * -1));
+
+        status = fi_cntr_open(libfabric_state->domain, &cntr_attr,
+                              &libfabric_state->eps[i].counter, NULL);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                     "Unable to open counter for endpoint: %d: %s\n", status, fi_strerror(status * -1));
+
+        status = fi_ep_bind(libfabric_state->eps[i].endpoint,
+                            &libfabric_state->addresses->fid, 0);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                     "Unable to bind endpoint to address vector: %d: %s\n", status, fi_strerror(status * -1));
+
+        status = fi_ep_bind(libfabric_state->eps[i].endpoint,
+                            &libfabric_state->eps[i].cq->fid,
+                            FI_SELECTIVE_COMPLETION | FI_TRANSMIT | FI_RECV);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                     "Unable to bind endpoint to completion queue: %d: %s\n", status, fi_strerror(status * -1));
+
+        status = fi_ep_bind(libfabric_state->eps[i].endpoint,
+                            &libfabric_state->eps[i].counter->fid,
+                            FI_READ | FI_WRITE);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                     "Unable to bind endpoint to completion counter: %d: %s\n", status, fi_strerror(status * -1));
+
+        status = fi_enable(libfabric_state->eps[i].endpoint);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                     "Unable to enable endpoint: %d: %s\n", status, fi_strerror(status * -1));
+
+        status = fi_getname(&libfabric_state->eps[i].endpoint->fid,
+                            local_ep_names[i].name,
+                            &ep_namelen);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                     "Unable to get name for endpoint: %d: %s\n", status, fi_strerror(status * -1));
+        if (ep_namelen > NVSHMEMT_LIBFABRIC_EP_LEN) {
+            ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                      "Name of EP is too long.");
+        }
+    }
+
+    status = nvshmemi_boot_handle.allgather(local_ep_names, all_ep_names,
+                                            NVSHMEMT_LIBFABRIC_EP_LEN *
+                                            NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS,
+                                            &nvshmemi_boot_handle);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Failed to gather endpoint names.\n");
+
+    /* We need to insert one at a time since each buffer is larger than the address. */
+    for(int i = 0; i < total_num_eps; i++) {
+        status = fi_av_insert(libfabric_state->addresses,
+                              &all_ep_names[i], 1,
+                              NULL, 0, NULL);
+        if (status < 1) {
+            ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                      "Unable to insert ep names in address vector: %d: %s\n",
+                      status, fi_strerror(status * -1));
+        }
+
+        status = NVSHMEMX_SUCCESS;
+    }
+
+out:
+    if (status != 0) {
+        if (libfabric_state->eps) {
+            for (int i = 0; i < NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS; i++) {
+                if (libfabric_state->eps[i].endpoint) {
+                    fi_close(&libfabric_state->eps[i].endpoint->fid);
+                    libfabric_state->eps[i].endpoint = NULL;
+                }
+                if (libfabric_state->eps[i].cq) {
+                    fi_close(&libfabric_state->eps[i].cq->fid);
+                    libfabric_state->eps[i].cq = NULL;
+                }
+                if (libfabric_state->eps[i].counter) {
+                    fi_close(&libfabric_state->eps[i].counter->fid);
+                    libfabric_state->eps[i].counter = NULL;
+                }
+            }
+        }
+    }
+
+    free(local_ep_names);
+    free(all_ep_names);
+
+    return status;
+}
+
+static int nvshmemt_libfabric_finalize(nvshmem_transport_t transport) {
+    nvshmemt_libfabric_state_t  *libfabric_state;
+    int status;
+
+    assert(transport);
+
+    libfabric_state = (nvshmemt_libfabric_state_t *)transport->state;
+
+    if (libfabric_state) {
+
+        if (libfabric_state->prov_info) {
+            fi_freeinfo(libfabric_state->prov_info);
+        }
+
+        if (libfabric_state->eps) {
+            for (int i = 0; i < NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS; i++) {
+                if (libfabric_state->eps[i].endpoint) {
+                    status = fi_close(&libfabric_state->eps[i].endpoint->fid);
+                    if (status) {
+                        WARN_PRINT("Unable to close fabric endpoint.: %d: %s\n", status, fi_strerror(status * -1));
+                    }
+                }
+                if (libfabric_state->eps[i].cq) {
+                    status = fi_close(&libfabric_state->eps[i].cq->fid);
+                    if (status) {
+                        WARN_PRINT("Unable to close fabric cq: %d: %s\n", status, fi_strerror(status * -1));
+                    }
+                }
+                if (libfabric_state->eps[i].counter) {
+                    status = fi_close(&libfabric_state->eps[i].counter->fid);
+                    if (status) {
+                        WARN_PRINT("Unable to close fabric counter: %d: %s\n", status, fi_strerror(status * -1));
+                    }
+                }
+            }
+            free(libfabric_state->eps);
+        }
+
+        if (libfabric_state->addresses) {
+            status = fi_close(&libfabric_state->addresses->fid);
+            if (status) {
+                WARN_PRINT("Unable to close fabric address vector: %d: %s\n", status, fi_strerror(status * -1));
+            }
+        }
+
+        if (libfabric_state->domain) {
+            status = fi_close(&libfabric_state->domain->fid);
+            if (status) {
+                WARN_PRINT("Unable to close fabric domain: %d: %s\n", status, fi_strerror(status * -1));
+            }
+        }
+
+        if (libfabric_state->fabric) {
+            status = fi_close(&libfabric_state->fabric->fid);
+            if (status) {
+                WARN_PRINT("Unable to close fabric: %d: %s\n", status, fi_strerror(status * -1));
+            }
+        }
+
+        free(libfabric_state);
+    }
+
+    free(transport);
+
+    return 0;
+}
+
+static int nvshmemi_libfabric_init_state(nvshmem_transport_t t, nvshmemt_libfabric_state_t *state) {
+    struct fi_info          info = {0};
+    struct fi_av_attr       av_attr;
+    struct fi_domain_attr   domain_attr = {0};
+    struct fi_ep_attr       ep_attr;
+    struct fi_fabric_attr   fabric_attr = {0};
+    struct fi_info          *returned_fabrics, *current_fabric;
+    char                    *strncpy_output;
+    int                     num_fabrics_returned = 0;
+    int                     selected_fabric;
+    int                     status = 0;
+
+    /* for now exclude fencing capabilities so verbs can work.
+     * FI_FENCE can be used as a way to optimize put_with_signal
+     * on providers that support the flag.
+     */
+    info.caps = FI_RMA | FI_ATOMIC | FI_HMEM /* | FI_FENCE */;
+    info.addr_format = FI_FORMAT_UNSPEC;
+    info.domain_attr = &domain_attr;
+    info.ep_attr = &ep_attr;
+    info.fabric_attr = &fabric_attr;
+
+    /*
+     * TODO: Future providers may not require FI_MR_PROV_KEY.
+     * We have an option in the future to remove this flag and
+     * set our own keys for memory regions. This could simplify
+     * MR handling in this transport significantly by allowing
+     * us to bypass mr key sharing between PEs.
+     */
+    domain_attr.mr_mode = FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+    /* Be thread safe at the level of the endpoint completion context. */
+    domain_attr.threading = FI_THREAD_COMPLETION;
+
+    /* Reliable Disconnected */
+    memset(&ep_attr, 0, sizeof(struct fi_ep_attr));
+    ep_attr.type = FI_EP_RDM;
+
+    fabric_attr.prov_name = state->provider_name;
+
+    /* try only verbs transport for now */
+    status = snprintf(state->provider_name, NVSHMEMT_LIBFABRIC_PROVIDER_LEN, "verbs");
+    if (status < 0 || status >= NVSHMEMT_LIBFABRIC_PROVIDER_LEN) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to fill in provider name.\n");
+    }
+
+    status = fi_getinfo(FI_VERSION(NVSHMEMT_LIBFABRIC_MAJ_VER, NVSHMEMT_LIBFABRIC_MIN_VER),
+                        NULL, NULL, 0, &info, &returned_fabrics);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "No providers matched fi_getinfo query: %d: %s\n",
+                 status, fi_strerror(status * -1));
+
+    for (current_fabric = returned_fabrics; current_fabric != NULL; current_fabric = current_fabric->next) {
+        num_fabrics_returned++;
+    }
+
+    state->domain_names = (nvshmemt_libfabric_domain_name_t *)calloc(num_fabrics_returned, sizeof(nvshmemt_libfabric_domain_name_t));
+    NULL_ERROR_JMP(state->domain_names, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "Unable to allocate domain names.");
+
+    /* Only select unique devices. */
+    state->num_domains = 0;
+    for (current_fabric = returned_fabrics; current_fabric != NULL; current_fabric = current_fabric->next) {
+        assert(current_fabric->nic != NULL);
+        assert(current_fabric->tx_attr != NULL);
+        if (current_fabric->tx_attr->inject_size < NVSHMEMT_LIBFABRIC_INJECT_BYTES) {
+            INFO(NVSHMEM_INIT, "Disabling interface due to insufficient inject data size. reported %lu, expected %lu\n",
+                 current_fabric->tx_attr->inject_size, NVSHMEMT_LIBFABRIC_INJECT_BYTES);
+            continue;
+        }
+        for(int i = 0; i <= state->num_domains; i++) {
+            if (!strncmp(current_fabric->nic->device_attr->name, state->domain_names[i].name, NVSHMEMT_LIBFABRIC_DOMAIN_LEN)) {
+                break;
+            } else if (i == state->num_domains) {
+                strncpy_output = strncpy(state->domain_names[state->num_domains].name, current_fabric->nic->device_attr->name, NVSHMEMT_LIBFABRIC_DOMAIN_LEN);
+                if (strncpy_output == NULL || 
+                   (uintptr_t)strncpy_output - (uintptr_t)state->domain_names[state->num_domains].name >= NVSHMEMT_LIBFABRIC_DOMAIN_LEN) {
+                    ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to copy domain name for libfabric transport.");
+                }
+                state->num_domains++;
+                break;
+            }
+        }
+    }
+
+    status = get_device_by_distance(&selected_fabric, nvshmemi_state, t);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                 "get_device_by_distance failed \n");
+
+    state->prov_info = fi_dupinfo(&returned_fabrics[selected_fabric]);
+
+    status = fi_fabric(state->prov_info->fabric_attr, &state->fabric, NULL);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Failed to allocate fabric: %d: %s\n",
+                 status, fi_strerror(status * -1));;
+
+    status = fi_domain(state->fabric, state->prov_info, &state->domain, NULL);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Failed to allocate domain: %d: %s\n",
+                 status, fi_strerror(status * -1));
+
+    av_attr.type = FI_AV_TABLE;
+    av_attr.rx_ctx_bits = 0;
+    av_attr.count = NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS * nvshmemi_state->npes;
+    av_attr.ep_per_node = NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS;
+    av_attr.name = NULL;
+    av_attr.map_addr = NULL;
+    av_attr.flags = 0;
+
+    status = fi_av_open(state->domain, &av_attr, &state->addresses, NULL);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Failed to allocate address vector: %d: %s\n",
+                 status, fi_strerror(status * -1));
+
+out:
+    if (returned_fabrics != NULL) {
+        fi_freeinfo(returned_fabrics);
+    }
+
+    if (status) {
+        nvshmemt_libfabric_finalize(t);
+    }
+
+    return status;
+}
+
+int nvshmemt_libfabric_init(nvshmem_transport_t *t) {
+    nvshmemt_libfabric_state_t *libfabric_state = NULL;
+    nvshmem_transport_t         transport = NULL;
+    int                         transport_skipped;
+    int                         status = 0;
+
+   transport_skipped = strncasecmp(nvshmemi_options.REMOTE_TRANSPORT,
+                                   LIBFABRIC_TRANSPORT_STRING,
+                                   TRANSPORT_STRING_MAX_LENGTH);
+
+    if (transport_skipped) {
+        INFO(NVSHMEM_INIT, "Libfabric disabled by user through environment "
+                           "in favor of the %s transport.\n", nvshmemi_options.REMOTE_TRANSPORT);
+        status = NVSHMEMI_ERROR_SKIPPED;
+        goto out;
+    }
+
+    transport = (nvshmem_transport_t)calloc(1, sizeof(*transport));
+    NULL_ERROR_JMP(transport, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                   "Unable to allocate memory for libfabric transport.");
+
+    libfabric_state = (nvshmemt_libfabric_state_t *)calloc(1, sizeof(*libfabric_state));
+    NULL_ERROR_JMP(libfabric_state, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                   "Unable to allocate memory for libfabric transport state.");
+    transport->state = libfabric_state;
+
+    libfabric_state->eps = (nvshmemt_libfabric_endpoint_t *)
+                            calloc(NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS,
+                                   sizeof(nvshmemt_libfabric_endpoint_t));
+    NULL_ERROR_JMP(libfabric_state->eps, status, NVSHMEMX_ERROR_OUT_OF_MEMORY,
+                   out, "Unable to allocate EPs.");
+
+    transport->host_ops.get_device_count = nvshmemt_libfabric_get_device_count;
+    transport->host_ops.get_pci_path = nvshmemt_libfabric_get_pci_path;
+    transport->host_ops.can_reach_peer = nvshmemt_libfabric_can_reach_peer;
+    transport->host_ops.connect_endpoints = nvshmemt_libfabric_connect_endpoints;
+    transport->host_ops.get_mem_handle = nvshmemt_libfabric_get_mem_handle;
+    transport->host_ops.release_mem_handle = nvshmemt_libfabric_release_mem_handle;
+    transport->host_ops.rma = nvshmemt_libfabric_rma;
+    transport->host_ops.amo = nvshmemt_libfabric_amo;
+    transport->host_ops.fence = nvshmemt_libfabric_quiet;
+    transport->host_ops.quiet = nvshmemt_libfabric_quiet;
+    transport->host_ops.finalize = nvshmemt_libfabric_finalize;
+    transport->host_ops.show_info = nvshmemt_libfabric_show_info;
+    transport->host_ops.progress = nvshmemt_libfabric_progress;
+    transport->host_ops.enforce_cst = nvshmemt_libfabric_enforce_cst;
+
+    transport->attr = NVSHMEM_TRANSPORT_ATTR_CONNECTED;
+    transport->is_successfully_initialized = true;
+
+    /* This MLX5 feature is known to cause issues with device memory read and atomic ops. */
+    status = setenv("MLX5_SCATTER_TO_CQE", "0", 1);
+    if (status) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                  "Failed to set environment variable MLX5_SCATTER_TO_CQE.\n");
+    }
+
+    status = setenv("FI_HMEM_CUDA_USE_GDRCOPY", "1", 1);
+    if (status) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                  "Failed to set environment variable FI_HMEM_CUDA_USE_GDRCOPY.\n");
+    }
+
+    /* Prepare fabric state information. */
+    status = nvshmemi_libfabric_init_state(transport, libfabric_state);
+    if (status) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out_clean,
+                  "Failed to initialize the libfabric state.\n");
+    }
+
+    *t = transport;
+out:
+    if (status) {
+        if (transport) {
+            nvshmemt_libfabric_finalize(transport);
+        }
+    }
+
+out_clean:
+    return status;
+}

@@ -9,6 +9,8 @@
 typedef struct bootstrap_handle {
     int  pg_rank;
     int  pg_size;
+    int  mype_node;
+    int  npes_node;
     int  (*allgather)(const void *sendbuf, void *recvbuf, int bytes,
                       struct bootstrap_handle *handle);
     int  (*alltoall)(const void *sendbuf, void *recvbuf, int bytes,

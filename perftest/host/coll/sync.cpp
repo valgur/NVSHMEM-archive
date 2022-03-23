@@ -14,7 +14,7 @@
 
 int main(int c, char *v[]) {
     int status = 0;
-    int mype, npes;
+    int mype;
     size_t size = 1;
     double latency_value;
     int iters = 0;
@@ -25,7 +25,9 @@ int main(int c, char *v[]) {
     init_wrapper(&c, &v);
 
     mype = nvshmem_my_pe();
-    npes = nvshmem_n_pes();
+#ifdef _NVSHMEM_DEBUG
+    int npes = nvshmem_n_pes();
+#endif
 
     DEBUG_PRINT("SHMEM: [%d of %d] hello shmem world! \n", mype, npes);
 
@@ -51,6 +53,5 @@ int main(int c, char *v[]) {
 
     finalize_wrapper();
 
-out:
     return status;
 }

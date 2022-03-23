@@ -253,7 +253,9 @@ nvshmemResult_t nvshmemu_gethostname(char* hostname, int maxlen);
 void setup_sig_handler();
 char * nvshmemu_hexdump(void *ptr, size_t len);
 void nvshmemu_debug_log_cpuset(int category, const char *thread_name);
-char * nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent);
+
+#define NVSHMEMI_WRAPLEN 80
+char * nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent, const int strip_backticks);
 
 extern const char *p_err_str;
 
@@ -293,7 +295,12 @@ struct nvshmemi_options_s {
 
 extern struct nvshmemi_options_s nvshmemi_options;
 
+enum {
+    NVSHMEMI_OPTIONS_STYLE_INFO,
+    NVSHMEMI_OPTIONS_STYLE_RST
+};
+
 int  nvshmemi_options_init(void);
-void nvshmemi_options_print(void);
+void nvshmemi_options_print(int style);
 
 #endif

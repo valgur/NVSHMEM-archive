@@ -76,8 +76,8 @@ int check_for_symmetry(T value) {
         state->scratch_size = sizeof(T) * state->npes;
     }
 
-    status = state->boot_handle.allgather((void *)&value, (void *)state->scratch_space, sizeof(T),
-                                          &state->boot_handle);
+    status = nvshmemi_boot_handle.allgather((void *)&value, (void *)state->scratch_space, sizeof(T),
+                                          &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather in symmetry check failed \n");
 
     for (int i = 0; i < state->npes; i++) {
@@ -140,6 +140,7 @@ int nvshmemi_cleanup_symmetric_heap(nvshmemi_state_t *state) {
                     status = cuMemRelease(state->cumem_handles[i]);
                     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemRelease failed \n");
                 }
+                state->cumem_handles.clear();
             } else
 #endif
             {
@@ -166,7 +167,8 @@ int nvshmemi_cleanup_symmetric_heap(nvshmemi_state_t *state) {
             }
         }
     }
-
+    state->handles.clear();
+    state->idx_in_handles.clear();
     nvshmemi_cleanup_memory_space(state);
 
     free(state->peer_heap_base);
@@ -264,9 +266,9 @@ out:
 }
 
 int nvshmemi_gather_mem_handles(nvshmem_mem_handle_t *local_handles, nvshmemi_state_t *state) {
-    int status = state->boot_handle.allgather(
+    int status = nvshmemi_boot_handle.allgather(
         (void *)local_handles, (void *)(state->handles.back().data()),
-        sizeof(nvshmem_mem_handle_t) * NVSHMEM_TRANSPORT_COUNT, &state->boot_handle);
+        sizeof(nvshmem_mem_handle_t) * NVSHMEM_TRANSPORT_COUNT, &nvshmemi_boot_handle);
     return status;
 }
 
@@ -304,9 +306,9 @@ int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
     NULL_ERROR_JMP(state->peer_heap_base_actual, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                    "failed allocating space for peer heap base \n");
 
-    status = state->boot_handle.allgather((void *)&state->heap_base,
+    status = nvshmemi_boot_handle.allgather((void *)&state->heap_base,
                                           (void *)state->peer_heap_base_actual, sizeof(void *),
-                                          &state->boot_handle);
+                                          &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                  "allgather of heap base ptrsmem handle failed \n");
 
@@ -360,13 +362,13 @@ int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
     if (nvshmemi_use_cuda_vmm) {
         pid_t pid = getpid();
         pid_t *peer_pids = (pid_t *) malloc(sizeof(pid_t) * state->npes);
-        status = state->boot_handle.allgather((void *)&pid, (void *)peer_pids, sizeof(pid_t), &state->boot_handle);
+        status = nvshmemi_boot_handle.allgather((void *)&pid, (void *)peer_pids, sizeof(pid_t), &nvshmemi_boot_handle);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of pids failed \n");
             
         uint64_t myHostHash = getHostHash();
         uint64_t *hostHash = (uint64_t *)malloc(sizeof(uint64_t) * state->npes);
-        status = state->boot_handle.allgather((void *)&myHostHash, (void *)hostHash, sizeof(uint64_t),
-                                              &state->boot_handle);
+        status = nvshmemi_boot_handle.allgather((void *)&myHostHash, (void *)hostHash, sizeof(uint64_t),
+                                              &nvshmemi_boot_handle);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of host hashes failed \n");
 
         for(int pe = 0; pe < state->npes; pe++) {
@@ -452,7 +454,7 @@ int nvshmemi_add_physical_memory(size_t size) {
     IPC_CHECK(ipcOpenSocket(myIpcHandle));
     
     /* Wait for all processes to open their sockets */
-    status = state->boot_handle.barrier(&state->boot_handle);
+    status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
 
     for (std::map<pid_t, int>::iterator it1 = p2p_processes.begin();
 					it1 != p2p_processes.end(); ++it1) {
@@ -470,7 +472,7 @@ int nvshmemi_add_physical_memory(size_t size) {
                 myIpcHandle, (int *)&state->handles.back()[it1->second * NVSHMEM_TRANSPORT_COUNT]));
         }
         /* Putting a global barrier means assuming that all nodes are running with config */
-        status = state->boot_handle.barrier(&state->boot_handle);
+        status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
     }
     IPC_CHECK(ipcCloseSocket(myIpcHandle));
 
@@ -512,7 +514,7 @@ int nvshmemi_add_physical_memory(size_t size) {
                                                             (char *)state->heap_base + state->physical_heap_size,
                                                             size));
     state->physical_heap_size += size;
-    status = state->boot_handle.barrier(&state->boot_handle); /* Wait for all PEs to setup the new memory */
+    status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle); /* Wait for all PEs to setup the new memory */
 out:
     if (status) {
         nvshmemi_cleanup_symmetric_heap(state);
@@ -522,6 +524,7 @@ out:
 }
 #endif
 
+extern "C" {
 void *nvshmemi_malloc(size_t size) {
     int status = 0;
     void *ptr = NULL;
@@ -552,6 +555,7 @@ void *nvshmemi_malloc(size_t size) {
 
 out:
     return ptr;
+}
 }
 
 void *nvshmemi_calloc(size_t count, size_t size) {
@@ -589,8 +593,7 @@ void *nvshmem_malloc(size_t size) {
     NVTX_FUNC_RANGE_IN_GROUP(ALLOC);
 
     NVSHMEMU_THREAD_CS_ENTER();
-
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	(*nvshmemi_check_state_and_init_fn_ptr)();
 
     ptr = nvshmemi_malloc(size);
 
@@ -607,8 +610,7 @@ void *nvshmem_calloc(size_t count, size_t size) {
     NVTX_FUNC_RANGE_IN_GROUP(ALLOC);
 
     NVSHMEMU_THREAD_CS_ENTER();
-
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	(*nvshmemi_check_state_and_init_fn_ptr)();
 
     ptr = nvshmemi_calloc(count, size);
 
@@ -652,8 +654,7 @@ void *nvshmem_align(size_t alignment, size_t size) {
     NVTX_FUNC_RANGE_IN_GROUP(ALLOC);
 
     NVSHMEMU_THREAD_CS_ENTER();
-
-    NVSHMEM_CHECK_STATE_AND_INIT();
+	(*nvshmemi_check_state_and_init_fn_ptr)();
 
     ptr = nvshmemi_align(alignment, size);
 
@@ -677,7 +678,7 @@ void nvshmem_free(void *ptr) {
 
     NVSHMEMU_THREAD_CS_ENTER();
 
-    NVSHMEM_CHECK_STATE_AND_INIT();
+    NVSHMEMI_CHECK_INIT_STATUS();
 
     nvshmemi_barrier_all();
 
@@ -709,6 +710,10 @@ static struct nvshmem_transport *nvshmemi_get_remote_transport() {
         t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_IBRC];
     } else if (nvshmemi_state->transport_bitmap & (1 << NVSHMEM_TRANSPORT_ID_UCX)) {
         t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_UCX];
+    } else if (nvshmemi_state->transport_bitmap & (1 << NVSHMEM_TRANSPORT_ID_IBDEVX)) {
+        t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_IBDEVX];
+    } else if (nvshmemi_state->transport_bitmap & (1 << NVSHMEM_TRANSPORT_ID_FABRIC)) {
+        t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_FABRIC];
     }
 
     return t;

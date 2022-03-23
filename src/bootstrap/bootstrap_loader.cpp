@@ -24,7 +24,7 @@
 static void *plugin_hdl;
 static char *plugin_name;
 
-static int bootstrap_loader_finalize(bootstrap_handle_t *handle) {
+int bootstrap_loader_finalize(bootstrap_handle_t *handle) {
     int status = handle->finalize(handle);
 
     if (status != 0)

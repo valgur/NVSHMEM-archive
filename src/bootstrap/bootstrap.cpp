@@ -5,6 +5,7 @@
  */
 
 #include "nvshmem.h"
+#include "nvshmem_internal.h"
 
 #include "util.h"
 #include "nvshmemx_error.h"
@@ -12,60 +13,45 @@
 
 int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle) {
     int status = NVSHMEMX_SUCCESS;
+    const char *plugin_name = NULL;
+
+    if (nvshmemi_options.BOOTSTRAP_PLUGIN_provided)
+        plugin_name = nvshmemi_options.BOOTSTRAP_PLUGIN;
 
     switch (mode) {
         case BOOTSTRAP_MPI:
-#ifdef NVSHMEM_MPI_SUPPORT
-            const char *plugin_name;
-            if (nvshmemi_options.BOOTSTRAP_PLUGIN_provided)
-                plugin_name = nvshmemi_options.BOOTSTRAP_PLUGIN;
-            else
+            if (!plugin_name)
                 plugin_name = BOOTSTRAP_MPI_PLUGIN;
 
             status = bootstrap_loader_init(plugin_name, (attr != NULL) ? attr->mpi_comm : NULL, handle);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_loader_init returned error\n");
-#else
-            status = 1;
-            ERROR_PRINT("MPI bootstrap requested but NVSHMEM was not built with MPI support\n");
-            goto out;
-#endif
             break;
         case BOOTSTRAP_SHMEM:
-#ifdef NVSHMEM_SHMEM_SUPPORT
-#ifndef NVSHMEM_MPI_SUPPORT
-            const char *plugin_name;
-#endif
-            if (nvshmemi_options.BOOTSTRAP_PLUGIN_provided)
-                plugin_name = nvshmemi_options.BOOTSTRAP_PLUGIN;
-            else
+            if (!plugin_name)
                 plugin_name = BOOTSTRAP_SHMEM_PLUGIN;
 
             status = bootstrap_loader_init(plugin_name, (attr != NULL) ? &attr->initialize_shmem : NULL, handle);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_loader_init returned error\n");
-#else
-            status = 1;
-            ERROR_PRINT("OpenSHMEM bootstrap requested but NVSHMEM was not built with OpenSHMEM support\n");
-            goto out;
-#endif
             break;
         case BOOTSTRAP_PMI:
             if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP_PMI, "PMIX") == 0) {
-#ifdef NVSHMEM_PMIX_SUPPORT
-                status = bootstrap_loader_init(BOOTSTRAP_PMIX_PLUGIN, NULL, handle);
+                if (!plugin_name)
+                    plugin_name = BOOTSTRAP_PMIX_PLUGIN;
+                status = bootstrap_loader_init(plugin_name, NULL, handle);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_loader_init returned error\n");
-#else
-                ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                          "PMIx bootstrap requested but NVSHMEM was not built with PMIx support\n");
-#endif
             } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP_PMI, "PMI-2") == 0 ||
                        strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP_PMI, "PMI2") == 0) {
-                status = bootstrap_pmi2_init(handle);
+                if (!plugin_name)
+                    plugin_name = BOOTSTRAP_PMI2_PLUGIN;
+                status = bootstrap_loader_init(plugin_name, NULL, handle);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmi_init returned error\n");
             } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP_PMI, "PMI") == 0) {
-                status = bootstrap_pmi_init(handle);
+                if (!plugin_name)
+                    plugin_name = BOOTSTRAP_PMI_PLUGIN;
+                status = bootstrap_loader_init(plugin_name, NULL, handle);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmi_init returned error\n");
             } else {
-                ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmi_init invalid bootstrap '%s'\n",
+                ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmi_init invalid PMI bootstrap '%s'\n",
                         nvshmemi_options.BOOTSTRAP_PMI);
             }
             break;
@@ -89,13 +75,12 @@ out:
     return status;
 }
 
-int bootstrap_finalize(bootstrap_handle_t *handle) {
+void bootstrap_finalize() {
     int status = NVSHMEMX_SUCCESS;
 
-    status = handle->finalize(handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-            "bootstrap finalization returned error\n");
-
-out:
-    return status;
+    if (nvshmemi_is_nvshmem_bootstrapped) {
+        status = bootstrap_loader_finalize(&nvshmemi_boot_handle);
+        NZ_EXIT(status, "bootstrap finalization returned error\n");
+        NVSHMEMU_THREAD_CS_FINALIZE();
+    }
 }

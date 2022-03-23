@@ -14,19 +14,9 @@
 #include <stdio.h>
 #include "util.h"
 #include "gpu_coll.h"
-
-enum {
-    NVSHMEM_TEAM_WORLD_INDEX = 0,
-    NVSHMEM_TEAM_SHARED_INDEX,
-    NVSHMEM_TEAM_NODE_INDEX,
-    NVSHMEM_TEAM_SAME_GPU_INDEX,
-    NVSHMEM_TEAM_GPU_LEADERS_INDEX,
-    NVSHMEM_TEAMS_MIN
-};
+#include "team_internal.h"
 
 long nvshmemi_max_teams;
-#define PSYNC_SIZE_PER_TEAM (2 * NVSHMEMI_SYNC_SIZE +                \
-                             2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE)
 
 nvshmemi_team_t nvshmemi_team_world;
 nvshmemi_team_t nvshmemi_team_shared;
@@ -158,8 +148,8 @@ int nvshmemi_team_init(void) {
     uint64_t myHostHash = getHostHash();
     uint64_t *hostHash = (uint64_t *)malloc(sizeof(uint64_t) * nvshmemi_state->npes);
     NULL_ERROR_JMP(hostHash, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "hostHash allocation failed \n");
-    status = nvshmemi_state->boot_handle.allgather((void *)&myHostHash, (void *)hostHash, sizeof(uint64_t),
-                                          &nvshmemi_state->boot_handle);
+    status = nvshmemi_boot_handle.allgather((void *)&myHostHash, (void *)hostHash, sizeof(uint64_t),
+                                          &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup, "allgather of host hashes failed\n");
 
     /* Search for on-node peer PEs while checking for a consistent stride */
@@ -230,8 +220,8 @@ int nvshmemi_team_init(void) {
         nvshmemi_team_gpu_leaders.my_pe = (nvshmemi_state->mype - nvshmemi_team_gpu_leaders.start) / nvshmemi_team_gpu_leaders.stride;
         nvshmemi_team_gpu_leaders.rdxn_count = 0;
         nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_gpu_leaders);
-        status = nvshmemi_state->boot_handle.allgather((void *)&nvshmemi_team_gpu_leaders.my_pe, (void *)scratch,
-							sizeof(int), &nvshmemi_state->boot_handle);
+        status = nvshmemi_boot_handle.allgather((void *)&nvshmemi_team_gpu_leaders.my_pe, (void *)scratch,
+							sizeof(int), &nvshmemi_boot_handle);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup, "allgather of gpu leaders failed\n");
         /* Check whether a valid TEAM_GPU_LEADERS was formed */
         int last_mype = -1;
@@ -250,8 +240,8 @@ int nvshmemi_team_init(void) {
              nvshmemi_team_gpu_leaders.start, nvshmemi_team_gpu_leaders.stride, nvshmemi_team_gpu_leaders.size);
     } else {
 	int my_pe = -1;
-        status = nvshmemi_state->boot_handle.allgather((void *)&my_pe, (void *)scratch,
-							sizeof(int), &nvshmemi_state->boot_handle);
+        status = nvshmemi_boot_handle.allgather((void *)&my_pe, (void *)scratch,
+							sizeof(int), &nvshmemi_boot_handle);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup, "allgather of gpu leaders failed\n");
     }
     free(scratch);
@@ -305,7 +295,7 @@ int nvshmemi_team_init(void) {
     NULL_ERROR_JMP(nvshmemi_sync_counter, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "nvshmemi_sync_counter allocation failed \n");
 
     nvshmemi_device_state.sync_counter = nvshmemi_sync_counter;
-    nvshmemi_set_device_state();
+    nvshmemi_set_device_state(&nvshmemi_device_state);
 
     nvshmemi_init_array_kernel<long><<<1, 1>>>(nvshmemi_sync_counter, 2 * nvshmemi_max_teams, 1);
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
@@ -340,7 +330,7 @@ int nvshmemi_team_init(void) {
     NULL_ERROR_JMP(team_ret_val, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "device_team_ret_val allocation failed \n");
     device_team_ret_val_reduced = &device_team_ret_val[1];
 
-    nvshmemi_state->boot_handle.barrier(&nvshmemi_state->boot_handle); /* To ensure neccessary setup has been done all PEs */
+    nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle); /* To ensure neccessary setup has been done all PEs */
 
     CUDA_RUNTIME_CHECK(
         cudaGetSymbolAddress((void **)&device_state_symbol_address, nvshmemi_device_state_d));
@@ -449,23 +439,21 @@ int nvshmemi_team_finalize(void) {
     return 0;
 }
 
+#ifndef __CUDA_ARCH__
 int nvshmemi_team_translate_pe(nvshmemi_team_t *src_team, int src_pe, nvshmemi_team_t *dest_team) {
     int src_pe_world, dest_pe = -1;
 
     if (src_pe > src_team->size) return -1;
 
     src_pe_world = src_team->start + src_pe * src_team->stride;
-#ifdef __CUDA_ARCH__
-    assert(src_pe_world >= src_team->start && src_pe_world < nvshmemi_device_state_d.npes);
-#else
     assert(src_pe_world >= src_team->start && src_pe_world < nvshmemi_state->npes);
-#endif
 
     dest_pe = nvshmemi_pe_in_active_set(src_pe_world, dest_team->start, dest_team->stride,
                                         dest_team->size);
 
     return dest_pe;
 }
+#endif
 
 int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int PE_stride,
                                 int PE_size, const nvshmem_team_config_t *config, long config_mask,
@@ -690,13 +678,10 @@ void nvshmemi_team_destroy(nvshmemi_team_t *team) {
    }
 }
 
+#ifndef __CUDA_ARCH__
 long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_team_op_t op) {
     long *team_psync;
-#ifdef __CUDA_ARCH__
-    team_psync = &nvshmemi_device_state_d.psync_pool[team->team_idx * PSYNC_SIZE_PER_TEAM];
-#else
     team_psync = &nvshmemi_psync_pool[team->team_idx * PSYNC_SIZE_PER_TEAM];
-#endif /* __CUDA_ARCH__ */
     switch(op) {
         case SYNC:
             return team_psync;
@@ -709,9 +694,6 @@ long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_team_op_t op) {
 }
 
 long *nvshmemi_team_get_sync_counter(nvshmemi_team_t *team) {
-#ifdef __CUDA_ARCH__
-    return &nvshmemi_device_state_d.sync_counter[2 * team->team_idx];
-#else
     return &nvshmemi_sync_counter[2 * team->team_idx];
-#endif /* __CUDA_ARCH__ */
 }
+#endif

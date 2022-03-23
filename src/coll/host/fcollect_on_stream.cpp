@@ -14,7 +14,7 @@
     int nvshmemx_##TYPENAME##_fcollect_on_stream(                                                  \
         nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, cudaStream_t stream) { \
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                            \
-        NVSHMEM_CHECK_STATE_AND_INIT();                                                            \
+        NVSHMEMI_CHECK_INIT_STATUS();                                                              \
         NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                         \
         nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                         \
         if (nvshmemi_use_nccl && NCCL_DT_##TYPENAME != -1) {                                       \

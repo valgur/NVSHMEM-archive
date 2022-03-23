@@ -28,13 +28,16 @@ extern "C" {
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEMX_TYPENAME_ALLTOALL_ON_STREAM)
 #undef DECL_NVSHMEMX_TYPENAME_ALLTOALL_ON_STREAM
 
+int nvshmemx_alltoallmem_on_stream(nvshmem_team_t team, void *dest, const void *src,
+                                   size_t nelem, cudaStream_t stream);
+
 // barrier collectives
 int nvshmemx_barrier_on_stream(nvshmem_team_t team, cudaStream_t stream);
-void nvshmemx_barrier_all_on_stream(cudaStream_t stream);
+void nvshmemx_barrier_all_on_stream(cudaStream_t);
 
 // sync collectives
 int nvshmemx_team_sync_on_stream(nvshmem_team_t team, cudaStream_t stream);
-void nvshmemx_sync_all_on_stream(cudaStream_t stream);
+void nvshmemx_sync_all_on_stream(cudaStream_t);
 
 // broadcast collectives
 #define DECL_NVSHMEMX_TYPENAME_BROADCAST_ON_STREAM(TYPENAME, TYPE)     \
@@ -80,6 +83,9 @@ NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE_ONSTREAM, prod)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_ALLTOALL_SCOPE, warp)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_ALLTOALL_SCOPE, block)
 #undef DECL_NVSHMEMX_TYPENAME_ALLTOALL_SCOPE
+
+__device__ int nvshmemx_alltoallmem_warp(nvshmem_team_t team, void *dest, const void *src, size_t nelem);
+__device__ int nvshmemx_alltoallmem_block(nvshmem_team_t team, void *dest, const void *src, size_t nelem);
 
 // barrier collectives
 __device__ int nvshmemx_barrier_warp(nvshmem_team_t team);

@@ -16,7 +16,6 @@
 int main(int argc, char **argv) {
     int status = 0;
     int mype, npes;
-    int i = 0;
     size_t size = MAX_ELEMS * MAX_NPES * 2 * sizeof(DATATYPE);
     size_t alloc_size;
     int num_elems;

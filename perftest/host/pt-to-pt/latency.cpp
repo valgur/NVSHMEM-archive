@@ -69,7 +69,6 @@ int lat(void *data_d, void *data_d_local, int sizeBytes, int pe, int iter, int s
         *us = (stop.tv_usec - start.tv_usec) + (stop.tv_sec - start.tv_sec) * 1000000;
     }
 
-finalize:
     return status;
 }
 

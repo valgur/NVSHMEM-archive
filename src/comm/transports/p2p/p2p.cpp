@@ -7,6 +7,7 @@
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
 
+#include <nvml.h>
 #include <string.h>
 #include <assert.h>
 #include "transport.h"
@@ -29,6 +30,13 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
     CUdevice peer_dev;
     transport_p2p_state_t *p2p_state = (transport_p2p_state_t *)transport->state;
     int atomics_supported = 0;
+    char remote_pcie_bus_id[NVSHMEM_PCIE_DBF_BUFFER_LEN];
+
+    nvmlReturn_t nvml_status;
+    nvmlDevice_t remote_device;
+    nvmlDevice_t local_device;
+    nvmlGpuP2PStatus_t stat;
+
 
     INFO(NVSHMEM_TRANSPORT,
          "[%p] ndev %d pcie_devid %x cudevice %x peer host hash %lx p2p host hash %lx", p2p_state,
@@ -50,12 +58,60 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
         }
     }
 
+    /* In the case where we don't have access to the GPU directly,
+     * and we aren't using VMM, look using NVML.
+     */
     if (!found) {
-        //return access as true for a device that is not visible
-        //cannot reliably detect P2P capability 
-        //cannot determine if it is connected via NVLink, so no atomics
-        *access = NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST | NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD;
-        goto out;
+        if (!nvshmemi_use_cuda_vmm) {
+            status = snprintf(remote_pcie_bus_id, NVSHMEM_PCIE_DBF_BUFFER_LEN, "%x:%x:%x.0",
+                            peer_info->pcie_id.domain_id, peer_info->pcie_id.bus_id, peer_info->pcie_id.dev_id);
+            if (status < 0 || status > NVSHMEM_PCIE_DBF_BUFFER_LEN) {
+                INFO(NVSHMEM_TRANSPORT, "Unable to prepare buffer for NVML device detection.\n");
+                status = 0;
+                goto out;
+            }
+
+            status = 0;
+            nvml_status = nvmlDeviceGetHandleByPciBusId(remote_pcie_bus_id, &remote_device);
+            if (nvml_status != NVML_SUCCESS) {
+                INFO(NVSHMEM_TRANSPORT, "Unable to dereference device by UUID using NVML.\n");
+                goto out;
+            }
+            nvml_status = nvmlDeviceGetHandleByPciBusId(p2p_state->pcie_bdf, &local_device);
+            if (nvml_status != NVML_SUCCESS) {
+                INFO(NVSHMEM_TRANSPORT, "Unable to dereference device by UUID using NVML.\n");
+                goto out;
+            }
+            nvml_status = nvmlDeviceGetP2PStatus(local_device, remote_device, NVML_P2P_CAPS_INDEX_READ, &stat);
+            if (nvml_status != NVML_SUCCESS) {
+                *access = 0;
+                INFO(NVSHMEM_TRANSPORT, "Unable to get read status using NVML. Disabling P2P communication for pe %d\n", peer_info->pe);
+                goto out;
+            } else if (stat == NVML_P2P_STATUS_OK) {
+                *access |= NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD;
+            }
+            nvml_status = nvmlDeviceGetP2PStatus(local_device, remote_device, NVML_P2P_CAPS_INDEX_WRITE, &stat);
+            if (nvml_status != NVML_SUCCESS) {
+                *access = 0;
+                INFO(NVSHMEM_TRANSPORT, "Unable to get write status using NVML. Disabling P2P communication for pe %d\n", peer_info->pe);
+                goto out;
+            } else if (stat == NVML_P2P_STATUS_OK) {
+                *access |= NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST;
+            }
+            nvml_status = nvmlDeviceGetP2PStatus(local_device, remote_device, NVML_P2P_CAPS_INDEX_ATOMICS, &stat);
+            if (nvml_status != NVML_SUCCESS) {
+                INFO(NVSHMEM_TRANSPORT, "Unable to get atomic status using NVML.\n");
+            } else if (stat == NVML_P2P_STATUS_OK) {
+                *access |= NVSHMEM_TRANSPORT_CAP_MAP_GPU_ATOMICS;
+            }
+            goto out;
+        } else {
+            /* In the case of CUDA VMM, we can't export a memory handle so LD/ST is also not available. */
+            WARN("Some CUDA devices are not visible,\n"\
+                 "likely hidden by CUDA_VISIBLE_DEVICES. Using a network transport to reach these.\n"\
+                 "Disabling VMM usage (dynamic heap) by setting NVSHMEM_DISABLE_CUDA_VMM=1 could provide better performance.");
+            goto out;
+        }
     }
 
     if (peer_dev == p2p_state->cudevice) { 
@@ -175,6 +231,7 @@ out:
 
 int nvshmemt_p2p_finalize(nvshmem_transport_t transport) {
     int status = 0;
+    nvmlReturn_t nvml_status;
 
     if (!transport) return 0;
 
@@ -188,6 +245,11 @@ int nvshmemt_p2p_finalize(nvshmem_transport_t transport) {
         free(p2p_state);
     }
 
+    nvml_status = nvmlShutdown();
+    if (nvml_status != NVML_SUCCESS) {
+        INFO(NVSHMEM_TRANSPORT, "Unable to stop nvml library in NVSHMEM.");
+    }
+
     free(transport);
 
     return status;
@@ -195,6 +257,7 @@ int nvshmemt_p2p_finalize(nvshmem_transport_t transport) {
 
 int nvshmemt_p2p_init(nvshmem_transport_t *t) {
     int status = 0;
+    nvmlReturn_t nvml_status;
     struct nvshmem_transport *transport;
     transport_p2p_state_t *p2p_state;
 
@@ -228,9 +291,26 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
         status = cuDeviceGet(&p2p_state->cudev[i], i);
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuDeviceGet failed \n");
 
+        if (p2p_state->cudev[i] == p2p_state->cudevice) {
+            cudaDeviceProp prop;
+            cudaGetDeviceProperties(&prop, i);
+            NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cudaGetDeviceProperties failed \n");
+            status = snprintf(p2p_state->pcie_bdf, NVSHMEM_PCIE_DBF_BUFFER_LEN, "%x:%x:%x.0",
+                              prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
+            if (status < 0 || status > NVSHMEM_PCIE_DBF_BUFFER_LEN) {
+                ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to set device pcie bdf for our local device.\n");
+            }
+        }
+
         status = nvshmemi_get_pcie_attrs(&p2p_state->pcie_ids[i], p2p_state->cudev[i]);
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                      "nvshmemi_get_pcie_attrs failed \n");
+    }
+
+    /* start NVML Library */
+    nvml_status = nvmlInit();
+    if (nvml_status != NVML_SUCCESS) {
+        INFO(NVSHMEM_INIT, "Unable to open nvml. Some topology detection will be disabled.");
     }
 
     transport->host_ops.can_reach_peer = nvshmemt_p2p_can_reach_peer;

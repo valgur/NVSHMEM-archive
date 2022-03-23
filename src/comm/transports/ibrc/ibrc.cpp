@@ -53,7 +53,7 @@ int ibrc_qp_depth;
 
 enum { WAIT_ANY = 0, WAIT_ALL = 1 };
 
-int MAX_RD_ATOMIC; /* Maximum number of RDMA Read & Atomic operations that can be outstanding per QP
+int NVSHMEMT_IBRC_MAX_RD_ATOMIC; /* Maximum number of RDMA Read & Atomic operations that can be outstanding per QP
                     */
 
 struct ibrc_request {
@@ -504,7 +504,7 @@ static int ep_connect(struct ibrc_ep *ep, struct ibrc_ep_handle *ep_handle) {
        attr.ah_attr.dlid = ep_handle->lid;
        attr.ah_attr.is_global = 0;
     }
-    attr.max_dest_rd_atomic = MAX_RD_ATOMIC;
+    attr.max_dest_rd_atomic = NVSHMEMT_IBRC_MAX_RD_ATOMIC;
     attr.min_rnr_timer = 12;
     attr.ah_attr.sl = nvshmemi_options.IB_SL;
     attr.ah_attr.src_path_bits = 0;
@@ -521,7 +521,7 @@ static int ep_connect(struct ibrc_ep *ep, struct ibrc_ep_handle *ep_handle) {
     attr.timeout = 20;
     attr.retry_cnt = 7;
     attr.rnr_retry = 7;
-    attr.max_rd_atomic = MAX_RD_ATOMIC;
+    attr.max_rd_atomic = NVSHMEMT_IBRC_MAX_RD_ATOMIC;
     flags = IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY |
             IBV_QP_MAX_QP_RD_ATOMIC;
 
@@ -1476,9 +1476,9 @@ int nvshmemt_ibrc_connect_endpoints(nvshmem_transport_t t) {
         }
     }
 
-    status = nvshmemi_state->boot_handle.alltoall(
+    status = nvshmemi_boot_handle.alltoall(
         (void *)local_ep_handles, (void *)ep_handles,
-        sizeof(struct ibrc_ep_handle) * ep_count, &nvshmemi_state->boot_handle);
+        sizeof(struct ibrc_ep_handle) * ep_count, &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of ep handles failed \n");
 
     for (int j = 0; j < nvshmemi_state->npes; j++) {
@@ -1667,7 +1667,7 @@ skip_gdrcopy_dlsym:
         status = ftable.query_device(device->context, &device->device_attr);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_query_device failed \n");
 
-        MAX_RD_ATOMIC = (device->device_attr).max_qp_rd_atom;
+        NVSHMEMT_IBRC_MAX_RD_ATOMIC = (device->device_attr).max_qp_rd_atom;
         INFO(NVSHMEM_INIT,
              "Enumerated IB devices in the system - device id=%d (of %d), name=%s, num_ports=%d", i,
              num_devices, name, device->device_attr.phys_port_cnt);

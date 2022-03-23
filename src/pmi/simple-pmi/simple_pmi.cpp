@@ -27,7 +27,6 @@
 #include <netinet/tcp.h>
 #include <netdb.h>
 #include <errno.h>
-#include "util.h"
 
 #include "pmi_internal.h"
 #include "simple_pmiutil.h"
@@ -79,7 +78,7 @@ int SPMI_Init(int *spawned) {
     int notset = 1;
     int rc;
 
-    INFO(NVSHMEM_BOOTSTRAP, "in PMI_Init");
+    // INFO(NVSHMEM_BOOTSTRAP, "in PMI_Init");
 
     PMI_initialized = PMI_UNINITIALIZED;
 
@@ -114,7 +113,7 @@ int SPMI_Init(int *spawned) {
         PMI_keylen_max = 256;
         PMI_vallen_max = 256;
 
-        INFO(NVSHMEM_BOOTSTRAP, "PMI_fd not found, returning spawned = 0");
+        // INFO(NVSHMEM_BOOTSTRAP, "PMI_fd not found, returning spawned = 0");
         return (0);
     }
 
@@ -143,7 +142,7 @@ int SPMI_Init(int *spawned) {
            was set */
     }
 
-    INFO(NVSHMEM_BOOTSTRAP, "rank: %d size: %d", PMI_rank, PMI_size);
+    // INFO(NVSHMEM_BOOTSTRAP, "rank: %d size: %d", PMI_rank, PMI_size);
 
     PMII_getmaxes(&PMI_kvsname_max, &PMI_keylen_max, &PMI_vallen_max);
 
@@ -315,6 +314,7 @@ int SPMI_KVS_Get(const char kvsname[], const char key[], char value[], int lengt
 /* FIXME: This mixes init with get maxes */
 static int PMII_getmaxes(int *kvsname_max, int *keylen_max, int *vallen_max) {
     char buf[SPMIU_MAXLINE], cmd[SPMIU_MAXLINE], errmsg[SPMIU_MAXLINE];
+    const int truncation_length = SPMIU_MAXLINE / 3;
     int err, rc;
 
     rc = snprintf(buf, SPMIU_MAXLINE, "cmd=init pmi_version=%d pmi_subversion=%d\n", PMI_VERSION,
@@ -339,8 +339,8 @@ static int PMII_getmaxes(int *kvsname_max, int *keylen_max, int *vallen_max) {
     cmd[0] = 0;
     SPMIU_getval("cmd", cmd, SPMIU_MAXLINE);
     if (strncmp(cmd, "response_to_init", SPMIU_MAXLINE) != 0) {
-        snprintf(errmsg, SPMIU_MAXLINE, "got unexpected response to init :%s: (full line = %s)",
-                 cmd, buf);
+        snprintf(errmsg, SPMIU_MAXLINE, "got unexpected response to init :%.*s: (full line = %.*s)",
+                 truncation_length, cmd, truncation_length, buf);
         SPMI_Abort(-1, errmsg);
     } else {
         char buf1[SPMIU_MAXLINE];
@@ -348,8 +348,8 @@ static int PMII_getmaxes(int *kvsname_max, int *keylen_max, int *vallen_max) {
         if (strncmp(buf, "0", SPMIU_MAXLINE) != 0) {
             SPMIU_getval("pmi_version", buf, SPMIU_MAXLINE);
             SPMIU_getval("pmi_subversion", buf1, SPMIU_MAXLINE);
-            snprintf(errmsg, SPMIU_MAXLINE, "pmi_version mismatch; client=%d.%d mgr=%s.%s",
-                     PMI_VERSION, PMI_SUBVERSION, buf, buf1);
+            snprintf(errmsg, SPMIU_MAXLINE, "pmi_version mismatch; client=%d.%d mgr=%.*s.%.*s",
+                     PMI_VERSION, PMI_SUBVERSION, truncation_length, buf, truncation_length, buf1);
             SPMI_Abort(-1, errmsg);
         }
     }

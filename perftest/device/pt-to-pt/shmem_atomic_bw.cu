@@ -141,7 +141,7 @@ int main(int argc, char *argv[]) {
                 case NVSHMEMI_AMO_XOR: {
                     strncpy(perf_table_name, "shmem_at_xor_bw", 30);
                     set_value = 1;
-                    for(int j = 0; j < size / sizeof(uint64_t); j++) {
+                    for(size_t j = 0; j < size / sizeof(uint64_t); j++) {
                         cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t), cudaMemcpyHostToDevice);
                     }
                     atomic_xor_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter, skip, &h_bw[i]);
@@ -171,7 +171,7 @@ int main(int argc, char *argv[]) {
                 }
                 case NVSHMEMI_AMO_FETCH_XOR: {
                     strncpy(perf_table_name, "shmem_at_fxor_bw", 30);
-                    for(int j = 0; j < size / sizeof(uint64_t); j++) {
+                    for(size_t j = 0; j < size / sizeof(uint64_t); j++) {
                         cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t), cudaMemcpyHostToDevice);
                     }
                     atomic_fetch_xor_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter, skip, &h_bw[i]);

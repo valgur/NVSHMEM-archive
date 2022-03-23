@@ -21,12 +21,17 @@
 #include "nvshmem_constants.h"
 #include "nvshmemi_constants.h"
 #include "nvshmemi_util.h"
+#include "nvshmemx_error.h"
 
 #ifdef __CUDA_ARCH__
 #  ifdef NVSHMEMI_HOST_ONLY
 #    define NVSHMEMI_HOSTDEVICE_PREFIX __host__
-#  else
-#    define NVSHMEMI_HOSTDEVICE_PREFIX __host__ __device__
+#  else 
+#    ifdef NVSHMEMI_DEVICE_ONLY
+#	    define NVSHMEMI_HOSTDEVICE_PREFIX __device__
+#    else
+#       define NVSHMEMI_HOSTDEVICE_PREFIX __host__ __device__
+#    endif
 #  endif
 #else
 #define NVSHMEMI_HOSTDEVICE_PREFIX
@@ -59,6 +64,7 @@
 #define NVSHPRI_ptrdiff     "%zu"
 #define NVSHPRI_bool        "%s"
 #define NVSHPRI_string      "\"%s\""
+
 
 #define NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(OPGRPNAME, opname)                \
     NVSHMEMI_DECL_TYPE_##OPGRPNAME(uint, unsigned int, opname)                  \
@@ -451,10 +457,12 @@ typedef struct {
     int atomics_sync;
     int job_connectivity;
     bool proxy_ops_are_ordered;
+    bool atomics_complete_on_quiet;
     void *heap_base;
     size_t heap_size;
     void **peer_heap_base;
     void **peer_heap_base_actual;
+    uint32_t atomics_le_min_size;
 
     nvshmemi_timeout_t *timeout;
     unsigned long long *test_wait_any_start_idx_ptr;
@@ -498,7 +506,19 @@ typedef struct {
 } nvshmemi_device_state_t;
 
 extern nvshmemi_device_state_t nvshmemi_device_state;
-extern __constant__ nvshmemi_device_state_t nvshmemi_device_state_d;
+extern bool nvshmemi_is_device_state_set;
+extern bool nvshmemi_is_nvshmem_bootstrapped;
+extern bool nvshmemi_is_nvshmem_initialized;
+extern bool nvshmemi_is_mpg_run;
+extern bool nvshmemi_is_limited_mpg_run;
+
+#if defined(__CUDACC_RDC__)
+#define EXTERN_CONSTANT extern __constant__
+#else
+#define EXTERN_CONSTANT static __constant__
+#endif
+EXTERN_CONSTANT nvshmemi_device_state_t nvshmemi_device_state_d;
+#undef EXTERN_CONSTANT
 
 __device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar);
 

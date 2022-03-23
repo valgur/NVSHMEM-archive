@@ -34,6 +34,7 @@ map<void *, size_t> free_chunks_start, free_chunks_end;
 map<void *, size_t> inuse_chunks;
 static size_t total_size = 0; /* size of total space managed by mspace */
 
+#ifdef _NVSHMEM_DEBUG
 static size_t get_total_size(std::map<void *, size_t> chunk_map) {
     size_t sum = 0;
     for(map<void *, size_t>::iterator it = chunk_map.begin(); it != chunk_map.end(); it++) {
@@ -42,8 +43,9 @@ static size_t get_total_size(std::map<void *, size_t> chunk_map) {
     return sum;
 }
 
-#ifdef _NVSHMEM_DEBUG
 #define ASSERT_CORRECTNESS                                                  \
+    printf("get_total_size(free_chunks_start): %zu, get_total_size(in_use_cunks): %zu, total_size: %zu\n",\
+            get_total_size(free_chunks_start), get_total_size(inuse_chunks), total_size);\
     assert(get_total_size(free_chunks_start) == get_total_size(free_chunks_end)); \
     assert(get_total_size(free_chunks_start) + get_total_size(inuse_chunks) == total_size);
 #else
@@ -82,6 +84,7 @@ mspace create_mspace_with_base(void *base, size_t capacity, int locked) {
         free_chunks_end[end_addr] = capacity;
         total_size = capacity;
     }
+    //mspace_print(base);
     ASSERT_CORRECTNESS
     return &free_chunks_start;
 }

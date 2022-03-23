@@ -67,7 +67,7 @@ int main(void) {
     cudaStreamSynchronize(stream);
 
     for (size_t i = 0; i < data_len; i++) {
-        if (data_h[i] != i)
+        if (data_h[i] != (int) i)
             printf("PE %d error, data[%zu] = %d expected data[%zu] = %d\n",
                     mype, i, data_h[i], i, (int) i);
     }

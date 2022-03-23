@@ -90,10 +90,17 @@ out:
 static int bootstrap_shmem_finalize(bootstrap_handle_t *handle) {
     int status = 0;
 
-    shmem_free(scratch);
-
-    if (nvshmem_initialized_shmem)
+    if (nvshmem_initialized_shmem) {
+        shmem_free(scratch);
         shmem_finalize();
+    } else {
+        // FIXME: OpenSHMEM currently doesn't provide a way to check if the
+        // library has been finalized. It's proposed for OpenSHMEM 1.6. Once
+        // this becomes available, the buffer below should be freed.
+
+        // if (!finalized)
+        //     shmem_free(scratch);
+    }
 
 out:
     return status;

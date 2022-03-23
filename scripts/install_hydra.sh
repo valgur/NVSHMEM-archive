@@ -1,7 +1,9 @@
 #!/bin/bash
 
 # This script downloads hydra from a static link.
-# And installs it at the user-specificed location 
+# And installs it at the user-specificed location
+
+set -e
 
 if [ "$#" -ne 2 ]; then
     echo "Usage: ./install_hydra.sh src_dir builddir"
@@ -18,6 +20,7 @@ if test -f $builddir/bin/mpiexec.hdra; then
     exit 1
 fi
 
+mkdir -p $srcdir
 cd $srcdir
 #Download hydra-3.2 source
 wget http://www.mpich.org/static/downloads/3.2/hydra-3.2.tar.gz

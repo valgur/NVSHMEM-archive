@@ -19,8 +19,10 @@ enum {
     BOOTSTRAP_PLUGIN
 };
 
-#define BOOTSTRAP_MPI_PLUGIN  "nvshmem_bootstrap_mpi.so"
-#define BOOTSTRAP_PMIX_PLUGIN "nvshmem_bootstrap_pmix.so"
+#define BOOTSTRAP_MPI_PLUGIN   "nvshmem_bootstrap_mpi.so"
+#define BOOTSTRAP_PMI_PLUGIN   "nvshmem_bootstrap_pmi.so"
+#define BOOTSTRAP_PMI2_PLUGIN  "nvshmem_bootstrap_pmi2.so"
+#define BOOTSTRAP_PMIX_PLUGIN  "nvshmem_bootstrap_pmix.so"
 #define BOOTSTRAP_SHMEM_PLUGIN "nvshmem_bootstrap_shmem.so"
 
 typedef struct bootstrap_attr {
@@ -30,10 +32,11 @@ typedef struct bootstrap_attr {
 } bootstrap_attr_t;
 
 int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle);
-int bootstrap_finalize(bootstrap_handle_t *handle);
+void bootstrap_finalize();
 
 int bootstrap_pmi_init(bootstrap_handle_t *handle);
 int bootstrap_pmi2_init(bootstrap_handle_t *handle);
 int bootstrap_loader_init(const char *plugin, void *arg, bootstrap_handle_t *handle);
+int bootstrap_loader_finalize(bootstrap_handle_t *handle);
 
 #endif

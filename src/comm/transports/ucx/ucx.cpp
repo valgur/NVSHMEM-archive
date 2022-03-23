@@ -365,9 +365,9 @@ int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t) {
     memcpy(local_ep_handle.addr, local_addr, addr_len);
     ucp_worker_release_address(ucx_state->worker_context, local_addr);
 
-    status = nvshmemi_state->boot_handle.allgather(&local_ep_handle, ep_handles,
-                                                   sizeof(ucx_ep_handle_t),
-                                                   &nvshmemi_state->boot_handle);
+    status = nvshmemi_boot_handle.allgather(&local_ep_handle, ep_handles,
+                                            sizeof(ucx_ep_handle_t),
+                                            &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                  "Failed to gather ep_handles in UCX transport.\n");
 

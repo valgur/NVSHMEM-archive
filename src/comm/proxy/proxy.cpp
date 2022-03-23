@@ -115,7 +115,7 @@ int nvshmemi_proxy_setup_connections(proxy_state_t *proxy_state) {
         }
     }
 
-    status = state->boot_handle.barrier(&state->boot_handle);
+    status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "barrier failed \n");
 
 out:
@@ -255,18 +255,18 @@ inline int process_channel_dma(proxy_state_t *state, proxy_channel_t *ch, int *i
     base_req = (base_request_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed);
     roffset = (uint64_t)(((uint64_t)(base_req->roffset_high) << 8) | (base_req->roffset_low));
 
-    dma_req_0 = (put_dma_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 8);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 8);
+    dma_req_0 = (put_dma_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 8));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 8));
     while (*((volatile uint8_t *)&dma_req_0->flag) != flag)
         ;
 
-    dma_req_1 = (put_dma_request_1_t *)(put_dma_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 16);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 16);
+    dma_req_1 = (put_dma_request_1_t *)(put_dma_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 16));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 16));
     while (*((volatile uint8_t *)&dma_req_1->flag) != flag)
         ;
 
-    dma_req_2 = (put_dma_request_2_t *)(put_dma_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 24);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 24);
+    dma_req_2 = (put_dma_request_2_t *)(put_dma_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 24));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 24));
     while (*((volatile uint8_t *)&dma_req_2->flag) != flag)
         ;
 
@@ -317,13 +317,13 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
     base_req = (base_request_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed);
     roffset = (uint64_t)(((uint64_t)(base_req->roffset_high) << 8) | (base_req->roffset_low));
 
-    inline_req_0 = (put_inline_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 8);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 8);
+    inline_req_0 = (put_inline_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 8));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 8));
     while (*((volatile uint8_t *)&inline_req_0->flag) != flag)
         ;
 
-    inline_req_1 = (put_inline_request_1_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 16);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 16);
+    inline_req_1 = (put_inline_request_1_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 16));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 16));
     while (*((volatile uint8_t *)&inline_req_1->flag) != flag)
         ;
 
@@ -402,24 +402,24 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
     base_req = (base_request_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed);
     roffset = (uint64_t)(((uint64_t)(base_req->roffset_high) << 8) | (base_req->roffset_low));
 
-    req_0 = (amo_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 8);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 8);
+    req_0 = (amo_request_0_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 8));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 8));
     while (*((volatile uint8_t *)&req_0->flag) != flag)
         ;
 
-    req_1 = (amo_request_1_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 16);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 16);
+    req_1 = (amo_request_1_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 16));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 16));
     while (*((volatile uint8_t *)&req_1->flag) != flag)
         ;
 
-    req_2 = (amo_request_2_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 24);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 24);
+    req_2 = (amo_request_2_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 24));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 24));
     while (*((volatile uint8_t *)&req_2->flag) != flag)
         ;
 
     amo_request_3_t *req_3;
-    req_3 = (amo_request_3_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed + 32);
-    flag = COUNTER_TO_FLAG(state, ch->processed + 32);
+    req_3 = (amo_request_3_t *)WRAPPED_CHANNEL_BUF(state, ch, (ch->processed + 32));
+    flag = COUNTER_TO_FLAG(state, (ch->processed + 32));
     while (*((volatile uint8_t *)&req_3->flag) != flag)
         ;
 
@@ -472,6 +472,7 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
                 ((g_buf_counter * sizeof(g_elem_t)) & (proxy_channel_g_buf_size - 1));
             memdesc.retptr = (void *)(proxy_channel_g_buf + offset);
             memdesc.retflag = ((g_buf_counter * sizeof(g_elem_t)) >> proxy_channel_g_buf_log_size) * 2 + 1;
+            nvshmemi_get_local_mem_handle(&memdesc.ret_handle, NULL, memdesc.retptr, t);
         }
         bytes.elembytes = size;
 
@@ -493,6 +494,10 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
     INFO(NVSHMEM_PROXY,
          "[%d] process_channel_put_dma/proxy_update_processed processed %ld complete %ld \n",
          state->nvshmemi_state->mype, ch->processed, *ch->complete);
+    /* Fetching atomics that complete on quiet need a consistency op to confirm proper ordering on the device side. */
+    if (amo_op > NVSHMEMI_AMO_END_OF_NONFETCH && nvshmemi_device_state.atomics_complete_on_quiet) {
+        state->issued_get = 1;
+    }
 
     return status;
 }

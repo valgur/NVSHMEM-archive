@@ -120,6 +120,7 @@ typedef struct amo_memdesc {
     uint64_t val;
     uint64_t cmp;
     nvshmem_mem_handle_t *handle;
+    nvshmem_mem_handle_t *ret_handle;
 } amo_memdesc_t;
 
 typedef struct amo_bytesdesc {

@@ -80,16 +80,16 @@ __device__ static inline void gpu_rdxn_on_demand_2(int start, int stride, int si
     volatile TYPE *tmp_operand;
     int my_active_set_pe = ((nvshmemi_device_state_d.mype - start) / stride);
     tmp_operand = (TYPE *)pWrk;
-    nvshmemi_put_threadgroup<TYPE, THREAD>(dest, source, nelems, nvshmemi_device_state_d.mype);
+    nvshmemi_put_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>(dest, source, nelems, nvshmemi_device_state_d.mype);
     for (i = 1; i < size; i++) {
         next_rank = start + ((my_active_set_pe + i) % size) * stride;
-        nvshmemi_put_nbi_threadgroup<TYPE, THREAD>((TYPE *)tmp_operand, source, nelems, next_rank);
+        nvshmemi_put_nbi_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>((TYPE *)tmp_operand, source, nelems, next_rank);
         nvshmem_quiet();
-        sync_dissem_threadgroup_2<THREAD>(start, stride, size, pSync, sync_counter);
+        sync_dissem_threadgroup_2<NVSHMEMI_THREADGROUP_THREAD>(start, stride, size, pSync, sync_counter);
         op1 = (TYPE *)dest;
         op2 = (TYPE *)tmp_operand;
         gpu_linear_reduce<TYPE, OP>(op1, op2, op1, nelems);
-        sync_dissem_threadgroup_2<THREAD>(start, stride, size, pSync, sync_counter);
+        sync_dissem_threadgroup_2<NVSHMEMI_THREADGROUP_THREAD>(start, stride, size, pSync, sync_counter);
     }
 }
 
@@ -131,7 +131,7 @@ __device__ static inline void gpu_rdxn_segment(nvshmem_team_t team, TYPE *dest, 
     int my_active_set_pe = ((nvshmemi_device_state_d.mype - start) / stride);
 
     tmp_operand = pWrk;
-    nvshmemi_put_threadgroup<TYPE, THREAD>(dest, source, nelems, nvshmemi_device_state_d.mype);
+    nvshmemi_put_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>(dest, source, nelems, nvshmemi_device_state_d.mype);
 
     rnds_floor = msg_len / nvshm_gpu_rdxn_seg_size;
     remainder = msg_len % nvshm_gpu_rdxn_seg_size;
@@ -139,13 +139,13 @@ __device__ static inline void gpu_rdxn_segment(nvshmem_team_t team, TYPE *dest, 
         exchange_size = nvshm_gpu_rdxn_seg_size;
         for (i = 1; i < size; i++) {
             next_rank = start + ((my_active_set_pe + i) % size) * stride;
-            nvshmemi_put_nbi_threadgroup<TYPE, THREAD>((TYPE *)tmp_operand, source + offset,
+            nvshmemi_put_nbi_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>((TYPE *)tmp_operand, source + offset,
                                                        (exchange_size / sizeof(TYPE)), next_rank);
-            nvshmemi_barrier_threadgroup<THREAD>(team);
+            nvshmemi_barrier_threadgroup<NVSHMEMI_THREADGROUP_THREAD>(team);
             op1 = dest + offset;
             op2 = (TYPE *)tmp_operand;
             gpu_linear_reduce<TYPE, OP>(op1, op2, op1, (exchange_size / sizeof(TYPE)));
-            nvshmemi_sync_threadgroup<THREAD>(team);
+            nvshmemi_sync_threadgroup<NVSHMEMI_THREADGROUP_THREAD>(team);
         }
         offset += (exchange_size / sizeof(TYPE));
     }
@@ -154,13 +154,13 @@ __device__ static inline void gpu_rdxn_segment(nvshmem_team_t team, TYPE *dest, 
         exchange_size = remainder;
         for (i = 1; i < size; i++) {
             next_rank = start + ((my_active_set_pe + i) % size) * stride;
-            nvshmemi_put_nbi_threadgroup<TYPE, THREAD>((TYPE *)tmp_operand, source + offset,
+            nvshmemi_put_nbi_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>((TYPE *)tmp_operand, source + offset,
                                                        (exchange_size / sizeof(TYPE)), next_rank);
-            nvshmemi_barrier_threadgroup<THREAD>(team);
+            nvshmemi_barrier_threadgroup<NVSHMEMI_THREADGROUP_THREAD>(team);
             op1 = dest + offset;
             op2 = (TYPE *)tmp_operand;
             gpu_linear_reduce<TYPE, OP>(op1, op2, op1, (exchange_size / sizeof(TYPE)));
-            nvshmemi_sync_threadgroup<THREAD>(team);
+            nvshmemi_sync_threadgroup<NVSHMEMI_THREADGROUP_THREAD>(team);
         }
     }
 }
@@ -192,7 +192,7 @@ __device__ static inline void gpu_rdxn_zcopy_get_bar(nvshmem_team_t team, TYPE *
         (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + next_rank));
     peer_source = peer_base + next_offset;
     gpu_linear_reduce<TYPE, OP>((void *)source, peer_source, dest, nreduce);
-    nvshmemi_barrier_threadgroup<THREAD>(team);
+    nvshmemi_barrier_threadgroup<NVSHMEMI_THREADGROUP_THREAD>(team);
 
     for (i = 2; i < size; i++) {
         next_rank = (nvshmemi_device_state_d.mype + (i * stride)) % (stride * size);
@@ -201,7 +201,7 @@ __device__ static inline void gpu_rdxn_zcopy_get_bar(nvshmem_team_t team, TYPE *
             (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + next_rank));
         peer_source = peer_base + next_offset;
         gpu_linear_reduce<TYPE, OP>(dest, peer_source, dest, nreduce);
-        nvshmemi_barrier_threadgroup<THREAD>(team);
+        nvshmemi_barrier_threadgroup<NVSHMEMI_THREADGROUP_THREAD>(team);
     }
 }
 
@@ -279,7 +279,7 @@ __device__ static inline void gpu_rdxn_recexch(nvshmem_team_t team, TYPE *dst, c
 
     if (in_step2 == 0) {
         size_t offset = (step1_sendto - rank - 1) * nreduce;
-        nvshmemi_put_nbi_threadgroup<TYPE, THREAD>(pWrk + offset, source, nreduce, step1_sendto);
+        nvshmemi_put_nbi_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>(pWrk + offset, source, nreduce, step1_sendto);
         nvshmem_fence();
         nvshmemi_signal_for_barrier<long>((long *)(pSync + rank), sync_counter[0], step1_sendto);
     } else if (step1_nrecvs != 0) {
@@ -310,7 +310,7 @@ __device__ static inline void gpu_rdxn_recexch(nvshmem_team_t team, TYPE *dst, c
             }
             for (int i = 0; i < k - 1; i++) {
                 size_t offset = recv_offset + k * phase * nreduce + num_small * nreduce;
-                nvshmemi_put_nbi_threadgroup<TYPE, THREAD>(pWrk + offset,
+                nvshmemi_put_nbi_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>(pWrk + offset,
                                                            pWrk + send_offset + phase * nreduce,
                                                            nreduce, step2_nbrs[phase][i]);
             }
@@ -336,7 +336,7 @@ __device__ static inline void gpu_rdxn_recexch(nvshmem_team_t team, TYPE *dst, c
     /* Step 3 */
     if (step1_nrecvs > 0) {
         for (int i = 0; i < step1_nrecvs; i++) {
-            nvshmemi_put_nbi_threadgroup<TYPE, THREAD>(dst, dst, nreduce, step1_recvfrom[i]);
+            nvshmemi_put_nbi_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>(dst, dst, nreduce, step1_recvfrom[i]);
             nvshmem_fence();
             nvshmemi_signal_for_barrier<long>((long *)(pSync + rank), sync_counter[0], step1_recvfrom[i]);
         }
@@ -487,14 +487,14 @@ static inline __device__ void gpu_linear_reduce_threadgroup_p2p_get(nvshmem_team
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
     TYPE *pWrk = (TYPE *)nvshmemi_team_get_psync(teami, REDUCE);
     for (i = myIdx; i < group_nelems; i += groupSize) {
-        nvshmemi_get_threadgroup<TYPE, THREAD>((TYPE *)((TYPE *)pWrk + myIdx),
+        nvshmemi_get_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>((TYPE *)((TYPE *)pWrk + myIdx),
                                                (TYPE *)((TYPE *)y + i), 1, next_rank);
         nvshmemi_barrier_threadgroup<SCOPE>(team);
         z[i] = perform_gpu_rdxn<TYPE, OP>(x[i], pWrk[myId]);
     }
     if (excess) {
         if (i < nelems) {
-            nvshmemi_get_threadgroup<TYPE, THREAD>((TYPE *)((TYPE *)pWrk + myIdx),
+            nvshmemi_get_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>((TYPE *)((TYPE *)pWrk + myIdx),
                                                    (TYPE *)((TYPE *)y + i), 1, next_rank);
         }
         nvshmemi_barrier_threadgroup<SCOPE>(team);
@@ -519,7 +519,7 @@ static inline __device__ void gpu_linear_reduce_threadgroup_p2p_put(TYPE *x, TYP
     int group_nelems = ((nelems / groupSize) * groupSize);
     int excess = nelems - group_nelems;
     for (i = myIdx; i < group_nelems; i += groupSize) {
-        nvshmemi_put_nbi_threadgroup<TYPE, THREAD>(
+        nvshmemi_put_nbi_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>(
             (TYPE *)((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize))),
             (const TYPE *)((TYPE *)y + i), 1, next_rank);
         nvshmemi_barrier_threadgroup<SCOPE>(team);
@@ -528,7 +528,7 @@ static inline __device__ void gpu_linear_reduce_threadgroup_p2p_put(TYPE *x, TYP
     offset++;
     if (excess) {
         if (i < nelems) {
-            nvshmemi_put_nbi_threadgroup<TYPE, THREAD>(
+            nvshmemi_put_nbi_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>(
                 (TYPE *)((TYPE *)pWrk + (myIdx + ((offset & 1) * groupSize))),
                 (const TYPE *)((TYPE *)y + i), 1, next_rank);
         }
