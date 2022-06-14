@@ -119,6 +119,11 @@ typedef struct {
     ncclComm_t nccl_comm;
     nvshmemi_reduce_recexch_t reduce_recexch;
     size_t rdxn_count;
+    uint32_t ll_flag;
+    uint64_t bcast_count;
+    uint64_t fcollect_count;
+    uint32_t fcollect_ll_flag;
+    bool are_gpus_p2p_connected;
     /*size_t                       contexts_len;
     struct shmem_transport_ctx_t **contexts;*/
 } nvshmemi_team_t;

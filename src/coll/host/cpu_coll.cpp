@@ -27,7 +27,8 @@ int nccl_version;
 
 int nvshmemi_coll_common_cpu_read_env() {
     int status = 0;
-
+    nvshmemi_device_state.bcast_ll_threshold = nvshmemi_options.BCAST_LL_THRESHOLD;
+    nvshmemi_device_state.fcollect_ll_threshold = nvshmemi_options.FCOLLECT_LL_THRESHOLD;
     return status;
 }
 

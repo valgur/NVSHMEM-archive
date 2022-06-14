@@ -345,7 +345,12 @@ static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, 
         }
     }
 
-    if (transport_idx == NVSHMEM_TRANSPORT_ID_IBRC || transport_idx == NVSHMEM_TRANSPORT_ID_IBDEVX) {
+    if (transport_idx == NVSHMEM_TRANSPORT_ID_IBRC 
+        || transport_idx == NVSHMEM_TRANSPORT_ID_IBDEVX 
+        #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+        || transport_idx == NVSHMEM_TRANSPORT_ID_GIC
+        #endif
+    ) {
         /* 1 GB Max*/
         max_len = 1ULL << 30;
     }
@@ -381,17 +386,18 @@ static inline void nvshmemi_process_multisend_rma(struct nvshmem_transport *tcur
     size_t chunk_size;
     size_remaining = size;
     int status;
-    
+
     while(size_remaining) {
         localdesc.ptr = lptr;
         NVSHMEMU_UNMAPPED_PTR_TRANSLATE(remotedesc.ptr, rptr, pe);
+        remotedesc.offset = (char *)rptr - (char *)nvshmemi_state->heap_base;
         local_chunk_size = size_remaining;
         remote_chunk_size = size_remaining;
         nvshmemi_get_local_mem_handle(&localdesc.handle, &local_chunk_size, lptr, transport_id);
         nvshmemi_get_remote_mem_handle(&remotedesc.handle, &remote_chunk_size, rptr, pe, transport_id);
         chunk_size = min(local_chunk_size, min(remote_chunk_size, size_remaining));
         bytes.nelems = chunk_size;
-        
+
         status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytes, is_proxy);
         if (unlikely(status)) {
             ERROR_PRINT("aborting due to error in process_channel_dma\n");

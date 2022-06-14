@@ -7,6 +7,9 @@
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
 
+#include "transport_common.h"
+#include "ibdevx.h"
+
 #include <math.h>
 #include "infiniband/verbs.h"
 #include "mlx5_ifc.h"
@@ -17,7 +20,6 @@
 #include <vector>
 #include <deque>
 #include <dlfcn.h>
-#include "ibdevx.h"
 #include "nvshmemx_error.h"
 #include "topo.h"
 #include <asm/types.h>
@@ -231,7 +233,7 @@ struct ibdevx_mem_handle {
     ibv_mr *mr;
 };
 
-struct ibdevx_mem_handle local_dummy_mr;
+struct ibdevx_mem_handle local_dummy_mr = {0,};
 
 pthread_mutex_t ibdevx_mutex_send_progress;
 
@@ -241,81 +243,12 @@ static uint64_t connected_qp_count;
 struct ibdevx_ep *ibdevx_cst_ep;
 static int use_ib_native_atomics = 1;
 
-static struct ibdevx_function_table ftable;
+static struct nvshmemt_ibv_function_table ftable;
 static void *ibv_handle;
-
-struct ibdevx_hca_info {
-    char name[64];
-    int port;
-    int count;
-    int found;
-};
 
 int nvshmemt_ibdevx_init(nvshmem_transport_t *transport);
 int check_poll_avail(struct ibdevx_ep *ep, int wait_predicate);
 int progress_send(transport_ibdevx_state_t *ibdevx_state);
-
-int parse_hca_list(const char *string, struct ibdevx_hca_info *hca_list, int max_count) {
-    if (!string) return 0;
-
-    const char *ptr = string;
-    // Ignore "^" name, will be detected outside of this function
-    if (ptr[0] == '^') ptr++;
-
-    int if_num = 0;
-    int if_counter = 0;
-    int segment_counter = 0;
-    char c;
-    do {
-        c = *ptr;
-        if (c == ':') {
-            if (segment_counter == 0) {
-                if (if_counter > 0) {
-                    hca_list[if_num].name[if_counter] = '\0';
-                    hca_list[if_num].port = atoi(ptr + 1);
-                    hca_list[if_num].found = 0;
-                    if_num++;
-                    if_counter = 0;
-                    segment_counter++;
-                }
-            } else {
-                hca_list[if_num - 1].count = atoi(ptr + 1);
-                segment_counter = 0;
-            }
-            c = *(ptr + 1);
-            while (c != ',' && c != ':' && c != '\0') {
-                ptr++;
-                c = *(ptr + 1);
-            }
-        } else if (c == ',' || c == '\0') {
-            if (if_counter > 0) {
-                hca_list[if_num].name[if_counter] = '\0';
-                hca_list[if_num].found = 0;
-                if_num++;
-                if_counter = 0;
-            }
-            segment_counter = 0;
-        } else {
-            if (if_counter == 0) {
-                hca_list[if_num].port = -1;
-                hca_list[if_num].count = 1;
-            }
-            hca_list[if_num].name[if_counter] = c;
-            if_counter++;
-        }
-        ptr++;
-    } while (if_num < max_count && c);
-
-    INFO(NVSHMEM_INIT, "Begin - Parsed HCA list provided by user - ");
-    for (int i = 0; i < if_num; i++) {
-        INFO(NVSHMEM_INIT,
-             "Parsed HCA list provided by user - i=%d (of %d), name=%s, port=%d, count=%d", i,
-             if_num, hca_list[i].name, hca_list[i].port, hca_list[i].count);
-    }
-    INFO(NVSHMEM_INIT, "End - Parsed HCA list provided by user");
-
-    return if_num;
-}
 
 int nvshmemt_ibdevx_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
                             int transport_count, int npes, int mype) {
@@ -341,18 +274,6 @@ int nvshmemt_ibdevx_get_device_count(int *ndev, nvshmem_transport_t t) {
     return status;
 }
 
-static int ib_iface_get_mlx_path(const char *ib_name, char **path) {
-    int status = NVSHMEMX_SUCCESS;
-
-    char device_path[MAXPATHSIZE];
-    snprintf(device_path, MAXPATHSIZE, "/sys/class/infiniband/%s/device", ib_name);
-    *path = realpath(device_path, NULL);
-    NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
-
-out:
-    return status;
-}
-
 int nvshmemt_ibdevx_get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
     int status = NVSHMEMX_SUCCESS;
 
@@ -362,8 +283,8 @@ int nvshmemt_ibdevx_get_pci_path(int dev, char **pci_path, nvshmem_transport_t t
     const char *ib_name =
         (const char *)((struct ibdevx_device *)ibdevx_state->devices)[dev_id].dev->name;
 
-    status = ib_iface_get_mlx_path(ib_name, pci_path);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ib_iface_get_mlx_path failed \n");
+    status = nvshmemt_ib_iface_get_mlx_path(ib_name, pci_path);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmemt_ib_iface_get_mlx_path failed \n");
 
 out:
     return status;
@@ -846,8 +767,14 @@ int nvshmemt_ibdevx_finalize(nvshmem_transport_t transport) {
     // clear qp map
     qp_map.clear();
 
-    status = dlclose(ibv_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "dlclose() failed\n");
+    if (local_dummy_mr.mr) {
+        void *mem = local_dummy_mr.mr->addr;
+        ftable.dereg_mr(local_dummy_mr.mr);
+        free(mem);
+        memset(&local_dummy_mr, 0, sizeof(local_dummy_mr));
+    }
+
+    nvshmemt_ibv_ftable_fini(&ibv_handle);
 
     status = pthread_mutex_destroy(&ibdevx_mutex_send_progress);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_destroy failed\n");
@@ -1533,13 +1460,6 @@ int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t) {
     return status;
 }
 
-#define LOAD_SYM(handle, symbol, funcptr)  \
-    do {                                   \
-        void **cast = (void **)&funcptr;   \
-        void *tmp = dlsym(handle, symbol); \
-        *cast = tmp;                       \
-    } while (0)
-
 int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
     int status = 0;
     struct nvshmem_transport *transport = NULL;
@@ -1550,8 +1470,8 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
     std::vector<std::string> nic_names_n_pes;
     std::vector<std::string> nic_names;
     int exclude_list = 0;
-    struct ibdevx_hca_info hca_list[MAX_NUM_HCAS];
-    struct ibdevx_hca_info pe_hca_mapping[MAX_NUM_PES_PER_NODE];
+    struct nvshmemt_hca_info hca_list[MAX_NUM_HCAS];
+    struct nvshmemt_hca_info pe_hca_mapping[MAX_NUM_PES_PER_NODE];
     int hca_list_count = 0, pe_hca_map_count = 0, user_selection = 0;
     int transport_skipped;
     int offset = 0;
@@ -1568,29 +1488,10 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
         goto out;
     }
 
-    ibv_handle = dlopen("libibverbs.so.1", RTLD_LAZY);
-    if (ibv_handle == NULL) {
-        INFO(NVSHMEM_INIT, "libibverbs not found on the system; skipping IB RC transport");
-        status = NVSHMEMI_ERROR_SKIPPED;
-        goto out;
+    if (nvshmemt_ibv_ftable_init(&ibv_handle, &ftable)) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                  "Unable to dlopen libibverbs. Skipping devx transport.");
     }
-
-    LOAD_SYM(ibv_handle, "ibv_create_ah", ftable.create_ah);
-    LOAD_SYM(ibv_handle, "ibv_get_device_list", ftable.get_device_list);
-    LOAD_SYM(ibv_handle, "ibv_get_device_name", ftable.get_device_name);
-    LOAD_SYM(ibv_handle, "ibv_open_device", ftable.open_device);
-    LOAD_SYM(ibv_handle, "ibv_close_device", ftable.close_device);
-    LOAD_SYM(ibv_handle, "ibv_query_port", ftable.query_port);
-    LOAD_SYM(ibv_handle, "ibv_query_device", ftable.query_device);
-    LOAD_SYM(ibv_handle, "ibv_alloc_pd", ftable.alloc_pd);
-    LOAD_SYM(ibv_handle, "ibv_reg_mr", ftable.reg_mr);
-    LOAD_SYM(ibv_handle, "ibv_reg_dmabuf_mr", ftable.reg_dmabuf_mr);
-    LOAD_SYM(ibv_handle, "ibv_dereg_mr", ftable.dereg_mr);
-    LOAD_SYM(ibv_handle, "ibv_create_cq", ftable.create_cq);
-    LOAD_SYM(ibv_handle, "ibv_create_qp", ftable.create_qp);
-    LOAD_SYM(ibv_handle, "ibv_create_srq", ftable.create_srq);
-    LOAD_SYM(ibv_handle, "ibv_modify_qp", ftable.modify_qp);
-    LOAD_SYM(ibv_handle, "ibv_query_gid", ftable.query_gid);
 
     if (nvshmemi_options.DISABLE_IB_NATIVE_ATOMICS) {
         use_ib_native_atomics = 0;
@@ -1643,7 +1544,7 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
     if (nvshmemi_options.HCA_LIST_provided) {
         user_selection = 1;
         exclude_list = (nvshmemi_options.HCA_LIST[0] == '^');
-        hca_list_count = parse_hca_list(nvshmemi_options.HCA_LIST, hca_list, MAX_NUM_HCAS);
+        hca_list_count = nvshmemt_parse_hca_list(nvshmemi_options.HCA_LIST, hca_list, MAX_NUM_HCAS);
     }
 
     if (nvshmemi_options.HCA_PE_MAPPING_provided) {
@@ -1654,8 +1555,8 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
                 "NVSHMEM_HCA_PE_MAPPING \n");
         } else {
             user_selection = 1;
-            pe_hca_map_count = parse_hca_list(nvshmemi_options.HCA_PE_MAPPING, pe_hca_mapping,
-                                              MAX_NUM_PES_PER_NODE);
+            pe_hca_map_count = nvshmemt_parse_hca_list(nvshmemi_options.HCA_PE_MAPPING, pe_hca_mapping,
+                                                       MAX_NUM_PES_PER_NODE);
         }
     }
 

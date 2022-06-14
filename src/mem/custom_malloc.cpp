@@ -44,7 +44,7 @@ static size_t get_total_size(std::map<void *, size_t> chunk_map) {
 }
 
 #define ASSERT_CORRECTNESS                                                  \
-    printf("get_total_size(free_chunks_start): %zu, get_total_size(in_use_cunks): %zu, total_size: %zu\n",\
+    INFO(NVSHMEM_MEM, "get_total_size(free_chunks_start): %zu, get_total_size(in_use_cunks): %zu, total_size: %zu\n",\
             get_total_size(free_chunks_start), get_total_size(inuse_chunks), total_size);\
     assert(get_total_size(free_chunks_start) == get_total_size(free_chunks_end)); \
     assert(get_total_size(free_chunks_start) + get_total_size(inuse_chunks) == total_size);

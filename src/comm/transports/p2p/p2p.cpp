@@ -37,6 +37,11 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
     nvmlDevice_t local_device;
     nvmlGpuP2PStatus_t stat;
 
+    if (nvshmemi_options.DISABLE_P2P) {	
+        INFO(NVSHMEM_INIT, "P2P disabled by user through environment.");
+        *access = 0;
+        goto out;
+    }
 
     INFO(NVSHMEM_TRANSPORT,
          "[%p] ndev %d pcie_devid %x cudevice %x peer host hash %lx p2p host hash %lx", p2p_state,

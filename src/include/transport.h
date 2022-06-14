@@ -17,6 +17,10 @@
 #define DEVX_TRANSPORT_STRING "ibdevx"
 #define LIBFABRIC_TRANSPORT_STRING "libfabric"
 
+#ifdef NVSHMEM_GPUINITIATED_SUPPORT
+#define GIC_TRANSPORT_STRING "gic"
+#endif
+
 #define NVSHMEM_TRANSPORT_DEVICE_SCORE_MAX 7
 #define NVSHMEM_PCIE_DBF_BUFFER_LEN 50
 
@@ -28,6 +32,9 @@ enum {
     NVSHMEM_TRANSPORT_ID_UCX,
     NVSHMEM_TRANSPORT_ID_IBDEVX,
     NVSHMEM_TRANSPORT_ID_FABRIC,
+    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+    NVSHMEM_TRANSPORT_ID_GIC,
+    #endif
     NVSHMEM_TRANSPORT_COUNT,
 };
 
@@ -37,6 +44,9 @@ enum {
     NVSHMEM_TRANSPORT_MASK_UCX = 1 << NVSHMEM_TRANSPORT_ID_UCX,
     NVSHMEM_TRANSPORT_MASK_IBDEVX = 1 << NVSHMEM_TRANSPORT_ID_IBDEVX,
     NVSHMEM_TRANSPORT_MASK_FABRIC = 1 << NVSHMEM_TRANSPORT_ID_FABRIC,
+    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+    NVSHMEM_TRANSPORT_MASK_GIC = 1 << NVSHMEM_TRANSPORT_ID_GIC,
+    #endif
 };
 
 enum {
@@ -47,6 +57,11 @@ enum {
     NVSHMEM_TRANSPORT_CAP_CPU_WRITE = 1 << 4,
     NVSHMEM_TRANSPORT_CAP_CPU_READ = 1 << 5,
     NVSHMEM_TRANSPORT_CAP_CPU_ATOMICS = 1 << 6,
+    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+    NVSHMEM_TRANSPORT_CAP_GPU_WRITE = 1 << 7,
+    NVSHMEM_TRANSPORT_CAP_GPU_READ = 1 << 8,
+    NVSHMEM_TRANSPORT_CAP_GPU_ATOMICS = 1 << 9,
+    #endif
 };
 
 enum {
@@ -150,6 +165,9 @@ struct nvshmem_transport_host_ops {
     quiet_handle quiet;
     int (*enforce_cst)(struct nvshmem_transport *transport);
     int (*enforce_cst_at_target)(struct nvshmem_transport *transport);
+    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+    int (*add_device_remote_mem_handles)(struct nvshmem_transport *transport, int transport_id, nvshmem_mem_handle_t *mem_handles, uint64_t heap_offset, size_t size);
+    #endif
 };
 
 struct nvshmem_transport {
@@ -188,5 +206,9 @@ int nvshmemt_ucx_init(nvshmem_transport_t *transport);
 int nvshmemt_ibdevx_init(nvshmem_transport_t *transport);
 
 int nvshmemt_libfabric_init(nvshmem_transport_t *transport);
+
+#ifdef NVSHMEM_GPUINITIATED_SUPPORT
+int nvshmemt_gic_init(nvshmem_transport_t *transport);
+#endif
 
 #endif

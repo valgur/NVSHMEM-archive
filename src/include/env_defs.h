@@ -99,6 +99,8 @@ NVSHMEMI_ENV_DEF(DISABLE_CUDA_VMM, bool, false, NVSHMEMI_ENV_CAT_OTHER,
                  "on x86 and disabled on P9. CUDA VMM feature in NVSHMEM requires CUDA RT version and "
                  "CUDA Driver version to be greater than or equal to 11.3.")
 #endif
+NVSHMEMI_ENV_DEF(DISABLE_P2P, bool, false, NVSHMEMI_ENV_CAT_OTHER,
+                 "Disable P2P connectivity of GPUs even when available")
 NVSHMEMI_ENV_DEF(CUMEM_GRANULARITY, size, (size_t)((size_t)1 << 29), NVSHMEMI_ENV_CAT_OTHER,
                  "Granularity for ``cuMemAlloc``/``cuMemCreate``")
 
@@ -120,6 +122,12 @@ NVSHMEMI_ENV_DEF(BARRIER_TG_DISSEM_KVAL, int, 2, NVSHMEMI_ENV_CAT_COLLECTIVES,
                  "Radix of the dissemination algorithm used for thread group barriers")
 NVSHMEMI_ENV_DEF(REDUCE_RECEXCH_KVAL, int, 2, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Radix of the recursive exchange reduction algorithm")
+NVSHMEMI_ENV_DEF(FCOLLECT_LL_THRESHOLD, size, (size_t)(1 << 11),
+                 NVSHMEMI_ENV_CAT_COLLECTIVES, "Message size threshold up to which "
+                                               "fcollect LL algo will be used")
+NVSHMEMI_ENV_DEF(BCAST_LL_THRESHOLD, size, (size_t)(1 << 11),
+                 NVSHMEMI_ENV_CAT_COLLECTIVES, "Message size threshold up to which "
+                                               "broadcast LL algo  will be used")
 
 /** CPU Collectives **/
 
@@ -137,7 +145,7 @@ NVSHMEMI_ENV_DEF(RDX_NUM_TPB, int, 32, NVSHMEMI_ENV_CAT_HIDDEN,
 NVSHMEMI_ENV_DEF(ASSERT_ATOMICS_SYNC, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass flush on wait_until at target")
 NVSHMEMI_ENV_DEF(REMOTE_TRANSPORT, string, NVSHMEMI_ENV_TRANSPORT_DEFAULT, NVSHMEMI_ENV_CAT_TRANSPORT,
-                 "Selected transport for remote operations: ibrc, ucx, none")
+                 "Selected transport for remote operations: ibrc, ucx, libfabric, ibdevx, none")
 NVSHMEMI_ENV_DEF(DISABLE_IB_NATIVE_ATOMICS, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Disable use of InfiniBand native atomics")
 NVSHMEMI_ENV_DEF(DISABLE_GDRCOPY, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
@@ -180,6 +188,9 @@ NVSHMEMI_ENV_DEF(DISABLE_LOCAL_ONLY_PROXY, bool, false, NVSHMEMI_ENV_CAT_TRANSPO
                 "timeout polling (enabled by ``NVSHMEM_TIMEOUT_DEVICE_POLLING`` build-time variable) "
                 "because these are processed by the proxy thread.")
 
+NVSHMEMI_ENV_DEF(LIBFABRIC_PERSONA, string, "cxi", NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Set the feature set persona for the libfabric transport: cxi, verbs")
+
 /** Runtime optimimzations **/
 NVSHMEMI_ENV_DEF(PROXY_REQUEST_BATCH_MAX, int, 32, NVSHMEMI_ENV_CAT_OTHER,
                  "Maxmum number of requests that the proxy thread processes in a single iteration "
@@ -189,3 +200,19 @@ NVSHMEMI_ENV_DEF(PROXY_REQUEST_BATCH_MAX, int, 32, NVSHMEMI_ENV_CAT_OTHER,
 NVSHMEMI_ENV_DEF(NVTX, string, "off", NVSHMEMI_ENV_CAT_NVTX,
                  "Set to enable NVTX instrumentation. Accepts a comma separated list of "
                  "instrumentation groups. By default the NVTX instrumentation is disabled.")
+
+#ifdef NVSHMEM_GPUINITIATED_SUPPORT
+/** GPU-initiated communication **/
+NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_DCT, int, 2, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Number of DCT QPs used in GPU-initiated communication transport.")
+NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_DCI, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Total number of DCI QPs used in GPU-initiated communication transport. "
+                 "Set to 0 or a negative number to use automatic configuration.")
+NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_DCI_PER_SM, int, 1, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Number of exclusive DCI QPs assigned to each SM.")
+NVSHMEMI_ENV_DEF(IB_GPUINITIATED_FORCE_NIC_BUF_MEMTYPE, string, "auto", NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Force NIC buffer memory type. Valid choices are: gpumem, hostmem. "
+                 "For other values, use auto discovery (default).")
+NVSHMEMI_ENV_DEF(IB_ENABLE_GPUINITIATED, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Set to enable GPU-initiated communication transport.")
+#endif

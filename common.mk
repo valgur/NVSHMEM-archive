@@ -38,6 +38,8 @@ NVSHMEM_IBRC_SUPPORT ?= 1
 NVSHMEM_IBDEVX_SUPPORT ?= 0
 # whether to build with libfabric support.
 NVSHMEM_LIBFABRIC_SUPPORT ?= 0
+# whether to build with GPU-initiated communication support.
+NVSHMEM_GPUINITIATED_SUPPORT ?= 0
 # UCX install location
 UCX_HOME ?= /usr/local/ucx
 # libfabric installation location
@@ -114,9 +116,16 @@ LDFLAGS += -lmlx5
 TESTLDFLAGS += -lmlx5
 endif
 
+ifeq ($(NVSHMEM_GPUINITIATED_SUPPORT), 1)
+LDFLAGS += -lmlx5
+TESTLDFLAGS += -lmlx5
+endif
+
 ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
-LDFLAGS += -L$(LIBFABRIC_HOME)/lib -lfabric
-TESTLDFLAGS += -L$(LIBFABRIC_HOME)/lib -lfabric
+LIBFABRIC_LIBDIR = $(LIBFABRIC_HOME)/$(shell if [ -d $(LIBFABRIC_HOME)/lib ] ; then echo lib ; else echo lib64 ; fi)
+
+LDFLAGS += -L$(LIBFABRIC_LIBDIR) -lfabric
+TESTLDFLAGS += -L$(LIBFABRIC_LIBDIR) -lfabric
 endif
 
 # NVCC doesn't support redefining -O (even with the same value) so we need to scrub it from cu flag variables.
@@ -141,7 +150,7 @@ endif
 
 #TODO: add -Werror and -Wall to TESTCUFLAGS. Have to fix all warnings first.
 ifneq ($(NVSHMEM_DEVEL), 0)
-TESTCUFLAGS += -Werror all-warnings -Xcompiler -Wall,-Wextra,-Wno-unused-function,-Wno-unused-parameter,-Wno-packed-not-aligned,-Wno-address-of-packed-pointer
-NVCUFLAGS += -Werror all-warnings -Xcompiler -Wall,-Wextra,-Wno-unused-function,-Wno-unused-parameter,-Wno-packed-not-aligned,-Wno-address-of-packed-pointer
-CXXFLAGS  += -Werror -Wall -Wextra -Wno-unused-function -Wno-unused-parameter -Wno-packed-not-aligned -Wno-address-of-packed-pointer
+TESTCUFLAGS += -Werror all-warnings -Xcompiler -Wall,-Wextra,-Wno-unused-function,-Wno-unused-parameter
+NVCUFLAGS += -Werror all-warnings -Xcompiler -Wall,-Wextra,-Wno-unused-function,-Wno-unused-parameter
+CXXFLAGS  += -Werror -Wall -Wextra -Wno-unused-function -Wno-unused-parameter
 endif

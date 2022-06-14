@@ -170,7 +170,7 @@ out:
     return status;
 }
 
-static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, int nelems, size_t elembytes,
+static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, size_t nelems, size_t elembytes,
                                                         uint64_t *sig_addr, uint64_t signal,
                                                         void *local, void *remote,
                                                         ptrdiff_t lstride, ptrdiff_t rstride,
@@ -185,10 +185,12 @@ static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, int nele
         (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)) {
         NVSHMEMU_MAPPED_PTR_TRANSLATE(destptr_actual, remote, pe)
         dest.ptr = (void *)destptr_actual;
+        dest.offset = (char *)remote - (char *)(nvshmemi_state->heap_base);
         src.ptr = local;
     } else {
         NVSHMEMU_MAPPED_PTR_TRANSLATE(srcptr_actual, remote, pe)
         src.ptr = (void *)srcptr_actual;
+        src.offset = (char *)remote - (char *)(nvshmemi_state->heap_base);
         dest.ptr = local;
         bytesdesc.srcstride = rstride;
         bytesdesc.deststride = lstride;
@@ -205,7 +207,7 @@ static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, int nele
 
 static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t desc, int is_nbi,
                                           int is_stream, void *lptr, void *rptr,
-                                          ptrdiff_t lstride, ptrdiff_t rstride, int nelems,
+                                          ptrdiff_t lstride, ptrdiff_t rstride, size_t nelems,
                                           size_t elembytes, uint64_t *sig_addr, uint64_t signal,
                                           int sig_op, int pe, cudaStream_t cstrm) {
     rma_verb_t verb = {desc, is_nbi, is_stream, cstrm};
@@ -239,6 +241,7 @@ static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t des
             localdesc.ptr = lptr;
             localdesc.handle = NULL;
             NVSHMEMU_UNMAPPED_PTR_TRANSLATE(remotedesc.ptr, rptr, pe);
+            remotedesc.offset = (char *)rptr - (char *)(nvshmemi_state->heap_base);
             nvshmemi_get_remote_mem_handle(&remotedesc.handle, NULL, rptr, pe, t);
             status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytesdesc, 0);
             if (unlikely(status)) {

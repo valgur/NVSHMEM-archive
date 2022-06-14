@@ -10,6 +10,7 @@
 #include "nvshmemx.h"
 #include "nvshmemi_util.h"
 #include "nvshmemi_coll.h"
+#include "nvshmemi_transfer.h"
 #include "gpu_coll.h"
 #include "barrier.h"
 #include "barrier_device.cuh"
@@ -31,7 +32,7 @@ __global__ void barrier_on_stream_kernel_threadgroup(nvshmem_team_t team) {
     int myidx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
 
     if (nvshmemi_device_state_d.job_connectivity >= NVSHMEMI_JOB_GPU_PROXY) {
-        if (!myidx) nvshmemi_proxy_quiet(false);
+        if (!myidx) nvshmemi_transfer_quiet(false);
         nvshmemi_threadgroup_sync<SCOPE>();
     }
 
@@ -39,7 +40,7 @@ __global__ void barrier_on_stream_kernel_threadgroup(nvshmem_team_t team) {
 
     if (!myidx) {
         if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_PROXY)
-            nvshmemi_proxy_enforce_consistency_at_target(false);
+            nvshmemi_transfer_enforce_consistency_at_target(false);
     }
 #endif
 }

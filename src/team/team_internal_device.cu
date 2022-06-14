@@ -35,12 +35,16 @@ __device__ int nvshmemi_team_translate_pe(nvshmemi_team_t *src_team, int src_pe,
 
 __device__ long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_team_op_t op) {
     long *team_psync;
-    team_psync = &nvshmemi_device_state_d.psync_pool[team->team_idx * PSYNC_SIZE_PER_TEAM];
+    team_psync = &nvshmemi_device_state_d.psync_pool[team->team_idx * get_psync_len_per_team()];
     switch(op) {
         case SYNC:
             return team_psync;
         case REDUCE:
             return &team_psync[2 * NVSHMEMI_SYNC_SIZE + (NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * (team->rdxn_count % 2))];
+        case BCAST:
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE];
+        case FCOLLECT:
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE + NVSHMEMI_BCAST_SYNC_SIZE];
         default:
             printf("Incorrect argument to nvshmemi_team_get_psync\n");
             return NULL;

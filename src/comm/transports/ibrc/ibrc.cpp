@@ -6,23 +6,22 @@
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
+#include "transport.h"
+#include "transport_common.h"
+#include "infiniband/verbs.h"
 
+#include <linux/types.h>
 #include <string.h>
 #include <assert.h>
 #include <map>
 #include <vector>
 #include <deque>
 #include <dlfcn.h>
-#include "ibrc.h"
 #include "nvshmemx_error.h"
 #include "topo.h"
 #include <asm/types.h>
 #ifdef NVSHMEM_X86_64
 #include <immintrin.h>
-#endif
-
-#ifdef NVSHMEM_USE_GDRCOPY
-#include "gdrapi.h"
 #endif
 
 #define IBRC_MAX_INLINE_SIZE 128
@@ -157,23 +156,9 @@ static uint64_t connected_qp_count;
 
 struct ibrc_ep *ibrc_cst_ep;
 static int use_ib_native_atomics = 1;
-static int use_gdrcopy = 0;
+static bool use_gdrcopy = 0;
 #ifdef NVSHMEM_USE_GDRCOPY
 static gdr_t gdr_desc;
-struct gdrcopy_function_table {
-    gdr_t (*open)();
-    int (*close)(gdr_t g);
-    int (*pin_buffer)(gdr_t g, unsigned long addr, size_t size, uint64_t p2p_token,
-                      uint32_t va_space, gdr_mh_t *handle);
-    int (*unpin_buffer)(gdr_t g, gdr_mh_t handle);
-    int (*get_info)(gdr_t g, gdr_mh_t handle, gdr_info_t *info);
-    int (*map)(gdr_t g, gdr_mh_t handle, void **va, size_t size);
-    int (*unmap)(gdr_t g, gdr_mh_t handle, void *va, size_t size);
-    int (*copy_from_mapping)(gdr_mh_t handle, void *h_ptr, const void *map_d_ptr, size_t size);
-    int (*copy_to_mapping)(gdr_mh_t handle, const void *map_d_ptr, void *h_ptr, size_t size);
-    void (*runtime_get_version)(int *major, int *minor);
-    int (*driver_get_version)(gdr_t g, int *major, int *minor);
-};
 static struct gdrcopy_function_table gdrcopy_ftable;
 static void *gdrcopy_handle = NULL;
 static volatile uint64_t atomics_received = 0;
@@ -183,15 +168,8 @@ static volatile uint64_t atomics_completed = 0;
 static volatile uint64_t atomics_acked = 0;
 #endif
 
-static struct ibrc_function_table ftable;
+static struct nvshmemt_ibv_function_table ftable;
 static void *ibv_handle;
-
-struct ibrc_hca_info {
-    char name[64];
-    int port;
-    int count;
-    int found;
-};
 
 int nvshmemt_ibrc_init(nvshmem_transport_t *transport);
 int check_poll_avail(struct ibrc_ep *ep, int wait_predicate);
@@ -262,68 +240,6 @@ out:
     return status;
 }
 
-int parse_hca_list(const char *string, struct ibrc_hca_info *hca_list, int max_count) {
-    if (!string) return 0;
-
-    const char *ptr = string;
-    // Ignore "^" name, will be detected outside of this function
-    if (ptr[0] == '^') ptr++;
-
-    int if_num = 0;
-    int if_counter = 0;
-    int segment_counter = 0;
-    char c;
-    do {
-        c = *ptr;
-        if (c == ':') {
-            if (segment_counter == 0) {
-                if (if_counter > 0) {
-                    hca_list[if_num].name[if_counter] = '\0';
-                    hca_list[if_num].port = atoi(ptr + 1);
-                    hca_list[if_num].found = 0;
-                    if_num++;
-                    if_counter = 0;
-                    segment_counter++;
-                }
-            } else {
-                hca_list[if_num - 1].count = atoi(ptr + 1);
-                segment_counter = 0;
-            }
-            c = *(ptr + 1);
-            while (c != ',' && c != ':' && c != '\0') {
-                ptr++;
-                c = *(ptr + 1);
-            }
-        } else if (c == ',' || c == '\0') {
-            if (if_counter > 0) {
-                hca_list[if_num].name[if_counter] = '\0';
-                hca_list[if_num].found = 0;
-                if_num++;
-                if_counter = 0;
-            }
-            segment_counter = 0;
-        } else {
-            if (if_counter == 0) {
-                hca_list[if_num].port = -1;
-                hca_list[if_num].count = 1;
-            }
-            hca_list[if_num].name[if_counter] = c;
-            if_counter++;
-        }
-        ptr++;
-    } while (if_num < max_count && c);
-
-    INFO(NVSHMEM_INIT, "Begin - Parsed HCA list provided by user - ");
-    for (int i = 0; i < if_num; i++) {
-        INFO(NVSHMEM_INIT,
-             "Parsed HCA list provided by user - i=%d (of %d), name=%s, port=%d, count=%d", i,
-             if_num, hca_list[i].name, hca_list[i].port, hca_list[i].count);
-    }
-    INFO(NVSHMEM_INIT, "End - Parsed HCA list provided by user");
-
-    return if_num;
-}
-
 int nvshmemt_ibrc_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
                             int transport_count, int npes, int mype) {
     for (int i = 0; i < npes; ++i) {
@@ -348,18 +264,6 @@ int nvshmemt_ibrc_get_device_count(int *ndev, nvshmem_transport_t t) {
     return status;
 }
 
-static int ib_iface_get_mlx_path(const char *ib_name, char **path) {
-    int status = NVSHMEMX_SUCCESS;
-
-    char device_path[MAXPATHSIZE];
-    snprintf(device_path, MAXPATHSIZE, "/sys/class/infiniband/%s/device", ib_name);
-    *path = realpath(device_path, NULL);
-    NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
-
-out:
-    return status;
-}
-
 int nvshmemt_ibrc_get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
     int status = NVSHMEMX_SUCCESS;
 
@@ -369,8 +273,8 @@ int nvshmemt_ibrc_get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) 
     const char *ib_name =
         (const char *)((struct ibrc_device *)ibrc_state->devices)[dev_id].dev->name;
 
-    status = ib_iface_get_mlx_path(ib_name, pci_path);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ib_iface_get_mlx_path failed \n");
+    status = nvshmemt_ib_iface_get_mlx_path(ib_name, pci_path);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmemt_ib_iface_get_mlx_path failed \n");
 
 out:
     return status;
@@ -708,10 +612,7 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
     }
 
 #ifdef NVSHMEM_USE_GDRCOPY
-        if (use_gdrcopy) {
-            status = gdrcopy_ftable.close(gdr_desc);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_close failed\n");
-        }
+    nvshmemt_gdrcopy_ftable_fini(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
 #endif
 
     // clear qp map
@@ -725,12 +626,6 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
     }
 
     ibrc_cst_ep = NULL;
-#ifdef NVSHMEM_USE_GDRCOPY
-    if (use_gdrcopy && gdrcopy_handle) {
-        status = dlclose(gdrcopy_handle);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "dlclose() failed\n");
-    }
-#endif
 
     if (bpool != NULL) {
         while (!bpool_free.empty()) bpool_free.pop_back();
@@ -739,8 +634,7 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
     }
     bqueue_toprocess.clear();
 
-    status = dlclose(ibv_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "dlclose() failed\n");
+    nvshmemt_ibv_ftable_fini(&ibv_handle);
 
     status = pthread_mutex_destroy(&ibrc_mutex_send_progress);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_destroy failed\n");
@@ -749,7 +643,6 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_destroy failed\n");
 
 #ifdef NVSHMEM_USE_GDRCOPY
-    gdrcopy_handle = NULL;
     atomics_received = 0;
     atomics_processed = 0;
     atomics_issued = 0;
@@ -1499,13 +1392,6 @@ int nvshmemt_ibrc_connect_endpoints(nvshmem_transport_t t) {
     return status;
 }
 
-#define LOAD_SYM(handle, symbol, funcptr)  \
-    do {                                   \
-        void **cast = (void **)&funcptr;   \
-        void *tmp = dlsym(handle, symbol); \
-        *cast = tmp;                       \
-    } while (0)
-
 int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     int status = 0;
     struct nvshmem_transport *transport = NULL;
@@ -1516,8 +1402,8 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     std::vector<std::string> nic_names_n_pes;
     std::vector<std::string> nic_names;
     int exclude_list = 0;
-    struct ibrc_hca_info hca_list[MAX_NUM_HCAS];
-    struct ibrc_hca_info pe_hca_mapping[MAX_NUM_PES_PER_NODE];
+    struct nvshmemt_hca_info hca_list[MAX_NUM_HCAS];
+    struct nvshmemt_hca_info pe_hca_mapping[MAX_NUM_PES_PER_NODE];
     int hca_list_count = 0, pe_hca_map_count = 0, user_selection = 0;
     int transport_skipped;
     int offset = 0;
@@ -1534,28 +1420,10 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
         goto out;
     }
 
-    ibv_handle = dlopen("libibverbs.so.1", RTLD_LAZY);
-    if (ibv_handle == NULL) {
-        INFO(NVSHMEM_INIT, "libibverbs not found on the system; skipping IB RC transport");
-        status = NVSHMEMI_ERROR_SKIPPED;
-        goto out;
+    if (nvshmemt_ibv_ftable_init(&ibv_handle, &ftable)) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                  "Unable to dlopen libibverbs. Skipping devx transport.");
     }
-
-    LOAD_SYM(ibv_handle, "ibv_fork_init", ftable.fork_init);
-    LOAD_SYM(ibv_handle, "ibv_get_device_list", ftable.get_device_list);
-    LOAD_SYM(ibv_handle, "ibv_get_device_name", ftable.get_device_name);
-    LOAD_SYM(ibv_handle, "ibv_open_device", ftable.open_device);
-    LOAD_SYM(ibv_handle, "ibv_close_device", ftable.close_device);
-    LOAD_SYM(ibv_handle, "ibv_query_port", ftable.query_port);
-    LOAD_SYM(ibv_handle, "ibv_query_device", ftable.query_device);
-    LOAD_SYM(ibv_handle, "ibv_alloc_pd", ftable.alloc_pd);
-    LOAD_SYM(ibv_handle, "ibv_reg_mr", ftable.reg_mr);
-    LOAD_SYM(ibv_handle, "ibv_dereg_mr", ftable.dereg_mr);
-    LOAD_SYM(ibv_handle, "ibv_create_cq", ftable.create_cq);
-    LOAD_SYM(ibv_handle, "ibv_create_qp", ftable.create_qp);
-    LOAD_SYM(ibv_handle, "ibv_create_srq", ftable.create_srq);
-    LOAD_SYM(ibv_handle, "ibv_modify_qp", ftable.modify_qp);
-    LOAD_SYM(ibv_handle, "ibv_query_gid", ftable.query_gid);
 
     if (nvshmemi_options.DISABLE_IB_NATIVE_ATOMICS) {
         use_ib_native_atomics = 0;
@@ -1564,40 +1432,9 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     ibrc_qp_depth = nvshmemi_options.QP_DEPTH;
 
     ftable.fork_init();
+
 #ifdef NVSHMEM_USE_GDRCOPY
-    use_gdrcopy = 1;
-    if (nvshmemi_options.DISABLE_GDRCOPY) {
-        use_gdrcopy = 0;
-    }
-
-    gdrcopy_handle = dlopen("libgdrapi.so.2", RTLD_LAZY);
-    if (!gdrcopy_handle) use_gdrcopy = 0;
-
-    if (use_gdrcopy) {
-        LOAD_SYM(gdrcopy_handle, "gdr_runtime_get_version", gdrcopy_ftable.runtime_get_version);
-        if (!gdrcopy_ftable.runtime_get_version) {
-            WARN_PRINT("GDRCopy library found by version older than 2.0, skipping use \n");
-            use_gdrcopy = 0;
-            goto skip_gdrcopy_dlsym;
-        }
-        LOAD_SYM(gdrcopy_handle, "gdr_runtime_get_version", gdrcopy_ftable.driver_get_version);
-        LOAD_SYM(gdrcopy_handle, "gdr_open", gdrcopy_ftable.open);
-        LOAD_SYM(gdrcopy_handle, "gdr_close", gdrcopy_ftable.close);
-        LOAD_SYM(gdrcopy_handle, "gdr_pin_buffer", gdrcopy_ftable.pin_buffer);
-        LOAD_SYM(gdrcopy_handle, "gdr_unpin_buffer", gdrcopy_ftable.unpin_buffer);
-        LOAD_SYM(gdrcopy_handle, "gdr_map", gdrcopy_ftable.map);
-        LOAD_SYM(gdrcopy_handle, "gdr_unmap", gdrcopy_ftable.unmap);
-        LOAD_SYM(gdrcopy_handle, "gdr_get_info", gdrcopy_ftable.get_info);
-        LOAD_SYM(gdrcopy_handle, "gdr_copy_from_mapping", gdrcopy_ftable.copy_from_mapping);
-        LOAD_SYM(gdrcopy_handle, "gdr_copy_to_mapping", gdrcopy_ftable.copy_to_mapping);
-
-        gdr_desc = gdrcopy_ftable.open();
-        if (!gdr_desc) {
-            use_gdrcopy = 0;
-            WARN_PRINT("GDRCopy open call failed, falling back to not using GDRCopy \n");
-        }
-    }
-skip_gdrcopy_dlsym:
+    use_gdrcopy = nvshmemt_gdrcopy_ftable_init(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
 #endif
 
     transport = (struct nvshmem_transport *)malloc(sizeof(struct nvshmem_transport));
@@ -1633,7 +1470,7 @@ skip_gdrcopy_dlsym:
     if (nvshmemi_options.HCA_LIST_provided) {
         user_selection = 1;
         exclude_list = (nvshmemi_options.HCA_LIST[0] == '^');
-        hca_list_count = parse_hca_list(nvshmemi_options.HCA_LIST, hca_list, MAX_NUM_HCAS);
+        hca_list_count = nvshmemt_parse_hca_list(nvshmemi_options.HCA_LIST, hca_list, MAX_NUM_HCAS);
     }
 
     if (nvshmemi_options.HCA_PE_MAPPING_provided) {
@@ -1644,8 +1481,8 @@ skip_gdrcopy_dlsym:
                 "NVSHMEM_HCA_PE_MAPPING \n");
         } else {
             user_selection = 1;
-            pe_hca_map_count = parse_hca_list(nvshmemi_options.HCA_PE_MAPPING, pe_hca_mapping,
-                                              MAX_NUM_PES_PER_NODE);
+            pe_hca_map_count = nvshmemt_parse_hca_list(nvshmemi_options.HCA_PE_MAPPING, pe_hca_mapping,
+                                                       MAX_NUM_PES_PER_NODE);
         }
     }
 

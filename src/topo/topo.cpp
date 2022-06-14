@@ -287,10 +287,6 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
                                           sizeof(struct gpu_info), &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of gpu_info failed \n");
 
-    status = tcurr->host_ops.get_device_count(&ndev, tcurr);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                 "transport devices (setup_connections) failed \n");
-
     pe_id = 0;
     for (i = 0; i < state->npes; i++) {
         if (state->pe_info[i].hostHash != state->pe_info[state->mype].hostHash) continue;

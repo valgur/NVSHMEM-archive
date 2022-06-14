@@ -18,6 +18,7 @@
 #ifdef NVSHMEM_COMPLEX_SUPPORT
 #include <complex.h>
 #endif
+#include "nvshmem_types.h"
 #include "nvshmem_constants.h"
 #include "nvshmemi_constants.h"
 #include "nvshmemi_util.h"
@@ -439,6 +440,16 @@ enum nvshmemi_call_site_id {
 
 #define TIMEOUT_NCYCLES 1e10
 
+enum {
+    NVSHMEM_TEAM_WORLD_INDEX = 0,
+    NVSHMEM_TEAM_SHARED_INDEX,
+    NVSHMEM_TEAM_NODE_INDEX,
+    NVSHMEM_TEAM_SAME_MYPE_NODE_INDEX,
+    NVSHMEM_TEAM_SAME_GPU_INDEX,
+    NVSHMEM_TEAM_GPU_LEADERS_INDEX,
+    NVSHMEM_TEAMS_MIN
+};
+
 typedef struct {
     uint64_t signal;
     uint64_t caller;
@@ -467,19 +478,14 @@ typedef struct {
     nvshmemi_timeout_t *timeout;
     unsigned long long *test_wait_any_start_idx_ptr;
 
-    /* team variables */
-    nvshmemi_team_t team_world;
-    nvshmemi_team_t team_shared;
-    nvshmemi_team_t team_node;
-    nvshmemi_team_t team_same_gpu;
-    nvshmemi_team_t team_gpu_leaders;
-
     nvshmemi_team_t **team_pool;
     long *psync_pool;
     long *sync_counter;
 
     int barrier_dissem_kval;
     int barrier_tg_dissem_kval;
+    size_t bcast_ll_threshold;
+    size_t fcollect_ll_threshold;
     gpu_coll_env_params_t gpu_coll_env_params_var;
 
     /* channel */
@@ -503,6 +509,8 @@ typedef struct {
     uint32_t proxy_channel_buf_logsize;
     int *global_exit_request_state;
     int * global_exit_code;
+
+    void *gic_state;
 } nvshmemi_device_state_t;
 
 extern nvshmemi_device_state_t nvshmemi_device_state;

@@ -31,8 +31,8 @@ void nvshmem_fence(void) {
                     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_fence() failed \n");
                 }
             }
-            tbitmap >>= 1;
         }
+        tbitmap >>= 1;
     }
 out:
     return;

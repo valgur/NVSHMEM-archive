@@ -363,6 +363,7 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
         localdesc.ptr = local;
         localdesc.handle = NULL;
         remotedesc.ptr = remote_actual;
+        remotedesc.offset = roffset;
         nvshmemi_get_remote_mem_handle(&remotedesc.handle, NULL, remote, pe, t);
 
         bytes.nelems = 1;
@@ -461,6 +462,7 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
 
         memset(&memdesc, 0, sizeof(amo_memdesc_t));
         memdesc.ptr = remote_actual;
+        memdesc.offset = roffset;
         memdesc.val = lvalue;
         memdesc.cmp = cvalue;
         nvshmemi_get_remote_mem_handle(&memdesc.handle, NULL, remote, pe, t);

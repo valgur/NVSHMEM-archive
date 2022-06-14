@@ -21,6 +21,7 @@
 #include "nvshmem_common.cuh"
 #include "nvshmemx_coll_api.h"
 #include "nvshmemx_error.h"
+#include "nvshmem_api.h"
 
 
 #ifdef __cplusplus

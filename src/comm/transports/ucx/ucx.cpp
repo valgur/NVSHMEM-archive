@@ -4,6 +4,7 @@
  * See COPYRIGHT for license information
  */
 
+#include "transport_common.h"
 #include "ucx.h"
 
 static void *ibv_handle;
@@ -26,7 +27,7 @@ static uint64_t nvshmemt_ucx_bounce_buffers_in_use = 0;
 
 static uint64_t nvshmemt_g_bogus_bounce_buffer = 0;
 
-static int use_gdrcopy = 0;
+static bool use_gdrcopy = 0;
 static bool use_local_atomics = 0;
 
 int nvshmemt_ucx_progress(nvshmem_transport_t transport);
@@ -1042,13 +1043,7 @@ int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
     }
 
 #ifdef NVSHMEM_USE_GDRCOPY
-    if (use_gdrcopy && gdr_desc) {
-        gdrcopy_ftable.close(gdr_desc);
-    }
-
-    if (use_gdrcopy && gdrcopy_handle) {
-        dlclose(gdrcopy_handle);
-    }
+    nvshmemt_gdrcopy_ftable_fini(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
 #endif
 
     return 0;
@@ -1119,13 +1114,6 @@ int nvshmemt_ucx_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
     return 0;
 }
 
-#define LOAD_SYM(handle, symbol, funcptr)  \
-    do {                                   \
-        void **cast = (void **)&funcptr;   \
-        void *tmp = dlsym(handle, symbol); \
-        *cast = tmp;                       \
-    } while (0)
-
 int nvshmemt_ucx_init(nvshmem_transport_t *t) {
     ucs_status_t ucs_rc;
     ucp_params_t params;
@@ -1157,38 +1145,7 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
     }
 
 #ifdef NVSHMEM_USE_GDRCOPY
-    use_gdrcopy = 1;
-    if (nvshmemi_options.DISABLE_GDRCOPY) {
-        use_gdrcopy = 0;
-    }
-    gdrcopy_handle = dlopen("libgdrapi.so.2", RTLD_LAZY);
-    if (!gdrcopy_handle) {
-        INFO(NVSHMEM_INIT, "GDRCopy library not found. disabling GDRCopy.\n");
-        use_gdrcopy = 0;
-    } else {
-        LOAD_SYM(gdrcopy_handle, "gdr_runtime_get_version", gdrcopy_ftable.runtime_get_version);
-        if (!gdrcopy_ftable.runtime_get_version) {
-            INFO(NVSHMEM_INIT, "GDRCopy library found by version older than 2.0. disabling GDRCopy.\n");
-            use_gdrcopy = 0;
-            goto skip_gdrcopy_dlsym;
-        }
-        LOAD_SYM(gdrcopy_handle, "gdr_runtime_get_version", gdrcopy_ftable.driver_get_version);
-        LOAD_SYM(gdrcopy_handle, "gdr_open", gdrcopy_ftable.open);
-        LOAD_SYM(gdrcopy_handle, "gdr_close", gdrcopy_ftable.close);
-        LOAD_SYM(gdrcopy_handle, "gdr_pin_buffer", gdrcopy_ftable.pin_buffer);
-        LOAD_SYM(gdrcopy_handle, "gdr_unpin_buffer", gdrcopy_ftable.unpin_buffer);
-        LOAD_SYM(gdrcopy_handle, "gdr_map", gdrcopy_ftable.map);
-        LOAD_SYM(gdrcopy_handle, "gdr_unmap", gdrcopy_ftable.unmap);
-        LOAD_SYM(gdrcopy_handle, "gdr_get_info", gdrcopy_ftable.get_info);
-        LOAD_SYM(gdrcopy_handle, "gdr_copy_from_mapping", gdrcopy_ftable.copy_from_mapping);
-        LOAD_SYM(gdrcopy_handle, "gdr_copy_to_mapping", gdrcopy_ftable.copy_to_mapping);
-    }
-    gdr_desc = gdrcopy_ftable.open();
-    if (!gdr_desc) {
-        dlclose(gdrcopy_handle);
-        INFO(NVSHMEM_INIT, "GDRCopy open call failed, disabling GDRCopy.\n");
-    }
-skip_gdrcopy_dlsym:
+    use_gdrcopy = nvshmemt_gdrcopy_ftable_init(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
 #endif
 
     ibv_handle = dlopen("libibverbs.so.1", RTLD_LAZY);

@@ -25,8 +25,9 @@ __device__ inline void nvshmemi_signal(T *dest, const T value, int pe) {
        volatile T *dest_actual = (volatile T *)((char *)(peer_base_addr) +
                               ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));
        *dest_actual = value;
-   } else {
-       nvshmemi_proxy_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
+   } 
+   else {
+       nvshmemi_transfer_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
    }
 }
 
@@ -46,19 +47,11 @@ __device__ inline void nvshmemi_signal(T *dest, const T value, int pe) {
             NVSHMEMI_SYNC##SC_SUFFIX();                                                     \
         } else {                                                                            \
             NVSHMEMI_SYNC##SC_SUFFIX();                                                     \
-            if (myIdx == 0) {                                                               \
-                nvshmemi_proxy_rma_nbi((void *)dest, (void *)source,                        \
-                                       nelems * sizeof(TYPE), pe,                           \
-                                       NVSHMEMI_OP_PUT);                                    \
-                nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe,         \
-                                                      (nvshmemi_amo_t)sig_op);              \
-                if (is_nbi == 0) {                                                          \
-                    nvshmemi_proxy_quiet(false);                                            \
-                    /* __threadfence is not required here because either __syncwarp or
-                       __syncthreads is always called in this function and will prevent
-                       src buffer reuse before quiet is completed. */                       \
-                }                                                                           \
-            }                                                                               \
+            nvshmemi_transfer_put_signal<nvshmemi_threadgroup_##SCOPE>(                     \
+                (void *)dest, (void *)source, nelems * sizeof(TYPE),                        \
+                (void *)sig_addr, signal, (nvshmemi_amo_t)sig_op,                           \
+                pe, is_nbi                                                                  \
+            );                                                                              \
             NVSHMEMI_SYNC##SC_SUFFIX();                                                     \
         }                                                                                   \
     }
@@ -442,8 +435,8 @@ __device__ inline void nvshmemi_signal_op(uint64_t *sig_addr, uint64_t signal, i
         /* sig_op == NVSHMEM_SIGNAL_ADD */
         atomicAdd((unsigned long long *)dest_actual, signal);
     } else {
-        nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe, (nvshmemi_amo_t)sig_op);
-    }
+        nvshmemi_transfer_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe, (nvshmemi_amo_t)sig_op);
+    } 
 }
 
 __device__ inline void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {

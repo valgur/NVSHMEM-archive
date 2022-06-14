@@ -37,7 +37,7 @@
 #define NVSHMEMT_LIBFABRIC_INJECT_BYTES 8
 #endif
 
-#define NVSHMEMT_LIBFABRIC_MAX_RETRIES (1ULL<<30)
+#define NVSHMEMT_LIBFABRIC_MAX_RETRIES (1ULL<<20)
 
 typedef struct {
     char name[NVSHMEMT_LIBFABRIC_DOMAIN_LEN];
@@ -55,23 +55,28 @@ typedef struct {
 } nvshmemt_libfabric_endpoint_t;
 
 typedef struct {
-    char                                provider_name[NVSHMEMT_LIBFABRIC_PROVIDER_LEN];
     struct fi_info                      *prov_info;
     struct fid_fabric                   *fabric;
     struct fid_domain                   *domain;
     struct fid_av                       *addresses;
     nvshmemt_libfabric_endpoint_t       *eps;
     /* local_mr is used only for consistency ops. */
-    struct fid_mr                       *local_mr;
-    uint64_t                            local_mr_key;
-    void                                *local_mr_desc;
+    struct fid_mr                       *local_mr[2];
+    uint64_t                            local_mr_key[2];
+    void                                *local_mr_desc[2];
     void                                *local_mem_ptr;
     nvshmemt_libfabric_domain_name_t    *domain_names;
     int                                 num_domains;
+    int                                 next_key;
+    int                                 is_verbs;
 } nvshmemt_libfabric_state_t;
 
 typedef struct {
     struct fid_mr   *mr;
     uint64_t        key;
     void            *local_desc;
+} nvshmemt_libfabric_mem_handle_ep_t;
+
+typedef struct {
+    nvshmemt_libfabric_mem_handle_ep_t hdls[2];
 } nvshmemt_libfabric_mem_handle_t;

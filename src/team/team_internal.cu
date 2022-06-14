@@ -21,6 +21,7 @@ long nvshmemi_max_teams;
 nvshmemi_team_t nvshmemi_team_world;
 nvshmemi_team_t nvshmemi_team_shared;
 nvshmemi_team_t nvshmemi_team_node;
+nvshmemi_team_t nvshmemi_team_same_mype_node;
 nvshmemi_team_t nvshmemi_team_same_gpu;
 nvshmemi_team_t nvshmemi_team_gpu_leaders;
 
@@ -63,7 +64,7 @@ static inline int check_for_linear_stride(int pe, int *start, int *stride, int *
 }
 
 size_t nvshmemi_get_teams_mem_requirement() {
-    return sizeof(long) * nvshmemi_max_teams * PSYNC_SIZE_PER_TEAM + /* psync's */
+    return sizeof(long) * nvshmemi_max_teams * get_psync_len_per_team() + /* psync's */
            2 * N_PSYNC_BYTES +                                       /* psync_pool_avail */
            2 * sizeof(int) +                                         /* team_ret_val */
            2 * sizeof(long) * nvshmemi_max_teams                     /* storing counters */
@@ -98,14 +99,20 @@ void nvshmemi_team_init_nccl_comm(nvshmemi_team_t *teami) {
     NCCL_CHECK(nccl_ftable.CommInitRank(&teami->nccl_comm, teami->size, Id, teami->my_pe));
 }
 #endif  /* NVSHMEM_USE_NCCL */
-
+void nvshmemi_team_set_p2p_connectivity(nvshmemi_team_t * teami) {
+    teami->are_gpus_p2p_connected = 1;
+    for (int pe = teami->start; pe < teami->start + teami->stride * teami->size; pe += teami->stride) {
+        if (nvshmemi_state->peer_heap_base[pe] == NULL) {
+            teami->are_gpus_p2p_connected = 0;
+            break;
+        }
+    }
+}
 /* Team Management Routines */
 
 int nvshmemi_team_init(void) {
     long psync_len;
     int start, stride, size;
-    nvshmemi_team_t *team_addr;
-    void *device_state_symbol_address;
     int *scratch;
     int status = 0;
     nvshmem_transport_pe_info_t *pe_info;
@@ -120,8 +127,11 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_world.rdxn_count = 0;
     nvshmemi_team_world.config_mask = 0;
     memset(&nvshmemi_team_world.config, 0, sizeof(nvshmem_team_config_t));
+    nvshmemi_team_world.ll_flag = 1;
+    nvshmemi_team_world.bcast_count = 0;
+    nvshmemi_team_world.fcollect_count = 0;
+    nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_world);
     nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_world);
-    nvshmemi_device_state.team_world =  nvshmemi_team_world;
 
     /* Initialize NVSHMEM_TEAM_SHARED */
     nvshmemi_team_shared.team_idx = NVSHMEM_TEAM_SHARED_INDEX;
@@ -133,8 +143,12 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_shared.start = nvshmemi_state->mype;
     nvshmemi_team_shared.stride = 1;
     nvshmemi_team_shared.size = 1;
+    nvshmemi_team_shared.ll_flag = 1;
+    nvshmemi_team_shared.bcast_count = 0;
+    nvshmemi_team_shared.fcollect_count = 0;
+    nvshmemi_team_shared.are_gpus_p2p_connected = 0;
+    nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_shared);
     nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_shared);
-    nvshmemi_device_state.team_shared = nvshmemi_team_shared;
     INFO(NVSHMEM_INIT, "NVSHMEM_TEAM_SHARED: start=%d, stride=%d, size=%d",
          nvshmemi_team_shared.start, nvshmemi_team_shared.stride, nvshmemi_team_shared.size);
 
@@ -144,6 +158,9 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_node.rdxn_count = 0;
     nvshmemi_team_node.config_mask = 0;
     memset(&nvshmemi_team_node.config, 0, sizeof(nvshmem_team_config_t));
+    nvshmemi_team_node.ll_flag = 1;
+    nvshmemi_team_node.bcast_count = 0;
+    nvshmemi_team_node.fcollect_count = 0;
 
     uint64_t myHostHash = getHostHash();
     uint64_t *hostHash = (uint64_t *)malloc(sizeof(uint64_t) * nvshmemi_state->npes);
@@ -171,15 +188,38 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_node.start = start;
     nvshmemi_team_node.stride = (stride == -1) ? 1 : stride;
     nvshmemi_team_node.size = size;
+    nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_node);
     nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_node);
-    nvshmemi_device_state.team_node = nvshmemi_team_node;
 
     INFO(NVSHMEM_INIT, "NVSHMEMX_TEAM_NODE: start=%d, stride=%d, size=%d",
          nvshmemi_team_node.start, nvshmemi_team_node.stride, nvshmemi_team_node.size);
 
+    /* Initialize NVSHMEMX_TEAM_SAME_MYPE_NODE */
+    nvshmemi_team_same_mype_node.team_idx = NVSHMEM_TEAM_SAME_MYPE_NODE_INDEX;
+    nvshmemi_team_same_mype_node.my_pe = nvshmemi_state->mype / nvshmemi_state->npes_node;
+    nvshmemi_team_same_mype_node.rdxn_count = 0;
+    nvshmemi_team_same_mype_node.config_mask = 0;
+    memset(&nvshmemi_team_same_mype_node.config, 0, sizeof(nvshmem_team_config_t));
+
+    nvshmemi_team_same_mype_node.start = nvshmemi_state->mype_node;
+    nvshmemi_team_same_mype_node.stride = nvshmemi_state->npes_node;
+    nvshmemi_team_same_mype_node.size = nvshmemi_state->npes / nvshmemi_state->npes_node;
+    assert(nvshmemi_state->npes % nvshmemi_state->npes_node == 0);
+    nvshmemi_team_same_mype_node.ll_flag = 1;
+    nvshmemi_team_same_mype_node.bcast_count = 0;
+    nvshmemi_team_same_mype_node.fcollect_count = 0;
+    nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_same_mype_node);
+    nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_same_mype_node);
+    INFO(NVSHMEM_INIT, "NVSHMEM_TEAM_SHARED: start=%d, stride=%d, size=%d",
+         nvshmemi_team_same_mype_node.start, nvshmemi_team_same_mype_node.stride, nvshmemi_team_same_mype_node.size);
+
+
     /* Initialize team NVSHMEMI_TEAM_SAME_GPU */
     nvshmemi_team_same_gpu.team_idx = NVSHMEM_TEAM_SAME_GPU_INDEX;
     nvshmemi_team_same_gpu.rdxn_count = 0;
+    nvshmemi_team_same_gpu.ll_flag = 1;
+    nvshmemi_team_same_gpu.bcast_count = 0;
+    nvshmemi_team_same_gpu.fcollect_count = 0;
     nvshmemi_team_same_gpu.config_mask = 0;
     memset(&nvshmemi_team_same_gpu.config, 0, sizeof(nvshmem_team_config_t));
     pe_info = nvshmemi_state->pe_info;
@@ -200,8 +240,8 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_same_gpu.start = start;
     nvshmemi_team_same_gpu.stride = (stride == -1) ? 1 : stride;
     nvshmemi_team_same_gpu.size = size;
+    nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_same_gpu);
     nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_same_gpu);
-    nvshmemi_device_state.team_same_gpu = nvshmemi_team_same_gpu;
     INFO(NVSHMEM_INIT, "NVSHMEMI_TEAM_SAME_GPU: start=%d, stride=%d, size=%d",
          nvshmemi_team_same_gpu.start, nvshmemi_team_same_gpu.stride, nvshmemi_team_same_gpu.size);
 
@@ -219,6 +259,10 @@ int nvshmemi_team_init(void) {
         nvshmemi_team_gpu_leaders.size = nvshmemi_state->npes / nvshmemi_team_same_gpu.size;
         nvshmemi_team_gpu_leaders.my_pe = (nvshmemi_state->mype - nvshmemi_team_gpu_leaders.start) / nvshmemi_team_gpu_leaders.stride;
         nvshmemi_team_gpu_leaders.rdxn_count = 0;
+        nvshmemi_team_gpu_leaders.ll_flag = 1;
+        nvshmemi_team_gpu_leaders.bcast_count = 0;
+        nvshmemi_team_gpu_leaders.fcollect_count = 0;
+        nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_gpu_leaders);
         nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_gpu_leaders);
         status = nvshmemi_boot_handle.allgather((void *)&nvshmemi_team_gpu_leaders.my_pe, (void *)scratch,
 							sizeof(int), &nvshmemi_boot_handle);
@@ -235,7 +279,6 @@ int nvshmemi_team_init(void) {
                 }
             }
 	}
-        nvshmemi_device_state.team_gpu_leaders = nvshmemi_team_gpu_leaders;
         INFO(NVSHMEM_INIT, "NVSHMEMI_TEAM_GPU_LEADERS: start=%d, stride=%d, size=%d",
              nvshmemi_team_gpu_leaders.start, nvshmemi_team_gpu_leaders.stride, nvshmemi_team_gpu_leaders.size);
     } else {
@@ -270,6 +313,7 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_pool[NVSHMEM_TEAM_WORLD_INDEX] = &nvshmemi_team_world;
     nvshmemi_team_pool[NVSHMEM_TEAM_SHARED_INDEX] = &nvshmemi_team_shared;
     nvshmemi_team_pool[NVSHMEM_TEAM_NODE_INDEX] = &nvshmemi_team_node;
+    nvshmemi_team_pool[NVSHMEM_TEAM_SAME_MYPE_NODE_INDEX] = &nvshmemi_team_same_mype_node;
     nvshmemi_team_pool[NVSHMEM_TEAM_SAME_GPU_INDEX] = &nvshmemi_team_same_gpu;
     if (nvshmemi_team_same_gpu.start == nvshmemi_state->mype)
         nvshmemi_team_pool[NVSHMEM_TEAM_GPU_LEADERS_INDEX] = &nvshmemi_team_gpu_leaders;
@@ -282,7 +326,7 @@ int nvshmemi_team_init(void) {
      *  <----------- groups 1 & 2-------------->|<------------- group 3 ---------------->
      *  <--- (bcast, collect, reduce, etc.) --->|<------ (barriers and syncs) ---------->
      * */
-    psync_len = nvshmemi_max_teams * PSYNC_SIZE_PER_TEAM;
+    psync_len = nvshmemi_max_teams * get_psync_len_per_team();
     nvshmemi_psync_pool = (long *)nvshmemi_malloc(sizeof(long) * psync_len);
     NULL_ERROR_JMP(nvshmemi_psync_pool, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "nvshmemi_psync_pool allocation failed \n");
 
@@ -318,6 +362,7 @@ int nvshmemi_team_init(void) {
     nvshmemi_bit_clear(psync_pool_avail, N_PSYNC_BYTES, NVSHMEM_TEAM_WORLD_INDEX);
     nvshmemi_bit_clear(psync_pool_avail, N_PSYNC_BYTES, NVSHMEM_TEAM_SHARED_INDEX);
     nvshmemi_bit_clear(psync_pool_avail, N_PSYNC_BYTES, NVSHMEM_TEAM_NODE_INDEX);
+    nvshmemi_bit_clear(psync_pool_avail, N_PSYNC_BYTES, NVSHMEM_TEAM_SAME_MYPE_NODE_INDEX);
     nvshmemi_bit_clear(psync_pool_avail, N_PSYNC_BYTES, NVSHMEM_TEAM_SAME_GPU_INDEX);
     nvshmemi_bit_clear(psync_pool_avail, N_PSYNC_BYTES, NVSHMEM_TEAM_GPU_LEADERS_INDEX);
 
@@ -332,18 +377,35 @@ int nvshmemi_team_init(void) {
 
     nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle); /* To ensure neccessary setup has been done all PEs */
 
-    CUDA_RUNTIME_CHECK(
-        cudaGetSymbolAddress((void **)&device_state_symbol_address, nvshmemi_device_state_d));
-    team_addr = (nvshmemi_team_t *) ((char *)device_state_symbol_address + offsetof(nvshmemi_device_state_t, team_world));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_WORLD_INDEX], &team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
-    team_addr = (nvshmemi_team_t *) ((char *)device_state_symbol_address + offsetof(nvshmemi_device_state_t, team_shared));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SHARED_INDEX], &team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
-    team_addr = (nvshmemi_team_t *) ((char *)device_state_symbol_address + offsetof(nvshmemi_device_state_t, team_node));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_NODE_INDEX], &team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
-    team_addr = (nvshmemi_team_t *) ((char *)device_state_symbol_address + offsetof(nvshmemi_device_state_t, team_same_gpu));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SAME_GPU_INDEX], &team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
-    team_addr = (nvshmemi_team_t *) ((char *)device_state_symbol_address + offsetof(nvshmemi_device_state_t, team_gpu_leaders));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_GPU_LEADERS_INDEX], &team_addr, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+    nvshmemi_team_t *nvshmemi_device_team_world,
+                    *nvshmemi_device_team_shared,
+                    *nvshmemi_device_team_node,
+                    *nvshmemi_device_team_same_mype_node,
+                    *nvshmemi_device_team_same_gpu,
+                    *nvshmemi_device_team_gpu_leaders;
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_world, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_world, &nvshmemi_team_world, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_WORLD_INDEX], &nvshmemi_device_team_world, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_shared, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_shared, &nvshmemi_team_shared, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SHARED_INDEX], &nvshmemi_device_team_shared, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_node, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_node, &nvshmemi_team_node, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_NODE_INDEX], &nvshmemi_device_team_node, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_same_mype_node, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_same_mype_node, &nvshmemi_team_same_mype_node, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SAME_MYPE_NODE_INDEX], &nvshmemi_device_team_same_mype_node, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_same_gpu, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_same_gpu, &nvshmemi_team_same_gpu, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SAME_GPU_INDEX], &nvshmemi_device_team_same_gpu, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_gpu_leaders, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_gpu_leaders, &nvshmemi_team_gpu_leaders, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_GPU_LEADERS_INDEX], &nvshmemi_device_team_gpu_leaders, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
 #ifdef NVSHMEM_USE_NCCL
@@ -352,6 +414,7 @@ int nvshmemi_team_init(void) {
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_world);
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_shared);
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_node);
+        nvshmemi_team_init_nccl_comm(&nvshmemi_team_same_mype_node);
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_same_gpu);
         if (nvshmemi_pe_in_active_set(nvshmemi_state->mype,
                                       nvshmemi_team_gpu_leaders.start,
@@ -497,6 +560,9 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
         myteam->stride = PE_stride;
         myteam->size = PE_size;
         myteam->rdxn_count = 0;
+        myteam->ll_flag = 1;
+        myteam->bcast_count = 0;
+        myteam->fcollect_count = 0;
         if (config) {
             myteam->config = *config;
             myteam->config_mask = config_mask;
@@ -547,6 +613,7 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
             nvshmemi_team_pool[myteam->team_idx] = myteam;
             nvshmemi_team_t *device_team_addr;
             CUDA_RUNTIME_CHECK(cudaMalloc((void **)&device_team_addr, sizeof(nvshmemi_team_t)));
+            nvshmemi_team_set_p2p_connectivity(myteam);
             nvshmemi_recexchalgo_get_neighbors(myteam);
             CUDA_RUNTIME_CHECK(cudaMemcpy(device_team_addr, myteam, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
             CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[myteam->team_idx],
@@ -661,13 +728,14 @@ void nvshmemi_team_destroy(nvshmemi_team_t *team) {
     CUDA_RUNTIME_CHECK(cudaMemset(&nvshmemi_device_team_pool[idx], 0, sizeof(nvshmemi_team_t *)));
 
     nvshmemi_init_array_kernel<long><<<1, 1>>>(&nvshmemi_sync_counter[2 * idx], 2, 1);
-    nvshmemi_init_array_kernel<long><<<1, 1>>>(&nvshmemi_psync_pool[idx * PSYNC_SIZE_PER_TEAM], 
-                                      PSYNC_SIZE_PER_TEAM, NVSHMEMI_SYNC_VALUE);
+    nvshmemi_init_array_kernel<long><<<1, 1>>>(&nvshmemi_psync_pool[idx * get_psync_len_per_team()], 
+                                      get_psync_len_per_team(), NVSHMEMI_SYNC_VALUE);
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
     if (team != &nvshmemi_team_world &&
         team != &nvshmemi_team_shared &&
         team != &nvshmemi_team_node &&
+        team != &nvshmemi_team_same_mype_node &&
         team != &nvshmemi_team_same_gpu &&
         team != &nvshmemi_team_gpu_leaders) {
         free(team);
@@ -681,12 +749,16 @@ void nvshmemi_team_destroy(nvshmemi_team_t *team) {
 #ifndef __CUDA_ARCH__
 long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_team_op_t op) {
     long *team_psync;
-    team_psync = &nvshmemi_psync_pool[team->team_idx * PSYNC_SIZE_PER_TEAM];
+    team_psync = &nvshmemi_psync_pool[team->team_idx * get_psync_len_per_team()];
     switch(op) {
         case SYNC:
             return team_psync;
         case REDUCE:
             return &team_psync[2 * NVSHMEMI_SYNC_SIZE + (NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * (team->rdxn_count % 2))];
+        case BCAST:
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE];
+        case FCOLLECT:
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE + NVSHMEMI_BCAST_SYNC_SIZE];
         default:
             printf("Incorrect argument to nvshmemi_team_get_psync\n");
             return NULL;

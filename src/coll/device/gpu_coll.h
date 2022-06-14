@@ -9,6 +9,7 @@
 
 #include "cuda.h"
 #include "nvshmem_internal.h"
+#include "nvshmemi_transfer.h"
 #include "common.cuh"
 
 /* This is signaling function used in barrier algorithm.
@@ -35,8 +36,9 @@ __device__ inline void nvshmemi_signal_for_barrier(T *dest, const T value, int p
             (volatile T *)((char *)(peer_base_addr) +
                            ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));
         *dest_actual = value;
-    } else {
-        nvshmemi_proxy_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
+    } 
+    else {
+        nvshmemi_transfer_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
     }
 }
 #endif /* __CUDACC__ */

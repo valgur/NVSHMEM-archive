@@ -1,4 +1,22 @@
 ===============================================================================
+				Changes in 2.6.0
+===============================================================================
+
+# Added new GPU initiated communication transport that allows kernel intiated
+communication to be issued directly to the NIC and bypass the CPU proxy thread.
+The transport is currently provided in experimental mode. It is disabled by default.
+Please refer to installation guide for how to enable it.
+# Updated the libfabric transport with initial support for Slingshot-11 networks.
+Performance tuning for the libfabric transport is ongoing.
+# Added collective algorithms for bcast/fcollect/reduce that use low latency (LL)
+optimization by sending data and synchronization together, resulting in
+significant performance improvements.
+# Added warp- and block-scope implementation of recursice exchange algorithm for
+reduce collective 
+# Fixed bug in host/on-stream RMA API for very large data transfers
+# Fixed bug in implementation of nvshmem_fence and nvshmemx_quiet_on_stream API
+
+===============================================================================
 				Changes in 2.5.0
 ===============================================================================
 
@@ -26,7 +44,6 @@ application
 point-to-point operations
 # Updated descriptions for NVSHMEM environment variables displayed via
 nvshmem-info or by setting NVSHMEM_INFO=1
-# Added symmetric size check to NVSHMEM memory allocation functions
 
 ===============================================================================
 				Changes in 2.4.1

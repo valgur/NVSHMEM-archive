@@ -82,11 +82,12 @@ void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {
             if (j == NVSHMEM_TRANSPORT_ID_IBRC ||
                 j == NVSHMEM_TRANSPORT_ID_UCX ||
                 j == NVSHMEM_TRANSPORT_ID_IBDEVX ||
-                j == NVSHMEM_TRANSPORT_ID_FABRIC) {
-				nvshmemi_call_proxy_quiet_entrypoint(cstrm);
+                j == NVSHMEM_TRANSPORT_ID_FABRIC)
+            {
+                nvshmemi_call_proxy_quiet_entrypoint(cstrm);
             }
-            tbitmap >>= 1;
         }
+        tbitmap >>= 1;
     }
 
     return;

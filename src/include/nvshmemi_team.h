@@ -15,6 +15,7 @@
 extern nvshmemi_team_t nvshmemi_team_world;
 extern nvshmemi_team_t nvshmemi_team_shared;
 extern nvshmemi_team_t nvshmemi_team_node;
+extern nvshmemi_team_t nvshmemi_team_same_mype_node;
 extern nvshmemi_team_t nvshmemi_team_same_gpu;
 extern nvshmemi_team_t nvshmemi_team_gpu_leaders;
 extern nvshmemi_team_t **nvshmemi_team_pool;
@@ -23,7 +24,7 @@ enum nvshmemi_team_op_t {
     SYNC = 0,
     ALLTOALL,
     BCAST,
-    COLLECT,
+    FCOLLECT,
     REDUCE
 };
 typedef enum nvshmemi_team_op_t nvshmemi_team_op_t;

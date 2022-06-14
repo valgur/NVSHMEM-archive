@@ -76,6 +76,7 @@ typedef struct rma_verb {
 
 typedef struct rma_memdesc {
     void *ptr;
+    uint64_t offset;
     nvshmem_mem_handle_t *handle;
 } rma_memdesc_t;
 
@@ -113,6 +114,7 @@ typedef struct amo_verb {
 
 typedef struct amo_memdesc {
     void *ptr;
+    uint64_t offset;
     uint64_t retflag;
     void *retptr;
     void *valptr;

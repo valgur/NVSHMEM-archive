@@ -249,7 +249,7 @@ int nvshmemi_setup_local_heap(nvshmemi_state_t *state) {
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                      "cuPointerSetAttribute failed \n");
 
-        INFO(NVSHMEM_INIT, "[%d] heap baseE: %p NVSHMEM_SYMMETRIC_SIZE %lu total %lu heapextra %lu",
+        INFO(NVSHMEM_INIT, "[%d] heap base: %p NVSHMEM_SYMMETRIC_SIZE %lu total %lu heapextra %lu",
              state->mype, state->heap_base, nvshmemi_options.SYMMETRIC_SIZE, state->heap_size,
              heapextra);
 
@@ -265,10 +265,28 @@ out:
     return status;
 }
 
-int nvshmemi_gather_mem_handles(nvshmem_mem_handle_t *local_handles, nvshmemi_state_t *state) {
+#ifdef NVSHMEM_GPUINITIATED_SUPPORT
+int nvshmemi_gather_mem_handles(nvshmem_mem_handle_t *local_handles, nvshmemi_state_t *state, uint64_t heap_offset, size_t size) 
+#else
+int nvshmemi_gather_mem_handles(nvshmem_mem_handle_t *local_handles, nvshmemi_state_t *state) 
+#endif
+{
     int status = nvshmemi_boot_handle.allgather(
         (void *)local_handles, (void *)(state->handles.back().data()),
         sizeof(nvshmem_mem_handle_t) * NVSHMEM_TRANSPORT_COUNT, &nvshmemi_boot_handle);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of mem handles failed \n");
+
+    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+    for (int i = 0; i < NVSHMEM_TRANSPORT_COUNT; ++i) {
+        nvshmem_transport_t tcurr = state->transports[i];
+        if ((state->transport_bitmap & (1 << i)) && tcurr->host_ops.add_device_remote_mem_handles) {
+            status = tcurr->host_ops.add_device_remote_mem_handles(tcurr, i, state->handles.back().data(), heap_offset, size);
+            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "add_device_remote_mem_handles failed \n");
+        }
+    }
+    #endif
+
+out:
     return status;
 }
 
@@ -298,7 +316,11 @@ int nvshmemi_setup_symmetric_heap(nvshmemi_state_t *state) {
         }
     
         state->handles.push_back(vector<nvshmem_mem_handle_t>(NVSHMEM_TRANSPORT_COUNT * state->npes));
+        #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+        status = nvshmemi_gather_mem_handles(local_handles, state, 0, state->heap_size);
+        #else
         status = nvshmemi_gather_mem_handles(local_handles, state);
+        #endif
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of mem handles failed \n");
     }
 
@@ -446,7 +468,11 @@ int nvshmemi_add_physical_memory(size_t size) {
     }
 
     state->handles.push_back(vector<nvshmem_mem_handle_t>(NVSHMEM_TRANSPORT_COUNT * state->npes));
+    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+    status = nvshmemi_gather_mem_handles(local_handles, state, state->physical_heap_size, size);
+    #else
     status = nvshmemi_gather_mem_handles(local_handles, state);
+    #endif
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of mem handles failed \n");
 
     /* Now setup symmetric heap */
@@ -714,7 +740,12 @@ static struct nvshmem_transport *nvshmemi_get_remote_transport() {
         t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_IBDEVX];
     } else if (nvshmemi_state->transport_bitmap & (1 << NVSHMEM_TRANSPORT_ID_FABRIC)) {
         t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_FABRIC];
+    } 
+    #if NVSHMEM_GPUINITIATED_SUPPORT
+    else if (nvshmemi_state->transport_bitmap & (1 << NVSHMEM_TRANSPORT_ID_GIC)) {
+        t = nvshmemi_state->transports[NVSHMEM_TRANSPORT_ID_GIC];
     }
+    #endif
 
     return t;
 }

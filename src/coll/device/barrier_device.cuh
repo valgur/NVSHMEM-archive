@@ -10,6 +10,7 @@
 #include "nvshmemi_util.h"
 #include "nvshmemi_coll.h"
 #include "nvshmem_common.cuh"
+#include "nvshmemi_transfer.h"
 #include "gpu_coll.h"
 
 #ifdef __CUDA_ARCH__
@@ -178,7 +179,7 @@ __device__ void nvshmemi_barrier_threadgroup(nvshmem_team_t team) {
 
     if (!myIdx) {
         if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_PROXY)
-            nvshmemi_proxy_enforce_consistency_at_target(false);
+            nvshmemi_transfer_enforce_consistency_at_target(false);
     }
     nvshmemi_threadgroup_sync<SCOPE>();
 }

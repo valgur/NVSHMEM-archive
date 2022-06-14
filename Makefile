@@ -105,6 +105,15 @@ CXXFLAGS  += -DNVSHMEM_IBDEVX_SUPPORT
 NVCUFLAGS += -DNVSHMEM_IBDEVX_SUPPORT
 endif
 
+ifeq ($(NVSHMEM_GPUINITIATED_SUPPORT), 1)
+CXXFLAGS  += -DNVSHMEM_GPUINITIATED_SUPPORT
+NVCUFLAGS += -DNVSHMEM_GPUINITIATED_SUPPORT
+ifeq ($(NVSHMEM_DEBUG), 1)
+CXXFLAGS  += -DNVSHMEM_GPUINITIATED_DEBUG
+NVCUFLAGS += -DNVSHMEM_GPUINITIATED_DEBUG
+endif
+endif
+
 ifeq ($(NVSHMEM_USE_GDRCOPY), 1)
 CXXFLAGS  += -I$(GDRCOPY_HOME)/include -DNVSHMEM_USE_GDRCOPY
 NVCUFLAGS += -I$(GDRCOPY_HOME)/include -DNVSHMEM_USE_GDRCOPY
@@ -194,6 +203,7 @@ INCEXPORTS := nvshmem.h \
               nvshmem_defines.h \
               nvshmem_types.h \
               nvshmemi_util.h \
+              nvshmemi_transfer.h \
               nvshmemx.h \
               nvshmemx_api.h \
               nvshmemx_coll_api.h \
@@ -210,6 +220,8 @@ PLUGINEXPORTS := src/bootstrap/bootstrap_pmix.c \
 HOSTLIBSRCFILES := bootstrap/bootstrap.cpp \
                bootstrap/bootstrap_loader.cpp
 
+HOSTLIBSRCFILES += comm/transports/common/transport_common.cpp
+
 ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
 HOSTLIBSRCFILES += comm/transports/ucx/ucx.cpp
 endif
@@ -218,6 +230,11 @@ HOSTLIBSRCFILES += comm/transports/ibrc/ibrc.cpp
 endif
 ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
 HOSTLIBSRCFILES += comm/transports/ibdevx/ibdevx.cpp
+endif
+ifeq ($(NVSHMEM_GPUINITIATED_SUPPORT), 1)
+HOSTLIBSRCFILES += comm/transports/gic/gic.cpp
+DEVICELIBSRCFILES += comm/device/gic_device.cu
+INCEXPORTS += nvshmemi_gic.h
 endif
 ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
 HOSTLIBSRCFILES += comm/transports/libfabric/libfabric.cpp
@@ -263,9 +280,11 @@ DEVICELIBSRCFILES += coll/device/alltoall.cu \
                      coll/device/gpu_coll.cu \
                      coll/device/gpu_coll_dev.cu \
                      coll/device/recexchalgo.cu \
-                     coll/device/rdxn.cu \
-                     coll/device/rdxn_threadgroup.cu \
+                     coll/device/rdxn_thread.cu \
+                     coll/device/rdxn_warp.cu \
+                     coll/device/rdxn_block.cu \
                      comm/device/proxy_device.cu \
+                     comm/device/transfer_device.cu \
                      launch/collective_launch_device.cu \
                      init/init_device.cu \
                      init/query_device.cu \
@@ -312,7 +331,7 @@ DEVICELIBOBJ    := $(patsubst %.cu, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cu, $(DEVI
 DEVICELIBOBJ_NOMAXRREGCOUNT = $(patsubst %.cu, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cu, $(DEVICELIBSRCFILES_NOMAXRREGCOUNT)))
 DEVICELIBOBJ_NOMAXRREGCOUNT += $(patsubst %.cpp, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cpp, $(DEVICELIBSRCFILES_NOMAXRREGCOUNT)))
 
-LIBINC     := -Isrc/include -Isrc/util -Isrc/bootstrap -Isrc/comm -Isrc/coll/host -Isrc/coll/device -Isrc/coll -Isrc/topo
+LIBINC     := -Isrc/include -Isrc/util -Isrc/bootstrap -Isrc/comm/transports/common -Isrc/coll/host -Isrc/coll/device -Isrc/coll -Isrc/topo
 LIBINC     += -Isrc/pmi/pmi-2 -Isrc/pmi/simple-pmi -I$(INCDIR)
 
 PLUGINEXPORTTARGETS := $(addprefix $(PLUGINSDIR)/, $(notdir $(PLUGINEXPORTS)))

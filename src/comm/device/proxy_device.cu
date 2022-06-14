@@ -36,20 +36,7 @@
 #include "../proxy/proxy.h"
 #include "nvshmem_internal.h"
 #include "nvshmemx_error.h"
-
-#define NTOH64(x) *x = ((*(x) & 0xFF00000000000000) >> 56 | \
-                       (*(x) & 0x00FF000000000000) >> 40 | \
-                       (*(x) & 0x0000FF0000000000) >> 24 | \
-                       (*(x) & 0x000000FF00000000) >> 8 | \
-                       (*(x) & 0x00000000FF000000) << 8 | \
-                       (*(x) & 0x0000000000FF0000) << 24 | \
-                       (*(x) & 0x000000000000FF00) << 40 | \
-                       (*(x) & 0x00000000000000FF) << 56)
-
-#define NTOH32(x) *x = ((*(x) & 0xFF000000) >> 24 | \
-                       (*(x) & 0x00FF0000) >> 8 | \
-                       (*(x) & 0x0000FF00) << 8 | \
-                       (*(x) & 0x000000FF) << 24)
+#include "utils.h"
 
 char *proxy_channel_g_buf;
 char *proxy_channel_g_coalescing_buf;

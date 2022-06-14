@@ -771,6 +771,7 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
         status = nvshmemi_setup_limited_mpg_support();
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mps setup failed \n");
     }
+    nvshmemi_set_device_state(&nvshmemi_device_state);
     nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
 
     nvshmemi_barrier_all();
@@ -1138,7 +1139,14 @@ int set_job_connectivity (nvshmemi_state_t *state) {
                 } else if (state->transports[j]->cap[i] &
                            (NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST | NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD)) {
                     peer_connectivity = std::min(peer_connectivity, (int)NVSHMEMI_JOB_GPU_LDST);
-                } else {
+                } 
+                #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+                else if (state->transports[j]->cap[i] &
+                           (NVSHMEM_TRANSPORT_CAP_GPU_WRITE | NVSHMEM_TRANSPORT_CAP_GPU_READ | NVSHMEM_TRANSPORT_CAP_GPU_ATOMICS)) {
+                    peer_connectivity = std::min(peer_connectivity, (int)NVSHMEMI_JOB_GIC);
+                } 
+                #endif
+                else {
                     peer_connectivity = std::min(peer_connectivity, (int)NVSHMEMI_JOB_GPU_PROXY);
                     enforce_cst = (void *)state->transports[j]->host_ops.enforce_cst_at_target;
                 }
@@ -1271,6 +1279,7 @@ int nvshmemi_init_device_state(nvshmemi_state_t *state) {
     CUDA_RUNTIME_CHECK(cudaMemset((void *)test_wait_any_start_idx_ptr, 0, sizeof(unsigned long long)));
 
     nvshmemi_device_state.test_wait_any_start_idx_ptr = test_wait_any_start_idx_ptr;
+
     nvshmemi_set_device_state(&nvshmemi_device_state);
 
 out:
