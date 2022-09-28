@@ -27,7 +27,8 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
     int status = 0;
     int found = 0;
     int p2p_connected = 0;
-    CUdevice peer_dev;
+    CUdevice peer_cudev;
+    int peer_devid;
     transport_p2p_state_t *p2p_state = (transport_p2p_state_t *)transport->state;
     int atomics_supported = 0;
     char remote_pcie_bus_id[NVSHMEM_PCIE_DBF_BUFFER_LEN];
@@ -52,12 +53,13 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
         goto out;
     }
 
-    /*find device with the give pcie id*/
+    /*find device with the given pcie id*/
     for (int j = 0; j < p2p_state->ndev; j++) {
         if ((p2p_state->pcie_ids[j].dev_id == peer_info->pcie_id.dev_id) &&
             (p2p_state->pcie_ids[j].bus_id == peer_info->pcie_id.bus_id) &&
             (p2p_state->pcie_ids[j].domain_id == peer_info->pcie_id.domain_id)) {
-            peer_dev = p2p_state->cudev[j];
+            peer_cudev = p2p_state->cudev[j];
+            peer_devid = p2p_state->devid[j];
             found = 1;
             break;
         }
@@ -119,24 +121,24 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
         }
     }
 
-    if (peer_dev == p2p_state->cudevice) { 
+    if (peer_cudev == p2p_state->cudevice) {
        *access = NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST | 
 	       	 NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ATOMICS;
        goto out;
     }
 
     //use CanAccessPeer if device is visible
-    status = cuDeviceCanAccessPeer(&p2p_connected, p2p_state->cudevice, peer_dev);
+    status = cudaDeviceCanAccessPeer(&p2p_connected, p2p_state->device_id, peer_devid);
     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuDeviceCanAccessPeer failed \n");
+                 "cudaDeviceCanAccessPeer failed \n");
 
     if (p2p_connected) {
         *access = NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST | 
 		  NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD;
-        status = cuDeviceGetP2PAttribute(&atomics_supported, CU_DEVICE_P2P_ATTRIBUTE_NATIVE_ATOMIC_SUPPORTED,
-                                         p2p_state->cudevice, peer_dev);
+        status = cudaDeviceGetP2PAttribute(&atomics_supported, cudaDevP2PAttrNativeAtomicSupported,
+                                         p2p_state->device_id, peer_devid);
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                     "cuDeviceGetP2PAttribute failed \n");
+                     "cudaDeviceGetP2PAttribute failed \n");
         if (atomics_supported) {
             *access |= NVSHMEM_TRANSPORT_CAP_MAP_GPU_ATOMICS;
         }
@@ -150,28 +152,28 @@ int nvshmemt_p2p_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
                                 nvshmem_mem_handle_t *mem_handle_in, void *buf, size_t length,
                                 nvshmem_transport_t transport, bool local_only) {
     int status = 0;
-#if CUDART_VERSION >= 11030
+#if CUDA_VERSION >= 11000
     if (nvshmemi_use_cuda_vmm) {
         CUmemGenericAllocationHandle *handle_in = reinterpret_cast<CUmemGenericAllocationHandle *>(mem_handle_in);
         static_assert(sizeof(CUmemGenericAllocationHandle) <= NVSHMEM_MEM_HANDLE_SIZE, \
                       "sizeof(CUmemGenericAllocationHandle) <= NVSHMEM_MEM_HANDLE_SIZE");
         INFO(NVSHMEM_TRANSPORT, "calling cuMemExportToShareableHandle on buf: %p size: %d", buf,
              length);
-        status = cuMemExportToShareableHandle((void *)mem_handle, *handle_in,
-                                              CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0);
+        status = CUPFN(cuMemExportToShareableHandle((void *)mem_handle, *handle_in,
+                                              CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0));
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemExportToShareableHandle failed \n");
     } else
 #endif
     {
-        CUipcMemHandle *ipc_handle = (CUipcMemHandle *)mem_handle;
+        cudaIpcMemHandle_t *ipc_handle = (cudaIpcMemHandle_t *)mem_handle;
 
-        assert(sizeof(CUipcMemHandle) <= NVSHMEM_MEM_HANDLE_SIZE);
+        assert(sizeof(cudaIpcMemHandle_t) <= NVSHMEM_MEM_HANDLE_SIZE);
 
         INFO(NVSHMEM_TRANSPORT, "calling cuIpcGetMemHandle on buf: %p size: %zu", buf, length);
 
-        status = cuIpcGetMemHandle(ipc_handle, (CUdeviceptr)buf);
+        status = cudaIpcGetMemHandle(ipc_handle, buf);
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                     "cuIpcGetMemHandle failed \n");
+                     "cudaIpcGetMemHandle failed \n");
     }
 out:
     return status;
@@ -184,32 +186,32 @@ int nvshmemt_p2p_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_tr
 
 int nvshmemt_p2p_map(void **buf, size_t size, nvshmem_mem_handle_t *mem_handle) {
     int status = 0;
-#if CUDART_VERSION >= 11030
+#if CUDA_VERSION >= 11000
     if (nvshmemi_use_cuda_vmm) {
         CUmemGenericAllocationHandle peer_handle;
         CUmemAccessDesc access;
         int fd = *(int *)mem_handle;
-        status = cuMemImportFromShareableHandle(&peer_handle, (void *)(uintptr_t)fd,
-                                                CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR);
+        status = CUPFN(cuMemImportFromShareableHandle(&peer_handle, (void *)(uintptr_t)fd,
+                                                CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                      "cuMemImportFromShareableHandle failed state->device_id : %d \n",
                      nvshmemi_state->device_id);
 
-        status = cuMemMap((CUdeviceptr)*buf, size, 0, peer_handle, 0);
+        status = CUPFN(cuMemMap((CUdeviceptr)*buf, size, 0, peer_handle, 0));
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemMap failed to map %ld bytes handle at address: %p\n", size, *buf);
         access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
         access.location.id = nvshmemi_state->device_id;
         access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-        status = cuMemSetAccess((CUdeviceptr)*buf, size, (const CUmemAccessDesc *)&access, 1);
+        status = CUPFN(cuMemSetAccess((CUdeviceptr)*buf, size, (const CUmemAccessDesc *)&access, 1));
     } else
 #endif
     {
-        CUipcMemHandle *ipc_handle = (CUipcMemHandle *)mem_handle;
+        cudaIpcMemHandle_t *ipc_handle = (cudaIpcMemHandle_t *)mem_handle;
 
         status =
-            cuIpcOpenMemHandle((CUdeviceptr *)buf, *ipc_handle, CU_IPC_MEM_LAZY_ENABLE_PEER_ACCESS);
+            cudaIpcOpenMemHandle(buf, *ipc_handle, cudaIpcMemLazyEnablePeerAccess);
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                     "cuIpcOpenMemHandle failed with error %d \n", status);
+                     "cudaIpcOpenMemHandle failed with error %d \n", status);
     }
 out:
     return status;
@@ -218,17 +220,17 @@ out:
 int nvshmemt_p2p_unmap(void *buf, size_t size) {
     int status = 0;
 
-#if CUDART_VERSION >= 11030
+#if CUDA_VERSION >= 11000
     if (nvshmemi_use_cuda_vmm) {
-        status = cuMemUnmap((CUdeviceptr)buf, size);
+        status = CUPFN(cuMemUnmap((CUdeviceptr)buf, size));
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INVALID_VALUE, out,
                      "cuMemUnmap failed with error %d \n", status);
     } else
 #endif
     {
-        status = cuIpcCloseMemHandle((CUdeviceptr)buf);
+        status = cudaIpcCloseMemHandle(buf);
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                     "cuIpcCloseMemHandle failed with error %d \n", status);
+                     "cudaIpcCloseMemHandle failed with error %d \n", status);
     }
 out:
     return status;
@@ -276,16 +278,20 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
     NULL_ERROR_JMP(p2p_state, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                    "p2p state allocation failed \n");
 
-    status = cuCtxGetDevice(&p2p_state->cudevice);
+    status = CUPFN(cuCtxGetDevice(&p2p_state->cudevice));
     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuCtxGetDevice failed \n");
 
     p2p_state->hostHash = getHostHash();
 
-    status = cuDeviceGetCount(&p2p_state->ndev);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuDeviceGetCount failed \n");
+    status = cudaGetDeviceCount(&p2p_state->ndev);
+    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cudaGetDeviceCount failed \n");
 
     p2p_state->cudev = (CUdevice *)malloc(sizeof(CUdevice) * p2p_state->ndev);
     NULL_ERROR_JMP(p2p_state->cudev, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                   "p2p dev array allocation failed \n");
+
+    p2p_state->devid = (int *)malloc(sizeof(int) * p2p_state->ndev);
+    NULL_ERROR_JMP(p2p_state->devid, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                    "p2p dev array allocation failed \n");
 
     p2p_state->pcie_ids = (pcie_id_t *)malloc(sizeof(pcie_id_t) * p2p_state->ndev);
@@ -293,10 +299,12 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
                    "p2p pcie_ids array allocation failed \n");
 
     for (int i = 0; i < p2p_state->ndev; i++) {
-        status = cuDeviceGet(&p2p_state->cudev[i], i);
+        status = CUPFN(cuDeviceGet(&p2p_state->cudev[i], i));
         NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuDeviceGet failed \n");
+        p2p_state->devid[i] = i;
 
         if (p2p_state->cudev[i] == p2p_state->cudevice) {
+            p2p_state->device_id = i;
             cudaDeviceProp prop;
             cudaGetDeviceProperties(&prop, i);
             NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cudaGetDeviceProperties failed \n");

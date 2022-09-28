@@ -8,13 +8,11 @@
 #include "nvshmem_internal.h"
 #include "nvshmemi_gic.h"
 #include "transport_common.h"
+#include "transport_ib_common.h"
 #include "nvshmemx_error.h"
 #include "topo.h"
 
 #include "infiniband/verbs.h"
-#include "mlx5_ifc.h"
-#include "mlx5_prm.h"
-#include "infiniband/mlx5dv.h"
 
 #include <string>
 #include <cctype>
@@ -46,6 +44,8 @@
 #define GIC_SRQ_TYPE_VALUE 0x1
 
 #define GIC_LOG_MAX_MSG_SIZE 30    // 30 is max allowed on IB QPs
+
+#define GIC_GRH_HOP_LIMIT 255
 
 #define GIC_GPAGE_BITS 16
 #define GIC_GPAGE_SIZE (1ULL << GIC_GPAGE_BITS)
@@ -79,6 +79,9 @@ inline T GIC_ILOG2(T _n) {
 #define GIC_ILOG2_OR0(_n)                                   \
     ( ((_n) == 0) ? 0 : GIC_ILOG2(_n) )
 
+#define GIC_MIN(_x, _y) ( (_x) < (_y) ? (_x) : (_y) )
+#define GIC_MAX(_x, _y) ( (_x) > (_y) ? (_x) : (_y) )
+
 enum {
     GIC_MLX5_QPC_ST_DCI = 0x5
 };
@@ -104,12 +107,12 @@ struct gic_mem_object {
     gic_mem_type_t         mem_type;
     struct {
         void                   *cpu_ptr;
-        CUdeviceptr             gpu_ptr;
+        void                   *gpu_ptr;
         size_t                  size;
     } base;
     struct {
         void                   *cpu_ptr;
-        CUdeviceptr             gpu_ptr;
+        void                   *gpu_ptr;
         size_t                  size;
     } aligned;
     union {
@@ -136,7 +139,7 @@ struct gic_cq {
 };
 
 struct gic_ep {
-    gic_qp_type_t              qp_type;
+    gic_qp_type_t                   qp_type;
 
     union {
         struct mlx5dv_devx_obj     *devx_qp;
@@ -150,23 +153,18 @@ struct gic_ep {
     size_t                          rq_cnt;
     off_t                           rq_buf_offset;
 
-    struct gic_mem_object     *wq_mobject;
-    struct gic_mem_object     *dbr_mobject;
-    struct gic_mem_object     *bf_mobject;
+    struct gic_mem_object          *wq_mobject;
+    struct gic_mem_object          *dbr_mobject;
+    struct gic_mem_object          *bf_mobject;
 
-    struct gic_cq             *send_cq;    // Valid only on DCI
+    struct gic_cq                  *send_cq;    // Valid only on DCI
 
-    uint8_t                         sl;
-    uint16_t                        lid;
-    uint64_t                        spn;
-    uint64_t                        iid;
     uint32_t                        user_index;
 };
 
-struct gic_mem_handle {
-    uint32_t lkey;
-    uint32_t rkey;
-    ibv_mr *mr;
+struct gic_dct_handle {
+    nvshmemi_gic_device_dct_t dev_dct;
+    bool support_half_av_seg;
 };
 
 struct gic_device {
@@ -178,16 +176,20 @@ struct gic_device {
     union ibv_gid gid[MAX_NUM_PORTS];
     struct {
         int num_eps;
-        struct gic_ep **eps;
-        nvshmemi_gic_device_dct_t *dct_handles;
-        struct ibv_pd *pd;  /* parent domain */
-        struct ibv_srq *srq;
-        struct ibv_cq *send_cq;
-        struct ibv_cq *recv_cq;
+        struct gic_ep             **eps;
+        struct gic_dct_handle      *dct_handles;
+        struct ibv_pd              *pd;  /* parent domain */
+        struct ibv_srq             *srq;
+        struct ibv_cq              *send_cq;
+        struct ibv_cq              *recv_cq;
+        struct ibv_ah              *ah;
+        struct mlx5dv_ah            dah;
+        struct ibv_ah_attr          ah_attr;
     } dct;
     struct {
         int num_eps;
-        int num_eps_per_sm;
+        int num_shared_eps;
+        nvshmemi_gic_device_dci_map_type_t map_by;
         struct gic_ep **eps;
         struct ibv_srq *srq;
         struct ibv_cq *recv_cq;
@@ -196,12 +198,13 @@ struct gic_device {
         int rcqn;
         struct {
             struct gic_mem_object *mem_object;
-            struct gic_mem_handle *mem_handle;
+            struct nvshmemt_ib_common_mem_handle *mem_handle;
             size_t size_per_ep;
         } internal_buf;
     } dci;
     bool support_nic_buf_on_gpumem;
     bool support_nic_buf_on_hostmem;
+    bool support_half_av_seg;
 };
 
 typedef struct {
@@ -210,29 +213,65 @@ typedef struct {
     int    *port_ids;
     int     n_dev_ids;
     int     selected_dev_id;
+    bool    dmabuf_support;
 } nvshmemt_gic_state_t;
 
-struct gic_device_mhandle_cache {
-    nvshmemi_gic_device_mhandle_t mhandle;
-    CUdeviceptr dev_ptr;
+struct gic_device_local_only_mhandle_cache {
+    nvshmemi_gic_device_local_only_mhandle_t mhandle;
+    void *dev_ptr; // Ptr to GPU buffer that contains a copy of this mhandle. CPU cannot dereference.
 };
 
-// CPU cannot dereference this ptr
-static nvshmemi_gic_device_state_t *gic_device_state_d = NULL;
+// CPU cannot dereference next
+static std::vector<struct gic_device_local_only_mhandle_cache> gic_device_local_only_mhandles;
 
-// CPU cannot dereference next and rkeys
-static std::vector<struct gic_device_mhandle_cache> gic_device_local_mhandles;
-static std::vector<struct gic_device_mhandle_cache> gic_device_remote_mhandles;
+static std::vector<__be32> gic_device_lkeys;
+static std::vector<__be32> gic_device_rkeys;
+
+// Ptr to GPU buffer. CPU cannot dereference.
+static void *gic_device_lkeys_d = 0;
+static void *gic_device_rkeys_d = 0;
 
 /* transport constants */
-int gic_qp_depth;
-int gic_srq_depth;
+static int gic_qp_depth;
+static int gic_srq_depth;
+static int gic_num_requests_in_batch;
+static int gic_num_fetch_slots_per_dci;
 
 /* ibv state */
 static struct nvshmemt_ibv_function_table ftable;
 static void *ibv_handle;
 
 static gic_mem_type_t gic_nic_buf_location;
+
+static int gic_parse_dci_map_by(nvshmemi_gic_device_dci_map_type_t *out_map_by, const char *str) {
+    int status = 0;
+    nvshmemi_gic_device_dci_map_type_t map_by;
+    std::string req = str;
+
+    // Trim whitespace
+    req.erase(std::remove_if(req.begin(), req.end(), ::isspace), req.end());
+
+    // To lower case
+    std::for_each(req.begin(), req.end(), [](auto &c) { c = ::tolower(c); });
+
+    if (req == "cta") {
+        map_by = NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_CTA;
+    } else if (req == "sm") {
+        map_by = NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_SM;
+    } else if (req == "warp") {
+        map_by = NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_WARP;
+    } else if (req == "dct") {
+        map_by = NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_DCT;
+    } else {
+        status = NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    if (status == 0) {
+        *out_map_by = map_by;
+    }
+
+    return status;
+}
 
 int nvshmemt_gic_progress(nvshmem_transport_t t) {
     /* TODO: Implement me. Here we need to check for errors from the device */
@@ -244,8 +283,8 @@ int nvshmemt_gic_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
     for (int i = 0; i < npes; ++i) {
         INFO(NVSHMEM_TRANSPORT, "[%d] mem_handle %d : %p", mype, transport_id,
              &mem_handles[i * transport_count + transport_id]);
-        struct gic_mem_handle *mem_handle =
-            (struct gic_mem_handle *)&mem_handles[i * transport_count + transport_id];
+        struct nvshmemt_ib_common_mem_handle *mem_handle =
+            (struct nvshmemt_ib_common_mem_handle *)&mem_handles[i * transport_count + transport_id];
         INFO(NVSHMEM_TRANSPORT, "[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey,
              mem_handle->rkey, mem_handle->mr);
     }
@@ -297,75 +336,138 @@ int nvshmemt_gic_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
 }
 
 int nvshmemt_gic_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
-                                 nvshmem_mem_handle_t *mem_handle_in, void *buf, size_t length,
-                                 nvshmem_transport_t t, bool local_only) {
+                                nvshmem_mem_handle_t *mem_handle_in, void *buf, size_t length,
+                                nvshmem_transport_t t, bool local_only) {
     int status = 0;
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
     nvshmemt_gic_state_t *gic_state = (nvshmemt_gic_state_t *)transport->state;
     struct gic_device *device =
         ((struct gic_device *)gic_state->devices + gic_state->dev_ids[gic_state->selected_dev_id]);
-    struct gic_mem_handle *handle = (struct gic_mem_handle *)mem_handle;
 
-    struct ibv_mr *mr = NULL;
+    __be32 device_lkey;
+    struct nvshmemt_ib_common_mem_handle *handle;
 
-    struct gic_device_mhandle_cache device_mhandle_cache;
-    nvshmemi_gic_device_mhandle_t *device_mhandle_h = &device_mhandle_cache.mhandle;
-    nvshmemi_gic_device_mhandle_t *device_mhandle_d = NULL;
+    nvshmemi_gic_device_local_only_mhandle_t *device_mhandle_d = NULL;
+    bool did_emplace = false;
 
-    CUdeviceptr mhandle_gpu_ptr;
+    nvshmemi_gic_device_state_t *gic_device_state;
+    nvshmemx_gic_get_device_state(&gic_device_state);
 
-    assert(sizeof(struct gic_mem_handle) <= NVSHMEM_MEM_HANDLE_SIZE);
+    memset((void *)mem_handle, 0, sizeof(*mem_handle));
+    status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf,
+                                               length, local_only, gic_state->dmabuf_support);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to register memory handle.");
 
-    status = cuMemAlloc((CUdeviceptr *)&device_mhandle_d, sizeof(*device_mhandle_d));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cuMemAlloc failed.\n");
+    handle = (struct nvshmemt_ib_common_mem_handle *)mem_handle;
+    device_lkey = htobe32(handle->lkey);
 
-    mr = ftable.reg_mr(device->pd, buf, length,
-                       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                           IBV_ACCESS_REMOTE_ATOMIC);
-    NULL_ERROR_JMP(mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "mem registration failed \n");
+    if (local_only) {
+        struct gic_device_local_only_mhandle_cache device_mhandle_cache;
+        nvshmemi_gic_device_local_only_mhandle_t *device_mhandle_h = &device_mhandle_cache.mhandle;
 
-    handle->lkey = mr->lkey;
-    handle->rkey = mr->rkey;
-    handle->mr = mr;
-    INFO(NVSHMEM_TRANSPORT, "ibv_reg_mr handle %p handle->mr %p", handle, handle->mr);
+        void *mhandle_gpu_ptr;
 
-    device_mhandle_h->lkey = htobe32(mr->lkey);
-    device_mhandle_h->start = (uint64_t)buf;
-    device_mhandle_h->end = (uint64_t)buf + length - 1;
-    device_mhandle_h->next = NULL;
+        status = cudaMalloc((void **)&device_mhandle_d, sizeof(*device_mhandle_d));
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cudaMalloc failed.\n");
 
-    status = cuMemcpyHtoDAsync((CUdeviceptr)device_mhandle_d,
-                               (const void *)device_mhandle_h,
-                               sizeof(*device_mhandle_d), 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Copying device_mhandle to GPU memory failed.\n");
+        device_mhandle_h->lkey = device_lkey;
+        device_mhandle_h->start = (uint64_t)buf;
+        device_mhandle_h->end = (uint64_t)buf + length - 1;
+        device_mhandle_h->next = NULL;
 
-    device_mhandle_cache.dev_ptr = (CUdeviceptr)device_mhandle_d;
+        status = cudaMemcpyAsync((void *)device_mhandle_d,
+                                 (const void *)device_mhandle_h,
+                                 sizeof(*device_mhandle_d),
+                                 cudaMemcpyHostToDevice,
+                                 nvshmemi_state->my_stream);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "Copying device_mhandle to GPU memory failed.\n");
 
-    if (gic_device_local_mhandles.empty()) {
-        assert(gic_device_state_d != NULL);
+        device_mhandle_cache.dev_ptr = device_mhandle_d;
 
-        mhandle_gpu_ptr = (CUdeviceptr)gic_device_state_d + offsetof(nvshmemi_gic_device_state_t, local_mhandle_head);
+        if (gic_device_local_only_mhandles.empty()) {
+            gic_device_state->globalmem.local_only_mhandle_head = device_mhandle_d;
+        } else {
+            struct gic_device_local_only_mhandle_cache *last_mhandle_cache = &gic_device_local_only_mhandles.back();
+            mhandle_gpu_ptr = (void *)((uintptr_t)last_mhandle_cache->dev_ptr + offsetof(nvshmemi_gic_device_local_only_mhandle_t, next));
+            last_mhandle_cache->mhandle.next = device_mhandle_d;
+            status = cudaMemcpyAsync(mhandle_gpu_ptr,
+                                     (const void *)&device_mhandle_d,
+                                     sizeof(device_mhandle_d),
+                                     cudaMemcpyHostToDevice,
+                                     nvshmemi_state->my_stream);
+            NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "Setting local_only_mhandle in GPU memory failed.\n");
+        }
+
+        gic_device_local_only_mhandles.emplace_back(device_mhandle_cache);
+        did_emplace = true;
     } else {
-        struct gic_device_mhandle_cache *last_mhandle_cache = &gic_device_local_mhandles.back();
-        mhandle_gpu_ptr = last_mhandle_cache->dev_ptr + offsetof(nvshmemi_gic_device_mhandle_t, next);
-        last_mhandle_cache->mhandle.next = device_mhandle_d;
+        size_t num_lkeys;
+        if (nvshmemi_use_cuda_vmm) {
+            size_t num_elements;
+            // length must be divisible by cumem_granularity, which is a power of 2.
+            assert((length & (cumem_granularity - 1)) == 0);
+
+            num_elements = length >> log2_cumem_granularity;
+            while (num_elements > 0) {
+                gic_device_lkeys.emplace_back(device_lkey);
+                --num_elements;
+            }
+        } else {
+            // If VMM is not used, there should be at most one registration for symmetric heap.
+            assert(gic_device_lkeys.empty());
+
+            gic_device_lkeys.emplace_back(device_lkey);
+        }
+        did_emplace = true;
+
+        if (gic_device_lkeys_d) {
+            status = cudaFree(gic_device_lkeys_d);
+            NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaFree failed.\n");
+            gic_device_lkeys_d = 0;
+        }
+
+        num_lkeys = gic_device_lkeys.size();
+
+        // Put lkeys in constant memory first for cache optimization
+        memcpy(gic_device_state->constmem.lkeys, gic_device_lkeys.data(), num_lkeys * sizeof(__be32));
+
+        // If we have overflow, put the rest in global memory
+        if (num_lkeys > NVSHMEMI_GIC_MAX_CONST_LKEYS) {
+            size_t lkeys_array_size = sizeof(__be32) * (num_lkeys - NVSHMEMI_GIC_MAX_CONST_LKEYS);
+            __be32 *data_ptr = &gic_device_lkeys.data()[NVSHMEMI_GIC_MAX_CONST_LKEYS];
+
+            status = cudaMalloc(&gic_device_lkeys_d, lkeys_array_size);
+            NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cudaMalloc failed.\n");
+
+            status = cudaMemcpyAsync(gic_device_lkeys_d,
+                                     (const void *)data_ptr,
+                                     lkeys_array_size,
+                                     cudaMemcpyHostToDevice,
+                                     nvshmemi_state->my_stream);
+            NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "Copying lkeys to GPU memory failed.\n");
+        }
+        gic_device_state->globalmem.lkeys = (__be32 *)gic_device_lkeys_d;
     }
-    status = cuMemcpyHtoDAsync(mhandle_gpu_ptr,
-                               (const void *)&device_mhandle_d,
-                               sizeof(device_mhandle_d), 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Setting local_mhandle_head in GPU memory failed.\n");
 
-    status = cuStreamSynchronize(nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "stream synchronize failed.\n");
+    status = cudaStreamSynchronize(nvshmemi_state->my_stream);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "stream synchronize failed.\n");
 
-    gic_device_local_mhandles.emplace_back(device_mhandle_cache);
+    status = nvshmemi_gic_set_device_state(gic_device_state);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmemi_gic_set_device_state failed.\n");
 
 out:
     if (status) {
-        if (device_mhandle_d) cuMemFree((CUdeviceptr)device_mhandle_d);
-        if (mr) ftable.dereg_mr(mr);
+        if (device_mhandle_d) cudaFree(device_mhandle_d);
+        if (did_emplace) {
+            if (local_only) {
+                // Recoverable
+                gic_device_local_only_mhandles.pop_back();
+            } else {
+                // Unrecoverable
+                gic_device_lkeys.clear();
+            }
+        }
+        nvshmemt_ib_common_release_mem_handle(&ftable, mem_handle);
     }
     return status;
 }
@@ -426,8 +528,8 @@ static int gic_gpu_mem_alloc(struct gic_mem_object **pmobject, size_t size, size
 
     int attr_val;
 
-    CUdeviceptr ptr = 0;
-    CUdeviceptr aligned_ptr;
+    void *ptr = 0;
+    void *aligned_ptr;
     size_t bufsize = size;
 
     struct gic_mem_object *mobject = (struct gic_mem_object *)calloc(1, sizeof(struct gic_mem_object));
@@ -436,18 +538,18 @@ static int gic_gpu_mem_alloc(struct gic_mem_object **pmobject, size_t size, size
     if (alignment > 0)
         bufsize = size + alignment - 1;
 
-    status = cuMemAlloc(&ptr, bufsize);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemAlloc failed.\n");
+    status = cudaMalloc(&ptr, bufsize);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaMalloc failed.\n");
 
     attr_val = 1;
-    status = cuPointerSetAttribute(&attr_val, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS, ptr);
+    status = CUPFN(cuPointerSetAttribute(&attr_val, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS, (CUdeviceptr)ptr));
     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuPointerSetAttribute failed.\n");
 
-    status = cuMemsetD8(ptr, 0, bufsize);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemsetD8 failed.\n");
+    status = cudaMemset(ptr, 0, bufsize);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaMemset failed.\n");
 
     if (alignment > 0) {
-        aligned_ptr = (ptr + alignment - 1) & (~(alignment - 1));
+        aligned_ptr = (void *)((size_t)((char *)ptr + alignment - 1) & (~(alignment - 1)));
     } else {
         aligned_ptr = ptr;
     }
@@ -469,8 +571,8 @@ static int gic_gpu_mem_alloc(struct gic_mem_object **pmobject, size_t size, size
 out:
     if (status) {
         if (ptr) {
-            CUresult _status = cuMemFree(ptr);
-            CUDA_DRIVER_ERROR_STRING(_status);
+            cudaError_t _status = cudaFree(ptr);
+            CUDA_RUNTIME_ERROR_STRING(_status);
         }
 
         if (mobject) free(mobject);
@@ -479,15 +581,15 @@ out:
 }
 
 static void gic_gpu_mem_free(struct gic_mem_object *mobject) {
-    CUresult status;
+    cudaError_t status;
 
     if (!mobject)
         return;
 
     assert(mobject->mem_type == GIC_MEM_TYPE_GPU);
 
-    status = cuMemFree(mobject->base.gpu_ptr);
-    CUDA_DRIVER_ERROR_STRING(status);
+    status = cudaFree(mobject->base.gpu_ptr);
+    CUDA_RUNTIME_ERROR_STRING(status);
 
     free(mobject);
 }
@@ -498,7 +600,7 @@ static int gic_host_mem_alloc(struct gic_mem_object **pmobject, size_t size, siz
     void *ptr = NULL;
 
     bool did_host_reg = false;
-    CUdeviceptr gpu_ptr;
+    void *gpu_ptr;
 
     struct gic_mem_object *mobject = (struct gic_mem_object *)calloc(1, sizeof(struct gic_mem_object));
     NULL_ERROR_JMP(mobject, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "Unable to allocate a new mobject.\n");
@@ -509,12 +611,12 @@ static int gic_host_mem_alloc(struct gic_mem_object **pmobject, size_t size, siz
     memset(ptr, 0, size);
 
     if (gpu_mapping) {
-        status = cuMemHostRegister(ptr, size, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP);
-        NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemsetD8 failed.\n");
+        status = cudaHostRegister(ptr, size, cudaHostRegisterPortable |  cudaHostRegisterMapped);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaHostRegister failed.\n");
         did_host_reg = true;
 
-        status = cuMemHostGetDevicePointer(&gpu_ptr, ptr, 0);
-        NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemHostGetDevicePointer failed.\n");
+        status = cudaHostGetDevicePointer(&gpu_ptr, ptr, 0);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaHostGetDevicePointer failed.\n");
 
         mobject->base.gpu_ptr = gpu_ptr;
         mobject->aligned.gpu_ptr = gpu_ptr;
@@ -534,8 +636,8 @@ static int gic_host_mem_alloc(struct gic_mem_object **pmobject, size_t size, siz
 out:
     if (status) {
         if (did_host_reg) {
-            CUresult _status = cuMemHostUnregister(ptr);
-            CUDA_DRIVER_ERROR_STRING(_status);
+            cudaError_t _status = cudaHostUnregister(ptr);
+            CUDA_RUNTIME_ERROR_STRING(_status);
         }
         if (ptr) free(ptr);
         if (mobject) free(mobject);
@@ -544,7 +646,7 @@ out:
 }
 
 static void gic_host_mem_free(struct gic_mem_object *mobject) {
-    CUresult status;
+    cudaError_t status;
 
     if (!mobject)
         return;
@@ -552,8 +654,8 @@ static void gic_host_mem_free(struct gic_mem_object *mobject) {
     assert(mobject->mem_type == GIC_MEM_TYPE_HOST);
 
     if (mobject->has_gpu_mapping) {
-        status = cuMemHostUnregister(mobject->base.cpu_ptr);
-        CUDA_DRIVER_ERROR_STRING(status);
+        status = cudaHostUnregister(mobject->base.cpu_ptr);
+        CUDA_RUNTIME_ERROR_STRING(status);
     }
 
     free(mobject->base.cpu_ptr);
@@ -565,17 +667,17 @@ static int gic_nic_mem_gpu_map(struct gic_mem_object **pmobject, struct mlx5dv_d
     int status = 0;
     bool did_host_reg = false;
 
-    CUdeviceptr ptr = 0;
+    void *ptr = 0;
 
     struct gic_mem_object *mobject = (struct gic_mem_object *)calloc(1, sizeof(struct gic_mem_object));
     NULL_ERROR_JMP(mobject, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "Unable to allocate a new mobject.\n");
 
-    status = cuMemHostRegister(uar->reg_addr, size, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP | CU_MEMHOSTREGISTER_IOMEMORY);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemHostRegister failed.\n");
+    status = cudaHostRegister(uar->reg_addr, size, cudaHostRegisterPortable | cudaHostRegisterMapped | cudaHostRegisterIoMemory);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaHostRegister failed.\n");
     did_host_reg = true;
 
-    status = cuMemHostGetDevicePointer(&ptr, uar->reg_addr, 0);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemHostGetDevicePointer failed.\n");
+    status = cudaHostGetDevicePointer(&ptr, uar->reg_addr, 0);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaHostGetDevicePointer failed.\n");
 
     mobject->mem_type = GIC_MEM_TYPE_NIC;
 
@@ -598,8 +700,8 @@ static int gic_nic_mem_gpu_map(struct gic_mem_object **pmobject, struct mlx5dv_d
 out:
     if (status) {
         if (did_host_reg) {
-            CUresult _status = cuMemHostUnregister(uar->reg_addr);
-            CUDA_DRIVER_ERROR_STRING(_status);
+            cudaError_t _status = cudaHostUnregister(uar->reg_addr);
+            CUDA_RUNTIME_ERROR_STRING(_status);
         }
         if (mobject) free(mobject);
     }
@@ -607,15 +709,15 @@ out:
 }
 
 static void gic_nic_mem_gpu_unmap(struct gic_mem_object *mobject) {
-    CUresult status;
+    cudaError_t status;
 
     if (!mobject)
         return;
 
     assert(mobject->mem_type == GIC_MEM_TYPE_NIC);
 
-    status = cuMemHostUnregister(mobject->uar->reg_addr);
-    CUDA_DRIVER_ERROR_STRING(status);
+    status = cudaHostUnregister(mobject->uar->reg_addr);
+    CUDA_RUNTIME_ERROR_STRING(status);
 
     free(mobject);
 }
@@ -668,8 +770,8 @@ static int gic_create_cq(struct gic_cq **pgcq, const struct gic_device *device, 
     status = gic_nic_control_alloc(&cq_mobject, cq_buf_size, GIC_GPAGE_SIZE);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cannot allocate cq buf.\n");
 
-    status = cuMemsetD8(cq_mobject->base.gpu_ptr, 0xff, cq_mobject->base.size);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuMemsetD8 failed.\n");
+    status = cudaMemset(cq_mobject->base.gpu_ptr, 0xff, cq_mobject->base.size);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaMemset failed.\n");
 
     status = gic_mobject_nic_map(cq_mobject, context, IBV_ACCESS_LOCAL_WRITE);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cannot register cq buf.\n");
@@ -700,6 +802,8 @@ static int gic_create_cq(struct gic_cq **pgcq, const struct gic_device *device, 
     cq_context = DEVX_ADDR_OF(create_cq_in, cmd_in, cq_context);
     DEVX_SET(cqc, cq_context, dbr_umem_valid, GIC_MLX5_UMEM_VALID_ENABLE);
     DEVX_SET(cqc, cq_context, cqe_sz, MLX5_CQE_SIZE_64B);
+    DEVX_SET(cqc, cq_context, cc, 0x1); // Use collapsed CQ
+    DEVX_SET(cqc, cq_context, oi, 0x1); // Allow overrun
     DEVX_SET(cqc, cq_context, dbr_umem_id, dbr_umem->umem_id);
     DEVX_SET(cqc, cq_context, log_cq_size, GIC_ILOG2_OR0(num_cqe));
     DEVX_SET(cqc, cq_context, uar_page, uar->page_id);
@@ -734,7 +838,6 @@ static void gic_destroy_cq(struct gic_cq *gcq) {
 }
 
 static void gic_get_device_cq(nvshmemi_gic_device_cq_t *dev_cq, const struct gic_cq *cq) {
-    dev_cq->lock = 0;
     dev_cq->cqn = cq->cqn;
     dev_cq->ncqes = cq->num_cqe;
 
@@ -802,7 +905,6 @@ static int gic_dci_init2rtr(struct gic_ep *ep, const struct gic_device *device, 
 
     if (port_attr->link_layer == IBV_LINK_LAYER_INFINIBAND) {
         DEVX_SET(qpc, qpc, primary_address_path.sl, nvshmemi_options.IB_SL);
-        ep->sl = nvshmemi_options.IB_SL;
     }
 
     if (port_attr->link_layer == IBV_LINK_LAYER_ETHERNET) {
@@ -848,7 +950,7 @@ out:
     return status;
 }
 
-static int gic_create_dci_shared_objects(struct gic_device *device) {
+static int gic_create_dci_shared_objects(nvshmemt_gic_state_t *gic_state, struct gic_device *device) {
     int status = 0;
 
     struct ibv_context *context = device->context;
@@ -870,11 +972,8 @@ static int gic_create_dci_shared_objects(struct gic_device *device) {
     int rcqn = 0;
 
     struct gic_mem_object *internal_buf_mobject = NULL;
-    struct gic_mem_handle *internal_buf_mhandle = NULL;
-    struct ibv_mr *internal_buf_mr = NULL;
+    struct nvshmemt_ib_common_mem_handle *internal_buf_mhandle = NULL;
     size_t internal_buf_size_per_ep = 0;
-
-    int warp_size;
 
     // Initialization
     memset(&srq_init_attr, 0, sizeof(srq_init_attr));
@@ -926,25 +1025,19 @@ static int gic_create_dci_shared_objects(struct gic_device *device) {
 
     rcqn = dvrcq.cqn;
 
-    status = cuDeviceGetAttribute(&warp_size, CU_DEVICE_ATTRIBUTE_WARP_SIZE, nvshmemi_state->cudevice);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuDeviceGetAttribute querying warp size failed.\n");
-
-    internal_buf_size_per_ep = sizeof(uint64_t) + NVSHMEMI_GIC_MAX_INLINE_SIZE * warp_size;
+    // First slot is reserved for non-fetch operations.
+    internal_buf_size_per_ep = NVSHMEMI_GIC_IBUF_SLOT_SIZE * (gic_num_fetch_slots_per_dci + 1);
     status = gic_gpu_mem_alloc(&internal_buf_mobject, internal_buf_size_per_ep * device->dci.num_eps, GIC_GPAGE_SIZE, false);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cannot allocate internal buffer.\n");
 
-    internal_buf_mhandle = (struct gic_mem_handle *)calloc(1, sizeof(*internal_buf_mhandle));
+    internal_buf_mhandle = (struct nvshmemt_ib_common_mem_handle *)calloc(1, sizeof(*internal_buf_mhandle));
     NULL_ERROR_JMP(internal_buf_mhandle, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "Unable to allocate internal_buf_mhandle.\n");
 
-    internal_buf_mr = ftable.reg_mr(device->pd, (void *)internal_buf_mobject->aligned.gpu_ptr, 
-        internal_buf_mobject->aligned.size,
-        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC
-    );
-    NULL_ERROR_JMP(internal_buf_mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "mem registration for internal buffer failed.\n");
-
-    internal_buf_mhandle->mr = internal_buf_mr;
-    internal_buf_mhandle->lkey = internal_buf_mr->lkey;
-    internal_buf_mhandle->rkey = internal_buf_mr->rkey;
+    status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, (nvshmem_mem_handle_t *)internal_buf_mhandle,
+                                              (void *)internal_buf_mobject->aligned.gpu_ptr,
+                                              internal_buf_mobject->aligned.size, false,
+                                              gic_state->dmabuf_support);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to register memory for GIC transport.\n");
 
     // Output
     device->dci.srq = srq;
@@ -958,8 +1051,10 @@ static int gic_create_dci_shared_objects(struct gic_device *device) {
 
 out:
     if (status) {
-        if (internal_buf_mr) ftable.dereg_mr(internal_buf_mr);
-        if (internal_buf_mhandle) free(internal_buf_mhandle);
+        if (internal_buf_mhandle) {
+            nvshmemt_ib_common_release_mem_handle(&ftable, (nvshmem_mem_handle_t *)internal_buf_mhandle);
+            free(internal_buf_mhandle);
+        }
         if (internal_buf_mobject) gic_gpu_mem_free(internal_buf_mobject);
         if (recv_cq) ftable.destroy_cq(recv_cq);
         if (srq) ftable.destroy_srq(srq);
@@ -996,11 +1091,9 @@ static int gic_create_dci(struct gic_ep **ep_ptr, struct gic_device *device, int
     int cqe_version = 0;
     int amo_endianness_mode;
 
-    const struct ibv_port_attr *port_attr = device->port_attr + (portid - 1);
-
     struct gic_cq *send_cq = NULL;
 
-    size_t num_wqebb = GIC_ROUND_UP_POW2_OR_0(NVSHMEMI_GIC_MAX_WQEBB_PER_WQE * gic_qp_depth);
+    size_t num_wqebb = GIC_ROUND_UP_POW2_OR_0(gic_qp_depth);
 
     int status = 0;
 
@@ -1116,7 +1209,6 @@ static int gic_create_dci(struct gic_ep **ep_ptr, struct gic_device *device, int
 
     ep->qp_type = GIC_QP_TYPE_DCI;
 
-    ep->lid = port_attr->lid;
     ep->user_index = dci_idx;
 
     *ep_ptr = ep;
@@ -1136,9 +1228,10 @@ out:
     return status;
 }
 
-static int gic_create_dct_shared_objects(struct gic_device *device) {
+static int gic_create_dct_shared_objects(struct gic_device *device, int portid) {
     int status = 0;
 
+    const struct ibv_port_attr *port_attr = device->port_attr + (portid - 1);
     struct ibv_context *context = device->context;
 
     struct ibv_pd *pd = NULL;
@@ -1149,6 +1242,31 @@ static int gic_create_dct_shared_objects(struct gic_device *device) {
 
     struct ibv_cq *send_cq = NULL;
     struct ibv_cq *recv_cq = NULL;
+
+    struct ibv_ah *ah = NULL;
+    struct mlx5dv_ah dah;
+    struct ibv_ah_attr ah_attr;
+    struct mlx5dv_obj dv;
+
+    bool support_half_av_seg;
+    int hca_support_compact_address_vector;
+
+    uint8_t cmd_cap_in[DEVX_ST_SZ_BYTES(query_hca_cap_in)] = {0,};
+    uint8_t cmd_cap_out[DEVX_ST_SZ_BYTES(query_hca_cap_out)] = {0,};
+    void *cap;
+
+    DEVX_SET(query_hca_cap_in, cmd_cap_in, opcode, MLX5_CMD_OP_QUERY_HCA_CAP);
+    DEVX_SET(query_hca_cap_in, cmd_cap_in, op_mod,
+        MLX5_SET_HCA_CAP_OP_MOD_GENERAL_DEVICE |
+        (MLX5_CAP_GENERAL << 1) |
+        HCA_CAP_OPMOD_GET_CUR
+    );
+
+    status = mlx5dv_devx_general_cmd(context, cmd_cap_in, sizeof(cmd_cap_in), cmd_cap_out, sizeof(cmd_cap_out));
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mlx5dv_devx_general_cmd for hca cap failed.\n");
+
+    cap = DEVX_ADDR_OF(query_hca_cap_out, cmd_cap_out, capability.cmd_hca_cap);
+    hca_support_compact_address_vector = DEVX_GET(cmd_hca_cap, cap, compact_address_vector);
 
     memset(&pd_init_attr, 0, sizeof(pd_init_attr));
     memset(&srq_init_attr, 0, sizeof(srq_init_attr));
@@ -1168,14 +1286,47 @@ static int gic_create_dct_shared_objects(struct gic_device *device) {
 
     recv_cq = ftable.create_cq(context, gic_srq_depth, NULL, NULL, 0);
     NULL_ERROR_JMP(recv_cq, status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_create_cq for recv_cq failed.\n");
+
+    if (port_attr->lid == 0) {
+        ah_attr.is_global = 1;
+        ah_attr.grh.dgid.global.subnet_prefix = device->gid[portid - 1].global.subnet_prefix;
+        ah_attr.grh.dgid.global.interface_id = device->gid[portid - 1].global.interface_id;
+        ah_attr.grh.flow_label = 0;
+        ah_attr.grh.sgid_index = nvshmemi_options.IB_GID_INDEX;
+        ah_attr.grh.traffic_class = nvshmemi_options.IB_TRAFFIC_CLASS;
+        ah_attr.grh.hop_limit = GIC_GRH_HOP_LIMIT;
+        support_half_av_seg = false;
+    } else {
+        // Only IB supports is_global = 0.
+        assert(port_attr->link_layer == IBV_LINK_LAYER_INFINIBAND);
+        ah_attr.dlid = port_attr->lid;
+        ah_attr.is_global = 0;
+        support_half_av_seg = hca_support_compact_address_vector;
+    }
+    ah_attr.sl = nvshmemi_options.IB_SL;
+    ah_attr.src_path_bits = 0;
+    ah_attr.port_num = portid;
+
+    ah = ftable.create_ah(device->pd, &ah_attr);
+    NULL_ERROR_JMP(ah, status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to create ah.\n");
+
+    dv.ah.in = ah;
+    dv.ah.out = &dah;
+    mlx5dv_init_obj(&dv, MLX5DV_OBJ_AH);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mlx5dv AH initialization failed.\n");
     
     device->dct.pd = pd;
     device->dct.srq = srq;
     device->dct.send_cq = send_cq;
     device->dct.recv_cq = recv_cq;
+    device->dct.ah = ah;
+    memcpy(&device->dct.dah, &dah, sizeof(dah));
+    memcpy(&device->dct.ah_attr, &ah_attr, sizeof(ah_attr));
+    device->support_half_av_seg = support_half_av_seg;
 
 out:
     if (status) {
+        if (ah) ftable.destroy_ah(ah);
         if (recv_cq) ftable.destroy_cq(recv_cq);
         if (send_cq) ftable.destroy_cq(send_cq);
         if (srq) ftable.destroy_srq(srq);
@@ -1194,9 +1345,6 @@ static int gic_create_dct(struct gic_ep **ep_ptr, const struct gic_device *devic
     struct ibv_qp_attr ib_qp_attr;
 
     const struct ibv_port_attr *port_attr = device->port_attr + (portid - 1);
-
-    uint64_t spn = 0;
-    uint64_t iid = 0;
 
     memset(&ib_qp_attr_ex, 0, sizeof(ib_qp_attr_ex));
     memset(&dv_init_attr, 0, sizeof(dv_init_attr));
@@ -1239,24 +1387,8 @@ static int gic_create_dct(struct gic_ep **ep_ptr, const struct gic_device *devic
     memset(&ib_qp_attr, 0, sizeof(ib_qp_attr));
     ib_qp_attr.qp_state                     = IBV_QPS_RTR;
     ib_qp_attr.path_mtu                     = port_attr->active_mtu;
-    if (port_attr->lid == 0) {
-        spn                                     = device->gid[portid - 1].global.subnet_prefix;
-        iid                                     = device->gid[portid - 1].global.interface_id;
-        ib_qp_attr.ah_attr.is_global            = 1;
-        ib_qp_attr.ah_attr.grh.dgid.global.subnet_prefix    = spn;
-        ib_qp_attr.ah_attr.grh.dgid.global.interface_id     = iid;
-        ib_qp_attr.ah_attr.grh.flow_label       = 0;
-        ib_qp_attr.ah_attr.grh.sgid_index       = nvshmemi_options.IB_GID_INDEX;
-        ib_qp_attr.ah_attr.grh.hop_limit        = 255;
-        ib_qp_attr.ah_attr.grh.traffic_class    = nvshmemi_options.IB_TRAFFIC_CLASS;
-    } else {
-        ib_qp_attr.ah_attr.dlid = port_attr->lid;
-        ib_qp_attr.ah_attr.is_global = 0;
-    }
-    ib_qp_attr.ah_attr.sl                   = nvshmemi_options.IB_SL;
-    ib_qp_attr.ah_attr.src_path_bits        = 0;
-    ib_qp_attr.ah_attr.port_num             = portid;
     ib_qp_attr.min_rnr_timer                = 12;
+    memcpy(&ib_qp_attr.ah_attr, &device->dct.ah_attr, sizeof(ib_qp_attr.ah_attr));
 
     status = ftable.modify_qp(ib_qp, &ib_qp_attr, IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_MIN_RNR_TIMER);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_modify_qp init2rtr for dct failed.\n");
@@ -1266,9 +1398,6 @@ static int gic_create_dct(struct gic_ep **ep_ptr, const struct gic_device *devic
     ep->ib_qp = ib_qp;
     ep->qpn = ib_qp->qp_num;
     ep->portid = portid;
-    ep->lid = port_attr->lid;
-    ep->spn = spn;
-    ep->iid = iid;
 
     *ep_ptr = ep;
 
@@ -1283,12 +1412,14 @@ out:
     return status;
 }
 
-static int gic_get_dct_handle(nvshmemi_gic_device_dct_t *dct_handle, const struct gic_ep *ep) {
+static int gic_get_dct_handle(struct gic_dct_handle *dct_handle, const struct gic_ep *ep, const struct gic_device *device) {
     assert(ep->qp_type == GIC_QP_TYPE_DCT);
 
-    dct_handle->qpn = ep->qpn;
-    dct_handle->access_key = GIC_DC_ACCESS_KEY;
-    dct_handle->lid = ep->lid;
+    memcpy(&dct_handle->dev_dct, device->dct.dah.av, sizeof(dct_handle->dev_dct));
+    // Don't do htobe32 here as we need to determine whether the ext field should be set or not.
+    dct_handle->dev_dct.dqp_dct = ep->qpn;
+    dct_handle->dev_dct.key.dc_key = htobe64(GIC_DC_ACCESS_KEY);
+    dct_handle->support_half_av_seg = device->support_half_av_seg;
 
     return 0;
 }
@@ -1298,10 +1429,11 @@ static int gic_destroy_ep(struct gic_ep *ep_ptr, nvshmemt_gic_state_t *gic_state
     return 0;
 }
 
-static void gic_get_device_dci(nvshmemi_gic_device_dci_t *dev_dci, struct gic_device *device, const struct gic_ep *ep) {
-    struct mlx5_wqe_ctrl_seg *ctrl_seg;
-    nvshmemi_gic_mlx5_wqe_half_av_t *half_av_seg;
+static void gic_get_device_dci_mvars(nvshmemi_gic_device_dci_management_t *dev_mvars, struct gic_device *device, const struct gic_ep *ep) {
+    memset(dev_mvars, 0, sizeof(*dev_mvars));
+}
 
+static void gic_get_device_dci(nvshmemi_gic_device_dci_t *dev_dci, struct gic_device *device, const struct gic_ep *ep) {
     assert(ep->qp_type == GIC_QP_TYPE_DCI);
 
     dev_dci->qpn = ep->qpn;
@@ -1317,33 +1449,15 @@ static void gic_get_device_dci(nvshmemi_gic_device_dci_t *dev_dci, struct gic_de
 
     dev_dci->tx_wq.nwqes = ep->sq_cnt;
 
-    for (int i = NVSHMEMI_GIC_DS_MIN; i <= NVSHMEMI_GIC_DS_MAX; ++i) {
-        ctrl_seg = &dev_dci->ctrl_seg_templates[nvshmemi_gic_ctrl_seg_ds_to_template_idx(i)];
-        memset(ctrl_seg, 0, sizeof(*ctrl_seg));
-        ctrl_seg->qpn_ds = htobe32(ep->qpn << 8 | (i & 0x3F));
-        ctrl_seg->signature = 0;
-        // We don't use DCS in this implementation. But it will be used in the future.
-        ctrl_seg->dci_stream_channel_id = 0;
-        ctrl_seg->fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
-        ctrl_seg->imm = 0;
-    }
-
-    half_av_seg = &dev_dci->half_av_seg_template;
-    memset(half_av_seg, 0, sizeof(*half_av_seg));
-    half_av_seg->stat_rate_sl = ep->sl & 0x0F;
-    half_av_seg->fl_mlid = ep->lid & 0x7F;
-
-    dev_dci->internal_buf.lkey = htobe32(device->dci.internal_buf.mem_handle->lkey);
-    dev_dci->internal_buf.rkey = htobe32(device->dci.internal_buf.mem_handle->rkey);
-    dev_dci->internal_buf.buf = (void *)((uintptr_t)device->dci.internal_buf.mem_object->aligned.gpu_ptr + (device->dci.internal_buf.size_per_ep * ep->user_index));
-
-    dev_dci->lock = 0;
+    dev_dci->ibuf.lkey = htobe32(device->dci.internal_buf.mem_handle->lkey);
+    dev_dci->ibuf.rkey = htobe32(device->dci.internal_buf.mem_handle->rkey);
+    dev_dci->ibuf.buf = (void *)((uintptr_t)device->dci.internal_buf.mem_object->aligned.gpu_ptr + (device->dci.internal_buf.size_per_ep * ep->user_index));
+    dev_dci->ibuf.nslots = gic_num_fetch_slots_per_dci;
 }
 
-static void gic_get_device_dct(nvshmemi_gic_device_dct_t *dev_dct, const nvshmemi_gic_device_dct_t *dct_handle) {
-    dev_dct->qpn = htobe32(dct_handle->qpn);
-    dev_dct->access_key = htobe64(dct_handle->access_key);
-    dev_dct->lid = htobe16(dct_handle->lid);
+static void gic_get_device_dct(nvshmemi_gic_device_dct_t *dev_dct, const struct gic_dct_handle *dct_handle, const struct gic_device *device) {
+    memcpy(dev_dct, &dct_handle->dev_dct, sizeof(*dev_dct));
+    dev_dct->dqp_dct = htobe32(((device->support_half_av_seg ? 0ULL : 1ULL) << 31) | dev_dct->dqp_dct);
 }
 
 static int gic_setup_gpu_state(struct gic_device *device) {
@@ -1353,7 +1467,10 @@ static int gic_setup_gpu_state(struct gic_device *device) {
 
     nvshmemi_device_state_t *device_state = NULL;
 
-    nvshmemi_gic_device_state_t gic_device_state_h;
+    nvshmemi_gic_device_state_t *gic_device_state_h;
+
+    nvshmemi_gic_device_dci_management_t *dci_mvars_d = NULL;
+    nvshmemi_gic_device_dci_management_t *dci_mvars_h = NULL;
 
     nvshmemi_gic_device_dci_t *dci_d = NULL;
     nvshmemi_gic_device_dci_t *dci_h = NULL;
@@ -1364,100 +1481,125 @@ static int gic_setup_gpu_state(struct gic_device *device) {
     nvshmemi_gic_device_cq_t *cq_d = NULL;
     nvshmemi_gic_device_cq_t *cq_h = NULL;
 
-    assert(gic_device_state_d == NULL);
+    nvshmemx_gic_get_device_state(&gic_device_state_h);
+
+    memset(gic_device_state_h, 0, sizeof(*gic_device_state_h));
 
     // Setup DCT table
-    status = cuMemAlloc((CUdeviceptr *)&dct_d, num_dct_handles * sizeof(*dct_d));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "dct_d allocation failed.\n");
-
     dct_h = (nvshmemi_gic_device_dct_t *)calloc(num_dct_handles, sizeof(*dct_h));
     NULL_ERROR_JMP(dct_h, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "dct_h allocation failed.\n");
 
     for (int i = 0; i < num_dct_handles; ++i) {
-        gic_get_device_dct(&dct_h[i], &device->dct.dct_handles[i]);
+        gic_get_device_dct(&dct_h[i], &device->dct.dct_handles[i], device);
     }
 
-    status = cuMemcpyHtoDAsync((CUdeviceptr)dct_d,
-                               (const void *)dct_h,
-                               sizeof(*dct_d) * num_dct_handles, 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Copying dct_h to dct_d failed.\n");
+    // Add some DCTs to constant memory
+    memcpy(gic_device_state_h->constmem.dcts, dct_h, sizeof(*dct_h) * GIC_MIN(num_dct_handles, NVSHMEMI_GIC_MAX_CONST_DCTS));
+
+    // Add the rest of DCTs to global memory
+    if (num_dct_handles > NVSHMEMI_GIC_MAX_CONST_DCTS) {
+        int num_elements = num_dct_handles - NVSHMEMI_GIC_MAX_CONST_DCTS;
+        status = cudaMalloc(&dct_d, num_elements * sizeof(*dct_d));
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "dct_d allocation failed.\n");
+
+        status = cudaMemcpyAsync(dct_d,
+                                 (const void *)&dct_h[NVSHMEMI_GIC_MAX_CONST_DCTS],
+                                 sizeof(*dct_d) * num_elements,
+                                 cudaMemcpyHostToDevice,
+                                 nvshmemi_state->my_stream);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "Copying dct_h to dct_d failed.\n");
+    }
 
     // Get GPU DCIs and send CQs
-    status = cuMemAlloc((CUdeviceptr *)&dci_d, device->dci.num_eps * sizeof(*dci_d));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "dci_d allocation failed.\n");
+    status = cudaMalloc(&dci_mvars_d, device->dci.num_eps * sizeof(*dci_mvars_d));
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "dci_mvars_d allocation failed.\n");
+
+    dci_mvars_h = (nvshmemi_gic_device_dci_management_t *)calloc(device->dci.num_eps, sizeof(*dci_mvars_h));
+    NULL_ERROR_JMP(dci_mvars_h, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "dci_mvars_h allocation failed.\n");
+
+    status = cudaMalloc(&dci_d, device->dci.num_eps * sizeof(*dci_d));
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "dci_d allocation failed.\n");
 
     dci_h = (nvshmemi_gic_device_dci_t *)calloc(device->dci.num_eps, sizeof(*dci_h));
     NULL_ERROR_JMP(dci_h, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "dci_h allocation failed.\n");
 
-    status = cuMemAlloc((CUdeviceptr *)&cq_d, device->dci.num_eps * sizeof(*cq_d));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cq_d allocation failed.\n");
+    status = cudaMalloc(&cq_d, device->dci.num_eps * sizeof(*cq_d));
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cq_d allocation failed.\n");
 
     cq_h = (nvshmemi_gic_device_cq_t *)calloc(device->dci.num_eps, sizeof(*cq_h));
     NULL_ERROR_JMP(cq_h, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cq_h allocation failed.\n");
 
     for (int i = 0; i < device->dci.num_eps; ++i) {
-        uintptr_t tx_wq_d_addr = (uintptr_t)(&dci_d[i]) + offsetof(nvshmemi_gic_device_dci_t, tx_wq);
-
+        gic_get_device_dci_mvars(&dci_mvars_h[i], device, device->dci.eps[i]);
         gic_get_device_dci(&dci_h[i], device, device->dci.eps[i]);
+
         dci_h[i].tx_wq.cq = &cq_d[i];
+        dci_h[i].mvars = &dci_mvars_d[i];
 
         gic_get_device_cq(&cq_h[i], device->dci.eps[i]->send_cq);
-        cq_h[i].cons_head = (uint64_t *)(tx_wq_d_addr + offsetof(nvshmemi_gic_device_wq_t, cons_head));
-        cq_h[i].cons_tail = (uint64_t *)(tx_wq_d_addr + offsetof(nvshmemi_gic_device_wq_t, cons_tail));
+        cq_h[i].cons_head = (uint64_t *)((uintptr_t)(&dci_mvars_d[i]) + offsetof(nvshmemi_gic_device_dci_management_t, tx_wq.cons_head));
+        cq_h[i].cons_tail = (uint64_t *)((uintptr_t)(&dci_mvars_d[i]) + offsetof(nvshmemi_gic_device_dci_management_t, tx_wq.cons_tail));
+        cq_h[i].wqe_head = (uint64_t *)((uintptr_t)(&dci_mvars_d[i]) + offsetof(nvshmemi_gic_device_dci_management_t, tx_wq.wqe_head));
+        cq_h[i].wqe_tail = (uint64_t *)((uintptr_t)(&dci_mvars_d[i]) + offsetof(nvshmemi_gic_device_dci_management_t, tx_wq.wqe_tail));
+        cq_h[i].qpn = dci_h[i].qpn;
     }
 
-    status = cuMemcpyHtoDAsync((CUdeviceptr)dci_d,
-                               (const void *)dci_h,
-                               sizeof(*dci_h) * device->dci.num_eps, 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Copying dci_h to dci_d failed.\n");
+    status = cudaMemcpyAsync(dci_mvars_d,
+                             (const void *)dci_mvars_h,
+                             sizeof(*dci_mvars_h) * device->dci.num_eps,
+                             cudaMemcpyHostToDevice,
+                             nvshmemi_state->my_stream);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "Copying dci_mvars_h to dci_mvars_d failed.\n");
 
-    status = cuMemcpyHtoDAsync((CUdeviceptr)cq_d,
-                               (const void *)cq_h,
-                               sizeof(*cq_h) * device->dci.num_eps, 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Copying cq_h to cq_d failed.\n");
+    status = cudaMemcpyAsync(dci_d,
+                             (const void *)dci_h,
+                             sizeof(*dci_h) * device->dci.num_eps,
+                             cudaMemcpyHostToDevice,
+                             nvshmemi_state->my_stream);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "Copying dci_h to dci_d failed.\n");
+
+    status = cudaMemcpyAsync(cq_d,
+                             (const void *)cq_h,
+                             sizeof(*cq_h) * device->dci.num_eps,
+                             cudaMemcpyHostToDevice,
+                             nvshmemi_state->my_stream);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "Copying cq_h to cq_d failed.\n");
 
     // Post the device state
-    status = cuMemAlloc((CUdeviceptr *)&gic_device_state_d, sizeof(*gic_device_state_d));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "gic_device_state_d allocation failed.\n");
-
-    gic_device_state_h.dcis = dci_d;
-    gic_device_state_h.dcts = dct_d;
-    gic_device_state_h.cqs = cq_d;
-    gic_device_state_h.local_mhandle_head = NULL;
-    gic_device_state_h.remote_mhandle_head = NULL;
-    gic_device_state_h.ndcis = device->dci.num_eps;
-    gic_device_state_h.ndcis_per_sm = device->dci.num_eps_per_sm;
-    gic_device_state_h.ndcts_per_pe = device->dct.num_eps;
+    gic_device_state_h->globalmem.dcis = dci_d;
+    gic_device_state_h->globalmem.dcts = dct_d;
+    gic_device_state_h->globalmem.cqs = cq_d;
+    gic_device_state_h->log2_cumem_granularity = log2_cumem_granularity;
+    gic_device_state_h->use_cuda_vmm = nvshmemi_use_cuda_vmm;
+    gic_device_state_h->num_shared_dcis = device->dci.num_shared_eps;
+    gic_device_state_h->num_exclusive_dcis = device->dci.num_eps - device->dci.num_shared_eps;
+    gic_device_state_h->dci_map_type = device->dci.map_by;
+    gic_device_state_h->ndcts_per_pe = device->dct.num_eps;
+    gic_device_state_h->num_dct_groups = GIC_MAX(gic_device_state_h->num_exclusive_dcis / (device->dct.num_eps * nvshmemi_state->npes), 1);
+    gic_device_state_h->num_requests_in_batch = gic_num_requests_in_batch;
+    gic_device_state_h->support_half_av_seg = device->support_half_av_seg;
 
     assert(gic_nic_buf_location == GIC_MEM_TYPE_GPU || gic_nic_buf_location == GIC_MEM_TYPE_HOST);
-    gic_device_state_h.nic_buf_on_gpumem = (gic_nic_buf_location == GIC_MEM_TYPE_GPU);
+    gic_device_state_h->nic_buf_on_gpumem = (gic_nic_buf_location == GIC_MEM_TYPE_GPU);
 
-    status = cuMemcpyHtoDAsync((CUdeviceptr)gic_device_state_d,
-                               (const void *)&gic_device_state_h,
-                               sizeof(gic_device_state_h), 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Copying gic_device_state to GPU memory failed.\n");
+    status = cudaStreamSynchronize(nvshmemi_state->my_stream);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "stream synchronize failed.\n");
 
-    status = cuStreamSynchronize(nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "stream synchronize failed.\n");
+    status = nvshmemi_gic_set_device_state(gic_device_state_h);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmemi_gic_set_device_state failed.\n");
 
     nvshmemx_get_device_state(&device_state);
-    device_state->gic_state = (void *)gic_device_state_d;
+    device_state->gic_is_initialized = true;
     nvshmemi_set_device_state(device_state);
 
 out:
     if (status) {
-        if (gic_device_state_d) {
-            cuMemFree((CUdeviceptr)gic_device_state_d);
-            gic_device_state_d = NULL;
-        }
-        if (dci_d) cuMemFree((CUdeviceptr)dci_d);
-        if (dct_d) cuMemFree((CUdeviceptr)dct_d);
-        if (cq_d) cuMemFree((CUdeviceptr)cq_d);
+        if (dci_mvars_d) cudaFree(dci_mvars_d);
+        if (dci_d) cudaFree(dci_d);
+        if (dct_d) cudaFree(dct_d);
+        if (cq_d) cudaFree(cq_d);
     }
+    if (dci_mvars_h) free(dci_mvars_h);
     if (dci_h) free(dci_h);
     if (dct_h) free(dct_h);
     if (cq_h) free(cq_h);
@@ -1467,29 +1609,30 @@ out:
 int nvshmemt_gic_connect_endpoints(nvshmem_transport_t t) {
     int status = 0;
 
-    nvshmemi_gic_device_dct_t *local_dct_handles = NULL;
+    struct gic_dct_handle *local_dct_handles = NULL;
 
     nvshmemt_gic_state_t *gic_state = (nvshmemt_gic_state_t *)t->state;
     struct gic_device *device = ((struct gic_device *)gic_state->devices + gic_state->dev_ids[gic_state->selected_dev_id]);
     int portid = gic_state->port_ids[gic_state->selected_dev_id];
     int warp_size;
     int max_threads_per_block;
+    bool support_half_av_seg = true;
 
     // Creating DCT.
     device->dct.num_eps = nvshmemi_options.IB_GPUINITIATED_NUM_DCT;
     if (device->dct.num_eps <= 0) {
-        ERROR_JMP(status, EINVAL, out, "NVSHMEM_IB_GPUINITIATED_NUM_DCT must be greater than 0.\n");
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_IB_GPUINITIATED_NUM_DCT must be greater than 0.\n");
     } else if (device->dct.num_eps < 2) {
         WARN_PRINT("Setting NVSHMEM_IB_GPUINITIATED_NUM_DCT lower than 2 may impact performance.\n");
     }
 
-    status = gic_create_dct_shared_objects(device);
+    status = gic_create_dct_shared_objects(device, portid);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gic_create_dct_shared_objects failed.\n");
 
-    local_dct_handles = (nvshmemi_gic_device_dct_t *)calloc(device->dct.num_eps, sizeof(*local_dct_handles));
+    local_dct_handles = (struct gic_dct_handle *)calloc(device->dct.num_eps, sizeof(*local_dct_handles));
     NULL_ERROR_JMP(local_dct_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "allocation of local_dct_handles failed.\n");
 
-    device->dct.dct_handles = (nvshmemi_gic_device_dct_t *)calloc(device->dct.num_eps * nvshmemi_state->npes, 
+    device->dct.dct_handles = (struct gic_dct_handle *)calloc(device->dct.num_eps * nvshmemi_state->npes, 
                                                                 sizeof(*device->dct.dct_handles));
     NULL_ERROR_JMP(device->dct.dct_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "allocation of dct_handles failed.\n");
 
@@ -1500,7 +1643,7 @@ int nvshmemt_gic_connect_endpoints(nvshmem_transport_t t) {
         status = gic_create_dct(&device->dct.eps[i], device, portid);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gic_create_dct failed on DCT #%d.\n", i);
 
-        status = gic_get_dct_handle(&local_dct_handles[i], device->dct.eps[i]);
+        status = gic_get_dct_handle(&local_dct_handles[i], device->dct.eps[i], device);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gic_get_dct_handle failed on DCT #%d.\n", i);
     }
 
@@ -1510,29 +1653,67 @@ int nvshmemt_gic_connect_endpoints(nvshmem_transport_t t) {
         sizeof(*local_dct_handles) * device->dct.num_eps, &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of dct handles failed.\n");
 
+    // All EPs in all PEs must support half av seg if we want to use it.
+    // Otherwise, fallback to use full av seg.
+    for (int i = 0; i < device->dct.num_eps * nvshmemi_state->npes; ++i) {
+        support_half_av_seg &= device->dct.dct_handles[i].support_half_av_seg;
+    }
+    device->support_half_av_seg = support_half_av_seg;
+
     // Creating DCI.
-    device->dci.num_eps_per_sm = nvshmemi_options.IB_GPUINITIATED_NUM_DCI_PER_SM;
-    if (device->dci.num_eps_per_sm <= 0) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_IB_GPUINITIATED_NUM_DCI_PER_SM cannot be lower than 1.\n");
+    status = cudaDeviceGetAttribute(&warp_size, cudaDevAttrWarpSize, nvshmemi_state->cudevice);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaDeviceGetAttribute querying warp size failed.\n");
+    status = cudaDeviceGetAttribute(&max_threads_per_block, cudaDevAttrMaxThreadsPerBlock, nvshmemi_state->device_id);
+    NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaDeviceGetAttribute querying max threads per block failed.\n");
+
+    device->dci.num_shared_eps = nvshmemi_options.IB_GPUINITIATED_NUM_SHARED_DCI;
+    if (device->dci.num_shared_eps < 1) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_IB_GPUINITIATED_NUM_SHARED_DCI must be a positive number.\n");
     }
-    status = cuDeviceGetAttribute(&warp_size, CU_DEVICE_ATTRIBUTE_WARP_SIZE, nvshmemi_state->cudevice);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuDeviceGetAttribute querying warp size failed.\n");
-    status = cuDeviceGetAttribute(&max_threads_per_block, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK, nvshmemi_state->cudevice);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuDeviceGetAttribute querying max threads per block failed.\n");
-    if (device->dci.num_eps_per_sm > max_threads_per_block / warp_size) {
-        WARN_PRINT("Setting NVSHMEM_IB_GPUINITIATED_NUM_DCI_PER_SM greater than number of warps per block will waste resources unnecessarily.\n");
-    }
+
+    status = gic_parse_dci_map_by(&device->dci.map_by, nvshmemi_options.IB_GPUINITIATED_DCI_MAP_BY);
+    NZ_ERROR_JMP(status, status, out, "NVSHMEM_IB_GPUINITIATED_DCI_MAP_BY is not valid.\n");
+
+    INFO(NVSHMEM_TRANSPORT, "NVSHMEM_IB_GPUINITIATED_DCI_MAP_BY is set to %s.", nvshmemi_options.IB_GPUINITIATED_DCI_MAP_BY);
 
     device->dci.num_eps = nvshmemi_options.IB_GPUINITIATED_NUM_DCI;
     if (device->dci.num_eps <= 0) {
+        int num_eps = 0;
         int mpc = 0;
-        status = cuDeviceGetAttribute(&mpc, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, nvshmemi_state->cudevice);
-        NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuDeviceGetAttribute querying multiprocessor count failed.\n");
-        device->dci.num_eps = mpc * device->dci.num_eps_per_sm;
+        status = cudaDeviceGetAttribute(&mpc, cudaDevAttrMultiProcessorCount, nvshmemi_state->device_id);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaDeviceGetAttribute querying multiprocessor count failed.\n");
+
+        switch (device->dci.map_by) {
+            case NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_CTA:
+            case NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_SM:
+                num_eps = mpc;
+                break;
+            case NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_WARP:
+                num_eps = mpc * warp_size;
+                break;
+            case NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_DCT:
+                num_eps = device->dct.num_eps * nvshmemi_state->npes;
+                break;
+            default:
+                assert(0);
+                break;
+        }
+
+        device->dci.num_eps = num_eps + device->dci.num_shared_eps;
     }
     assert(device->dci.num_eps > 0);
 
-    status = gic_create_dci_shared_objects(device);
+    if (device->dci.num_shared_eps > device->dci.num_eps) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_IB_GPUINITIATED_NUM_SHARED_DCI must be less than or equal to NVSHMEM_IB_GPUINITIATED_NUM_DCI.\n");
+    }
+
+    INFO(NVSHMEM_TRANSPORT, "Creating %d DCI QPs (shared: %d, exclusive: %d)", device->dci.num_eps, device->dci.num_shared_eps, device->dci.num_eps - device->dci.num_shared_eps);
+
+    if (gic_num_fetch_slots_per_dci < warp_size) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_IB_GPUINITIATED_NUM_FETCH_SLOTS_PER_DCI must be at least %d.\n", warp_size);
+    }
+
+    status = gic_create_dci_shared_objects(gic_state, device);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gic_create_dci_shared_objects failed.\n");
 
     device->dci.eps = (struct gic_ep **)calloc(device->dci.num_eps, sizeof(*device->dci.eps));
@@ -1567,105 +1748,119 @@ out:
 }
 
 int nvshmemt_gic_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
-    int status = 0;
-    struct gic_mem_handle *handle = (struct gic_mem_handle *)mem_handle;
-
-    INFO(NVSHMEM_TRANSPORT, "ibv_dereg_mr handle %p handle->mr %p", handle, handle->mr);
-    status = ftable.dereg_mr((struct ibv_mr *)handle->mr);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_dereg_mr failed \n");
-
-out:
-    return status;
+    return nvshmemt_ib_common_release_mem_handle(&ftable, mem_handle);
 }
 
 int nvshmemt_gic_finalize(nvshmem_transport_t transport) {
     int status = 0;
 
+    nvshmemi_device_state_t *device_state = NULL;
+
+    gic_device_lkeys.clear();
+    gic_device_rkeys.clear();
+
+    if (gic_device_lkeys_d) {
+        cudaFree(gic_device_lkeys_d);
+        gic_device_lkeys_d = 0;
+    }
+    if (gic_device_rkeys_d) {
+        cudaFree(gic_device_rkeys_d);
+        gic_device_rkeys_d = 0;
+    }
+
     nvshmemt_ibv_ftable_fini(&ibv_handle);
+
+    nvshmemx_get_device_state(&device_state);
+    device_state->gic_is_initialized = false;
+    nvshmemi_set_device_state(device_state);
 
     if (transport->state) {
         free(transport->state);
     }
 
     free(transport);
+
     return status;
 }
 
 int nvshmemt_gic_add_device_remote_mem_handles(nvshmem_transport_t t, int transport_id, nvshmem_mem_handle_t *mem_handles, uint64_t heap_offset, size_t size) {
     int status = 0;
 
-    struct gic_device_mhandle_cache device_mhandle_cache;
-    nvshmemi_gic_device_mhandle_t *device_mhandle_h = &device_mhandle_cache.mhandle;
-    nvshmemi_gic_device_mhandle_t *device_mhandle_d = NULL;
+    size_t num_rkeys;
 
-    CUdeviceptr mhandle_gpu_ptr;
+    nvshmemi_gic_device_state_t *gic_device_state;
+    nvshmemx_gic_get_device_state(&gic_device_state);
 
-    __be32  *rkeys_h = NULL;
-    __be32  *rkeys_d = NULL;
+    static_assert(sizeof(struct nvshmemt_ib_common_mem_handle) <= NVSHMEM_MEM_HANDLE_SIZE);
 
-    assert(sizeof(struct gic_mem_handle) <= NVSHMEM_MEM_HANDLE_SIZE);
+    if (nvshmemi_use_cuda_vmm) {
+        size_t num_elements;
+        // size must be divisible by cumem_granularity, which is a power of 2.
+        assert((size & (cumem_granularity - 1)) == 0);
 
-    status = cuMemAlloc((CUdeviceptr *)&device_mhandle_d, sizeof(*device_mhandle_d));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cuMemAlloc failed.\n");
+        num_elements = size >> log2_cumem_granularity;
+        while (num_elements > 0) {
+            for (int i = 0; i < nvshmemi_state->npes; ++i) {
+                // sizeof(struct gic_mem_handle) <= sizeof(nvshmem_mem_handle_t)
+                // So, we calculate the pointer with nvshmem_mem_handle_t and convert to gic_mem_handle later.
+                struct nvshmemt_ib_common_mem_handle *gmhandle = (struct nvshmemt_ib_common_mem_handle *)&mem_handles[i * NVSHMEM_TRANSPORT_COUNT + transport_id];
+                gic_device_rkeys.emplace_back(htobe32(gmhandle->rkey));
+            }
+            --num_elements;
+        }
 
-    rkeys_h = (__be32 *)malloc(sizeof(*rkeys_h) * nvshmemi_state->npes);
-    NULL_ERROR_JMP(rkeys_h, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "Unable to allocate rkeys_h.\n");
-
-    status = cuMemAlloc((CUdeviceptr *)&rkeys_d, sizeof(*rkeys_d) * nvshmemi_state->npes);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cuMemAlloc for rkeys_d failed.\n");
-
-    for (int i = 0; i < nvshmemi_state->npes; ++i) {
-        // sizeof(struct gic_mem_handle) <= sizeof(nvshmem_mem_handle_t)
-        // So, we calculate the pointer with nvshmem_mem_handle_t and convert to gic_mem_handle later.
-        struct gic_mem_handle *gmhandle = (struct gic_mem_handle *)&mem_handles[i * NVSHMEM_TRANSPORT_COUNT + transport_id];
-        rkeys_h[i] = htobe32(gmhandle->rkey);
-    }
-
-    status = cuMemcpyHtoDAsync((CUdeviceptr)rkeys_d,
-                               (const void *)rkeys_h,
-                               sizeof(*rkeys_h) * nvshmemi_state->npes, 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Copying rkeys_h to rkeys_d failed.\n");
-
-    device_mhandle_h->rkeys = rkeys_d;
-    device_mhandle_h->start = heap_offset;
-    device_mhandle_h->end = heap_offset + size - 1;
-    device_mhandle_h->next = NULL;
-
-    status = cuMemcpyHtoDAsync((CUdeviceptr)device_mhandle_d,
-                               (const void *)device_mhandle_h,
-                               sizeof(*device_mhandle_d), 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Copying device_mhandle to GPU memory failed.\n");
-
-    device_mhandle_cache.dev_ptr = (CUdeviceptr)device_mhandle_d;
-
-    if (gic_device_remote_mhandles.empty()) {
-        assert(gic_device_state_d != NULL);
-
-        mhandle_gpu_ptr = (CUdeviceptr)gic_device_state_d + offsetof(nvshmemi_gic_device_state_t, remote_mhandle_head);
     } else {
-        struct gic_device_mhandle_cache *last_mhandle_cache = &gic_device_remote_mhandles.back();
-        mhandle_gpu_ptr = last_mhandle_cache->dev_ptr + offsetof(nvshmemi_gic_device_mhandle_t, next);
-        last_mhandle_cache->mhandle.next = device_mhandle_d;
+        // If VMM is not used, there should be at most one registration of symmetric heap.
+        assert(gic_device_rkeys.empty());
+
+        for (int i = 0; i < nvshmemi_state->npes; ++i) {
+            // sizeof(struct gic_mem_handle) <= sizeof(nvshmem_mem_handle_t)
+            // So, we calculate the pointer with nvshmem_mem_handle_t and convert to gic_mem_handle later.
+            struct nvshmemt_ib_common_mem_handle *gmhandle = (struct nvshmemt_ib_common_mem_handle *)&mem_handles[i * NVSHMEM_TRANSPORT_COUNT + transport_id];
+            gic_device_rkeys.emplace_back(htobe32(gmhandle->rkey));
+        }
     }
-    status = cuMemcpyHtoDAsync(mhandle_gpu_ptr,
-                               (const void *)&device_mhandle_d,
-                               sizeof(device_mhandle_d), 
-                               nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "Setting local_mhandle_head in GPU memory failed.\n");
 
-    status = cuStreamSynchronize(nvshmemi_state->my_stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "stream synchronize failed.\n");
+    if (gic_device_rkeys_d) {
+        status = cudaFree(gic_device_rkeys_d);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "cudaFree failed.\n");
+        gic_device_rkeys_d = 0;
+    }
 
-    gic_device_remote_mhandles.emplace_back(device_mhandle_cache);
+    num_rkeys = gic_device_rkeys.size();
+
+    // For cache optimization, put rkeys in constant memory first.
+    memcpy(gic_device_state->constmem.rkeys, gic_device_rkeys.data(), num_rkeys * sizeof(__be32));
+
+    // Put the rest that don't fit in constant memory in global memory
+    if (num_rkeys > NVSHMEMI_GIC_MAX_CONST_RKEYS) {
+        size_t rkeys_array_size = sizeof(__be32) * (num_rkeys - NVSHMEMI_GIC_MAX_CONST_RKEYS);
+        __be32 *data_ptr = &gic_device_rkeys.data()[NVSHMEMI_GIC_MAX_CONST_RKEYS];
+
+        status = cudaMalloc(&gic_device_rkeys_d, rkeys_array_size);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "cudaMalloc failed.\n");
+
+        status = cudaMemcpyAsync(gic_device_rkeys_d,
+                                 (const void *)data_ptr,
+                                 rkeys_array_size,
+                                 cudaMemcpyHostToDevice,
+                                 nvshmemi_state->my_stream);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "Copying rkeys to GPU memory failed.\n");
+
+        status = cudaStreamSynchronize(nvshmemi_state->my_stream);
+        NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "stream synchronize failed.\n");
+    }
+
+    gic_device_state->globalmem.rkeys = (__be32 *)gic_device_rkeys_d;
+    status = nvshmemi_gic_set_device_state(gic_device_state);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmemi_gic_set_device_state failed.\n");
 
 out:
     if (status) {
-        if (device_mhandle_d) cuMemFree((CUdeviceptr)device_mhandle_d);
-        if (rkeys_d) cuMemFree((CUdeviceptr)rkeys_d);
+        // Unrecoverable error
+        if (gic_device_rkeys_d) cudaFree(gic_device_rkeys_d);
+        gic_device_rkeys.clear();
     }
-    if (rkeys_h) free(rkeys_h);
     return status;
 }
 
@@ -1809,14 +2004,12 @@ int nvshmemt_gic_init(nvshmem_transport_t *t) {
 
     transport_skipped = !nvshmemi_options.IB_ENABLE_GPUINITIATED;
     if (transport_skipped) {
-        INFO(NVSHMEM_INIT, "GPU-initiated communication is disabled by user through environment "
-                           "in favor of the %s transport.", nvshmemi_options.REMOTE_TRANSPORT);
+        INFO(NVSHMEM_INIT, "GPU-initiated communication is disabled by user through environment.");
         status = NVSHMEMI_ERROR_SKIPPED;
         goto out;
     }
     else {
-        INFO(NVSHMEM_INIT, "GPU-initiated communication is enabled by user through environment.",
-             nvshmemi_options.REMOTE_TRANSPORT);
+        INFO(NVSHMEM_INIT, "GPU-initiated communication is enabled by user through environment.");
     }
 
     transport = (struct nvshmem_transport *)malloc(sizeof(struct nvshmem_transport));
@@ -1830,12 +2023,41 @@ int nvshmemt_gic_init(nvshmem_transport_t *t) {
     }
 
     gic_srq_depth = nvshmemi_options.SRQ_DEPTH;
-    gic_qp_depth = GIC_ROUND_UP_POW2_OR_0(nvshmemi_options.QP_DEPTH);
-    if (gic_qp_depth <= 0) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "QP depth is not a positive number.\n");
+    if (gic_srq_depth <= 0) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_SRQ_DEPTH must be a positive number.\n");
     }
-    else if (gic_qp_depth < NVSHMEMI_GIC_MIN_NUM_BATCH_SIZE) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "QP depth must be at least %d.\n", NVSHMEMI_GIC_MIN_NUM_BATCH_SIZE);
+
+    gic_qp_depth = nvshmemi_options.QP_DEPTH;
+    if (gic_qp_depth > 0) {
+        gic_qp_depth = GIC_ROUND_UP_POW2_OR_0(gic_qp_depth);
+    }
+    if (gic_qp_depth <= 0) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_QP_DEPTH must be a positive number.\n");
+    }
+    else if (gic_qp_depth < NVSHMEMI_GIC_MIN_QP_DEPTH) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_QP_DEPTH must be at least %d.\n", NVSHMEMI_GIC_MIN_QP_DEPTH);
+    }
+    else if (gic_qp_depth > NVSHMEMI_GIC_MAX_QP_DEPTH) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_QP_DEPTH can be at most %d.\n", NVSHMEMI_GIC_MAX_QP_DEPTH);
+    }
+
+    gic_num_requests_in_batch = nvshmemi_options.IB_GPUINITIATED_NUM_REQUESTS_IN_BATCH;
+    if (gic_num_requests_in_batch > 0) {
+        gic_num_requests_in_batch = GIC_ROUND_UP_POW2_OR_0(gic_num_requests_in_batch);
+    }
+    if (gic_num_requests_in_batch <= 0) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_IB_GPUINITIATED_NUM_REQUESTS_IN_BATCH must be a positive number.\n");
+    }
+    else if (gic_num_requests_in_batch > gic_qp_depth) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_IB_GPUINITIATED_NUM_REQUESTS_IN_BATCH must not be larger than QP depth.\n");
+    }
+
+    gic_num_fetch_slots_per_dci = nvshmemi_options.IB_GPUINITIATED_NUM_FETCH_SLOTS_PER_DCI;
+    if (gic_num_fetch_slots_per_dci > 0) {
+        gic_num_fetch_slots_per_dci = GIC_ROUND_UP_POW2_OR_0(gic_num_fetch_slots_per_dci);
+    }
+    if (gic_num_fetch_slots_per_dci <= 0) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "NVSHMEM_IB_GPUINITIATED_NUM_FETCH_SLOTS_PER_DCI must be a positive number.\n");
     }
 
     gic_state = (nvshmemt_gic_state_t *)calloc(1, sizeof(nvshmemt_gic_state_t));
@@ -1876,6 +2098,14 @@ int nvshmemt_gic_init(nvshmem_transport_t *t) {
     }
 
     nic_mapping_memtype_request = gic_parse_nic_mapping_memtype_request(nvshmemi_options.IB_GPUINITIATED_FORCE_NIC_BUF_MEMTYPE);
+#ifdef NVSHMEM_GPUINITIATED_SUPPORT_GPUMEM_ONLY
+    if (nic_mapping_memtype_request == GIC_NIC_MAPPING_MEMTYPE_REQUEST_AUTO) {
+        nic_mapping_memtype_request = GIC_NIC_MAPPING_MEMTYPE_REQUEST_GPUMEM;
+    }
+    if (nic_mapping_memtype_request != GIC_NIC_MAPPING_MEMTYPE_REQUEST_GPUMEM) {
+        ERROR_JMP(status, NVSHMEMX_ERROR_NOT_SUPPORTED, out, "GPU-initiated communication is compiled with GPU memory support only.\n");
+    }
+#endif
 
     INFO(NVSHMEM_INIT,
          "Begin - Enumerating IB devices in the system ([<dev_id, device_name, num_ports>]) - ");
@@ -1899,11 +2129,10 @@ int nvshmemt_gic_init(nvshmem_transport_t *t) {
         status = ftable.query_device(device->context, &device->device_attr);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_query_device failed \n");
 
-        if (device->device_attr.vendor_id != MELLANOX_VENDOR_ID ||
-            device->device_attr.vendor_part_id < MELLANOX_MIN_DEVICE_ID) {
-                WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...\n", name);
-                continue;
-            }
+        if(!nvshmemt_ib_common_query_mlx5_caps(device->context)) {
+            WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
+            continue;
+        }
 
         status = gic_check_gpu_mapping_nic_uar(device);
         if (status) {
@@ -1955,13 +2184,14 @@ int nvshmemt_gic_init(nvshmem_transport_t *t) {
                 status = ftable.query_port(device->context, p, &device->port_attr[p - 1]);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_port_query failed \n");
 
-                // GIC supports IB link layer for now. RoCE is not supported.
+                // GIC supports IB and RoCE.
                 if ((device->port_attr[p - 1].state != IBV_PORT_ACTIVE) 
-                    || (device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_INFINIBAND)) { 
+                    || ((device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_INFINIBAND)
+                       && (device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_ETHERNET))) {
 
                     if (user_selection) {
                         WARN_PRINT(
-                            "found inactive port or port with non-IB link layer protocol, "
+                            "found inactive port or port with non IB/RoCE link layer protocol, "
                             "skipping...\n");
                     }
                     continue;
@@ -2062,6 +2292,18 @@ int nvshmemt_gic_init(nvshmem_transport_t *t) {
     transport->is_successfully_initialized = true;
 
     *t = transport;
+
+    gic_state->dmabuf_support = false;
+#if CUDART_VERSION >= 11070
+    int flag;
+    status = CUPFN(cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, nvshmemi_state->cudevice));
+    if (status != CUDA_SUCCESS) {
+        status = 0;
+        cudaGetLastError();
+    } else if (flag == 1) {
+        gic_state->dmabuf_support = true;
+    }
+#endif
 
 out:
     // TODO: Implement cleanup

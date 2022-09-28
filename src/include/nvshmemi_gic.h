@@ -4,8 +4,8 @@
  * See COPYRIGHT for license information
  */
 
-#ifndef _NVSHMEM_GIC_H_
-#define _NVSHMEM_GIC_H_
+#ifndef _NVSHMEMI_GIC_H_
+#define _NVSHMEMI_GIC_H_
 
 #include <linux/types.h>
 #include <stdint.h>
@@ -13,115 +13,150 @@
 
 #include "nvshmemi_util.h"
 
+#define NVSHMEMI_GIC_MIN_QP_DEPTH 4
+#define NVSHMEMI_GIC_MAX_QP_DEPTH 32768
+
 #define NVSHMEMI_GIC_CQE_SIZE 64
-#define NVSHMEMI_GIC_MAX_INLINE_SIZE 8
+#define NVSHMEMI_GIC_MAX_INLINE_SIZE (8 * 32)
+#define NVSHMEMI_GIC_IBUF_SLOT_SIZE 8
+
+#define NVSHMEMI_GIC_MAX_CONST_LKEYS 64
+#define NVSHMEMI_GIC_MAX_CONST_RKEYS 64
+#define NVSHMEMI_GIC_MAX_CONST_DCTS 128
+
+/* These values are not defined on all systems.
+ * However, they can be traced back to a kernel enum with
+ * these values.
+ */
+#ifndef MLX5DV_UAR_ALLOC_TYPE_BF
+#define MLX5DV_UAR_ALLOC_TYPE_BF 0x0
+#endif
+
+#ifndef MLX5DV_UAR_ALLOC_TYPE_NC
+#define MLX5DV_UAR_ALLOC_TYPE_NC 0x1
+#endif
+
+typedef enum {
+    NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_CTA = 0,
+    NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_SM,
+    NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_WARP,
+    NVSHMEMI_GIC_DEVICE_DCI_MAP_TYPE_DCT
+} nvshmemi_gic_device_dci_map_type_t;
 
 typedef struct {
-    int             lock;
-    uint32_t        cqn;
-    uint32_t        ncqes;
     void           *cqe;
-    __be32         *dbrec;
     uint64_t       *cons_head;
     uint64_t       *cons_tail;
+    uint64_t       *wqe_head;
+    uint64_t       *wqe_tail;
+    uint32_t        cqn;
+    uint32_t        ncqes;
+    uint32_t        qpn;
+    __be32         *dbrec;
 } nvshmemi_gic_device_cq_t;
 
-// The ext flag (in dqp_dct) must be set to disable.
-typedef struct {
-    __be64		dc_key;
-	__be32		dqp_dct;
-	uint8_t		stat_rate_sl;
-	uint8_t		fl_mlid;
-	__be16		rlid;
-} __attribute__((__packed__)) __attribute__((__aligned__(4)))
-nvshmemi_gic_mlx5_wqe_half_av_t;
 
+// Variables for queue management.
+// They are always in global memory.
 typedef struct {
-    void           *wqe;
-    __be32         *dbrec;
-    void           *bf;
-    nvshmemi_gic_device_cq_t *cq;
-    uint16_t        nwqes;
-    uint64_t        curr_idx;
-    uint64_t        cons_head;
-    uint64_t        cons_tail;
-    uint64_t        get_head;
-    uint64_t        get_tail;   // get_tail > get_head is possible
-} nvshmemi_gic_device_wq_t;
-
-#define NVSHMEMI_GIC_DS_MIN 2
-#define NVSHMEMI_GIC_DS_MAX 6
-#define nvshmemi_gic_ctrl_seg_ds_to_template_idx(ds) ((ds) - NVSHMEMI_GIC_DS_MIN)
-#define NVSHMEMI_GIC_MAX_WQEBB_PER_WQE ((int)((NVSHMEMI_GIC_DS_MAX) + 4 - 1) / 4)
-#define NVSHMEMI_GIC_MIN_NUM_BATCH_SIZE 2
-
-typedef struct {
-    int lock;
-    uint32_t qpn;
-    nvshmemi_gic_device_wq_t tx_wq;
-    struct mlx5_wqe_ctrl_seg ctrl_seg_templates[NVSHMEMI_GIC_DS_MAX - NVSHMEMI_GIC_DS_MIN + 1];
-    nvshmemi_gic_mlx5_wqe_half_av_t half_av_seg_template;
+    int             post_send_lock;
     struct {
-        void *buf;  /* first uint64_t is for CST */
-        __be32 lkey;
-        __be32 rkey;
-    } internal_buf;
+        // All indexes are in wqebb unit
+        uint64_t    wqe_head;   // next not-yet-reserved wqe idx
+        uint64_t    wqe_tail;   // next not-yet-posted-but-submitted wqe idx
+        uint64_t    cons_head;  // num wqes that have been posted
+        uint64_t    cons_tail;  // num wqes that have been polled
+        uint64_t    get_head;   // last wqe idx + 1 with a "fetch" operation (g, get, amo_fetch)
+        uint64_t    get_tail;   // last wqe idx + 1 polled with cst; get_tail > get_head is possible
+    } tx_wq;
+    struct {
+        uint64_t    head;
+        uint64_t    tail;
+    } ibuf;
+} __attribute__((__aligned__(8)))
+nvshmemi_gic_device_dci_management_t;
+
+typedef struct nvshmemi_gic_device_dci {
+    uint32_t            qpn;
+    struct {
+        uint32_t        nslots; // num slots for fetch; always a power of 2
+        void           *buf;    // first NVSHMEMI_GIC_IBUF_SLOT_SIZE is for non-fetch
+        __be32          lkey;
+        __be32          rkey;
+    } ibuf;                     // Internal buffer
+    struct {
+        uint16_t        nwqes;  // num wqes; some wqes may consume n wqebbs
+        void           *wqe;
+        __be32         *dbrec;
+        void           *bf;
+        nvshmemi_gic_device_cq_t *cq;
+    } tx_wq;
+    nvshmemi_gic_device_dci_management_t *mvars;    // management variables
 } nvshmemi_gic_device_dci_t;
 
-typedef struct {
-    __be32      qpn;
-    __be64      access_key;
-    __be16      lid;
-} nvshmemi_gic_device_dct_t;
+typedef struct mlx5_wqe_av nvshmemi_gic_device_dct_t;
 
-typedef struct nvshmemi_gic_device_mhandle {
-    union {
-        __be32  lkey;   /* for local */
-        __be32 *rkeys;  /* for remote; array of size npes */
-    };
-    uint64_t   start;
-    uint64_t   end;
-    struct nvshmemi_gic_device_mhandle *next;
-} nvshmemi_gic_device_mhandle_t;
+typedef struct nvshmemi_gic_device_local_only_mhandle {
+    __be32      lkey;
+    uint64_t    start;
+    uint64_t    end;
+    struct nvshmemi_gic_device_local_only_mhandle *next;
+} nvshmemi_gic_device_local_only_mhandle_t;
 
 typedef struct {
-    nvshmemi_gic_device_cq_t *cqs;
-    nvshmemi_gic_device_dci_t *dcis;
-    nvshmemi_gic_device_dct_t *dcts;
-    nvshmemi_gic_device_mhandle_t *local_mhandle_head;
-    nvshmemi_gic_device_mhandle_t *remote_mhandle_head;
-    uint32_t ndcis;
-    uint32_t ndcis_per_sm;
+    size_t   log2_cumem_granularity;
+    bool     use_cuda_vmm;
+    uint32_t num_shared_dcis;
+    uint32_t num_exclusive_dcis;
+    nvshmemi_gic_device_dci_map_type_t dci_map_type;
     uint32_t ndcts_per_pe;
-    bool nic_buf_on_gpumem;
+    uint32_t num_dct_groups;
+    uint32_t num_requests_in_batch; /* always a power of 2 */
+    bool     nic_buf_on_gpumem;
+    bool     support_half_av_seg;
+
+    struct {
+        nvshmemi_gic_device_cq_t  *cqs;
+        nvshmemi_gic_device_dci_t *dcis;
+        nvshmemi_gic_device_dct_t *dcts;
+        nvshmemi_gic_device_local_only_mhandle *local_only_mhandle_head;
+
+        // For lkeys that cannot be contained in constmem.lkeys.
+        // lkeys[idx - NVSHMEMI_GIC_MAX_CONST_LKEYS] gives the lkey of chunk idx.
+        __be32  *lkeys; 
+
+        // For rkeys that cannot be contained in constmem.rkeys.
+        // rkeys[(idx * npes + pe) - NVSHMEMI_GIC_MAX_CONST_RKEYS] gives rkey of chunck idx targeting peer pe.
+        __be32  *rkeys; 
+    } globalmem;
+
+    struct {
+        // lkeys[idx] gives the lkey of chunk idx.
+        __be32 lkeys[NVSHMEMI_GIC_MAX_CONST_LKEYS];
+
+        // rkeys[idx * npes + pe] gives rkey of chunck idx targeting peer pe.
+        __be32 rkeys[NVSHMEMI_GIC_MAX_CONST_RKEYS];
+
+        nvshmemi_gic_device_dct_t dcts[NVSHMEMI_GIC_MAX_CONST_DCTS];
+    } constmem;
 } nvshmemi_gic_device_state_t;
 
-#ifdef __CUDA_ARCH__
-template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
-__device__ void nvshmemi_gic_rma_nbi(void *rptr, void *lptr, size_t bytes, int pe);
+#if defined(__CUDACC_RDC__)
+#define EXTERN_CONSTANT extern __constant__
+EXTERN_CONSTANT nvshmemi_gic_device_state_t nvshmemi_gic_device_state_d;
+#undef EXTERN_CONSTANT
+#endif
 
-template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
-__device__ void nvshmemi_gic_rma(void *rptr, void *lptr, size_t bytes, int pe);
 
-template <typename T>
-__device__ void nvshmemi_gic_rma_p(void *rptr, const T value, int pe);
+#ifdef __cplusplus
+extern "C" {
+#endif
+void nvshmemx_gic_get_device_state(nvshmemi_gic_device_state_t **gic_device_state);
+int nvshmemi_gic_set_device_state(nvshmemi_gic_device_state_t *gic_device_state);
 
-template<typename T>
-__device__ T nvshmemi_gic_rma_g(void *rptr, int pe);
+int nvshmemi_gic_update_device_state();
+#ifdef __cplusplus
+}
+#endif
 
-template <typename T>
-__device__ void nvshmemi_gic_amo_nonfetch(void *rptr, const T value, int pe, nvshmemi_amo_t op);
-
-template <typename T>
-__device__ T nvshmemi_gic_amo_fetch(void *rptr, const T value, const T compare, int pe, nvshmemi_amo_t op);
-
-template <threadgroup_t SCOPE>
-__device__ void nvshmemi_gic_put_signal(void *rptr, void *lptr, size_t bytes, 
-    void *sig_rptr, uint64_t signal, nvshmemi_amo_t sig_op, int pe, bool is_nbi);
-
-__device__ void nvshmemi_gic_quiet();
-__device__ void nvshmemi_gic_fence();
-__device__ void nvshmemi_gic_enforce_consistency_at_target(bool use_membar);
-#endif /* __CUDA_ARCH__ */
-
-#endif /* _NVSHMEM_DEFINES_H_ */
+#endif /* _NVSHMEMI_GIC_H_ */

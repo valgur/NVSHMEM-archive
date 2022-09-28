@@ -83,20 +83,15 @@ out:
     return status;
 }
 
-int nvshmemi_get_pcie_attrs(pcie_id_t *pcie_id, CUdevice cudev) {
+int nvshmemi_get_pcie_attrs(pcie_id_t *pcie_id, int devid) {
     int status = 0;
+    cudaDeviceProp prop;
 
-    status = cuDeviceGetAttribute(&pcie_id->dev_id, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, cudev);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuDeviceGetAttribute failed \n");
-
-    status = cuDeviceGetAttribute(&pcie_id->bus_id, CU_DEVICE_ATTRIBUTE_PCI_BUS_ID, cudev);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuDeviceGetAttribute failed \n");
-
-    status = cuDeviceGetAttribute(&pcie_id->domain_id, CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, cudev);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuDeviceGetAttribute failed \n");
+    status = cudaGetDeviceProperties(&prop, devid);
+    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cudaDeviceGetAttribute failed \n");
+    pcie_id->dev_id = prop.pciDeviceID;
+    pcie_id->bus_id = prop.pciBusID;
+    pcie_id->domain_id = prop.pciDomainID;
 
 out:
     return status;
@@ -107,7 +102,7 @@ int nvshmemi_detect_same_device(nvshmemi_state_t *state) {
     nvshmem_transport_pe_info_t my_info;
 
     my_info.pe = state->mype;
-    status = nvshmemi_get_pcie_attrs(&my_info.pcie_id, state->cudevice);
+    status = nvshmemi_get_pcie_attrs(&my_info.pcie_id, state->device_id);
     NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "getPcieAttrs failed \n");
 
     my_info.hostHash = getHostHash();
@@ -155,11 +150,11 @@ out:
 
 static int get_cuda_bus_id(int cuda_dev, char *bus_id) {
     int status = NVSHMEMX_SUCCESS;
-    CUresult cu_err;
+    cudaError_t err;
 
-    cu_err = cuDeviceGetPCIBusId(bus_id, MAX_BUSID_SIZE, cuda_dev);
-    if (cu_err != CUDA_SUCCESS) {
-        ERROR_PRINT("cuDeviceGetPCIBusId failed with error: %d \n", cu_err);
+    err = cudaDeviceGetPCIBusId(bus_id, MAX_BUSID_SIZE, cuda_dev);
+    if (err != cudaSuccess) {
+        ERROR_PRINT("cudaDeviceGetPCIBusId failed with error: %d \n", err);
         status = NVSHMEMX_ERROR_INTERNAL;
         goto out;
     }
@@ -280,7 +275,7 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
     /* Allocate data structures end */
 
     /* Gather GPU and NIC paths start */
-    status = get_cuda_bus_id(state->cudevice, gpu_info.gpu_bus_id);
+    status = get_cuda_bus_id(state->device_id, gpu_info.gpu_bus_id);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda busid failed \n");
 
     status = nvshmemi_boot_handle.allgather((void *)&gpu_info, (void *)gpu_info_all,

@@ -32,4 +32,4 @@ __device__ void nvshmemi_transfer_amo_nonfetch(void *rptr, T value, int pe, nvsh
 __device__ void nvshmemi_transfer_quiet(bool use_membar);
 __device__ void nvshmemi_transfer_fence();
 __device__ void nvshmemi_transfer_enforce_consistency_at_target(bool use_membar);
-#endif /* _NVSHMEM_TRANSFER_H_ */
+#endif /* _NVSHMEMI_TRANSFER_H_ */

@@ -16,6 +16,10 @@ NVSHMEM {
           nvshmemi_is_nvshmem_bootstrapped;
           nvshmemi_is_mpg_run;
           nvshmemi_is_limited_mpg_run;
+          nvshmemi_register_state_change_handler;
+          nvshmemi_update_device_state;
+          pfn_*;
+          nvshmemi_is_version_compatible;
           p_err_str;
   local: *;
 };

@@ -8,10 +8,12 @@
 #include <assert.h>
 #include <string.h>
 #include <shmem.h>
+#include <stdbool.h>
 
 #include "nvshmem_bootstrap.h"
 #include "nvshmemx_error.h"
 #include "bootstrap_util.h"
+#include "nvshmem_constants.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
@@ -106,8 +108,13 @@ out:
     return status;
 }
 
-int nvshmemi_bootstrap_plugin_init(void *arg, bootstrap_handle_t *handle) {
+int nvshmemi_bootstrap_plugin_init(void *arg, bootstrap_handle_t *handle, const int nvshmem_version) {
     int status = 0;
+    int bootstrap_version = NVSHMEM_VENDOR_VERSION;
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
+        BOOTSTRAP_ERROR_PRINT("SHMEM bootstrap version (%d) is not compatible with NVSHMEM version (%d)", bootstrap_version, nvshmem_version);
+        exit(-1);
+    }
 
     if (arg == NULL || *(int*)arg) {
         shmem_init();

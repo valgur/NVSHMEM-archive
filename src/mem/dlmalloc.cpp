@@ -2258,8 +2258,8 @@ mchunkptr mem2chunk(void* mem) {
     CUdeviceptr p_d;
 
     p_d = (CUdeviceptr)(((char*)mem) - sizeof(uintptr_t));
-    CUDA_CHECK(cuMemcpyDtoHAsync((void*)&p, p_d, sizeof(uintptr_t), nvshmemi_state->my_stream));
-    CUDA_CHECK(cuStreamSynchronize(nvshmemi_state->my_stream));
+    CUDA_RUNTIME_CHECK(cudaMemcpyAsync((void*)&p, p_d, sizeof(uintptr_t), cudaMemcpyDeviceToHost, nvshmemi_state->my_stream));
+    CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));
 
     return (mchunkptr)p;
 }
@@ -2507,9 +2507,9 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
                                         align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t))); \
         INFO(NVSHMEM_MEM, "nvshmem_adjust_mchunk %p %x %x", p->nvshmem_info.ptr,                \
              align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)), adjust_bytes);              \
-        CUDA_CHECK(                                                                             \
-            cuMemcpyDtoDAsync(ptr + adjust_bytes, ptr, sizeof(uintptr_t), nvshmemi_state->my_stream));  \
-        CUDA_CHECK(cuStreamSynchronize(nvshmemi_state->my_stream));                              \
+        CUDA_RUNTIME_CHECK(                                                                        \
+            cudaMemcpyAsync(ptr + adjust_bytes, ptr, sizeof(uintptr_t), cudaMemcpyDeviceToDevice, nvshmemi_state->my_stream));  \
+        CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));                        \
         p->nvshmem_info.offset = (uintptr_t)adjust_bytes;                                       \
     } while (0)
 
@@ -2534,11 +2534,11 @@ char* tbase_global = 0;
         INFO(NVSHMEM_MEM, "nvshmem_suballocate_mchunk %p %lld", dest,                              \
              (char*)dest - tbase_global);                                                          \
         /*XXX:this can advance the ptr by another 511 bytes*/                                      \
-        CUDA_CHECK(cuMemcpyHtoDAsync(                                                              \
-            (CUdeviceptr)(p->nvshmem_info.ptr +                                                    \
-                          align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t))),                  \
-            (void*)&p, sizeof(uintptr_t), nvshmemi_state->my_stream));                              \
-        CUDA_CHECK(cuStreamSynchronize(nvshmemi_state->my_stream));                                 \
+        CUDA_RUNTIME_CHECK(cudaMemcpyAsync(                                                        \
+                           p->nvshmem_info.ptr +                                                   \
+                          align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)),                   \
+            (void*)&p, sizeof(uintptr_t), cudaMemcpyHostToDevice, nvshmemi_state->my_stream));     \
+        CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));                      \
     } while (0)
 #endif
 
@@ -5447,9 +5447,9 @@ static void init_top_nvshmem(mstate m, mchunkptr p, char* d, size_t dsize) {
     p->head = dsize | PINUSE_BIT;
 
     d = d + offset;
-    CUDA_CHECK(
-        cuMemcpyHtoDAsync((CUdeviceptr)d, (void*)&p, sizeof(uintptr_t), nvshmemi_state->my_stream));
-    CUDA_CHECK(cuStreamSynchronize(nvshmemi_state->my_stream));
+    CUDA_RUNTIME_CHECK(
+        cudaMemcpyAsync((CUdeviceptr)d, (void*)&p, sizeof(uintptr_t), cudaMemcpyHostToDevice, nvshmemi_state->my_stream));
+    CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));
 
     m->trim_check = mparams.trim_threshold; /* reset on each update */
 }

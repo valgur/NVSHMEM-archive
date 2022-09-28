@@ -12,7 +12,7 @@
 
 int nvshmemi_proxy_rma_launcher(void *args[], cudaStream_t cstrm, bool is_nbi, bool is_signal);
 
-static int nvshmemi_p2p_rma_optimized(CUstream custrm /* internal stream */, CUevent cuev, rma_verb_t verb,
+static int nvshmemi_p2p_rma_optimized(cudaStream_t custrm /* internal stream */, cudaEvent_t cuev, rma_verb_t verb,
                             rma_memdesc_t *dest, rma_memdesc_t *src, rma_bytesdesc_t bytesdesc,
                             uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
     int status = 0;
@@ -20,14 +20,11 @@ static int nvshmemi_p2p_rma_optimized(CUstream custrm /* internal stream */, CUe
     bool is_single_word = ((verb.desc == NVSHMEMI_OP_P) || (verb.desc == NVSHMEMI_OP_G)) ? true : false;
     if (verb.is_stream) {
         if (verb.is_nbi) {
-            status = cuEventRecord(cuev, (CUstream)verb.cstrm);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuEventRecord() failed\n");
-            status = cuStreamWaitEvent(custrm, cuev, 0);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamWaitEvent() failed\n");
+            CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(cuev, verb.cstrm), status, out);
+            CUDA_RUNTIME_CHECK_GOTO(cudaStreamWaitEvent(custrm, cuev, 0), status, out);
             if (is_contig) { /*can include iput,iget in future*/
-                status = cuMemcpyDtoDAsync((CUdeviceptr)dest->ptr, (CUdeviceptr)src->ptr,
-                                           bytesdesc.nelems * bytesdesc.elembytes, custrm);
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyDtoDAsync() failed\n");
+                CUDA_RUNTIME_CHECK_GOTO(cudaMemcpyAsync(dest->ptr, src->ptr,
+                                           bytesdesc.nelems * bytesdesc.elembytes, cudaMemcpyDeviceToDevice, custrm), status, out);
                 if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)
                     nvshmemi_signal_op_on_stream(sig_addr, signal, sig_op, pe, custrm);
                 nvshmemi_state->used_internal_streams = 1;
@@ -36,85 +33,55 @@ static int nvshmemi_p2p_rma_optimized(CUstream custrm /* internal stream */, CUe
             if (is_contig) {
                 if (is_single_word) {
                     if (verb.desc == NVSHMEMI_OP_P) {
-                        status = cuMemcpyHtoDAsync((CUdeviceptr)dest->ptr, src->ptr,
+                        CUDA_RUNTIME_CHECK_GOTO(cudaMemcpyAsync(dest->ptr, src->ptr,
                                                    bytesdesc.nelems * bytesdesc.elembytes,
-                                                   (CUstream)verb.cstrm);
-                        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                     "cuMemcpyHtoDAsync() failed\n");
+                                                   cudaMemcpyHostToDevice, verb.cstrm), status, out);
                     } else { /*!is P*/
-                        status = cuMemcpyDtoHAsync(dest->ptr, (CUdeviceptr)src->ptr,
+                        CUDA_RUNTIME_CHECK_GOTO(cudaMemcpyAsync(dest->ptr, src->ptr,
                                                    bytesdesc.nelems * bytesdesc.elembytes,
-                                                   (CUstream)verb.cstrm);
-                        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                     "cuMemcpyDtoHAsync() failed\n");
+                                                   cudaMemcpyDeviceToHost, verb.cstrm), status, out);
                     }
                 } else { /*!is_single_word*/
-                    status = cuMemcpyDtoDAsync((CUdeviceptr)dest->ptr, (CUdeviceptr)src->ptr,
+                    CUDA_RUNTIME_CHECK_GOTO(cudaMemcpyAsync(dest->ptr, src->ptr,
                                                bytesdesc.nelems * bytesdesc.elembytes,
-                                               (CUstream)verb.cstrm);
-                    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                 "cuMemcpyDtoDAsync() failed \n");
+                                               cudaMemcpyDeviceToDevice, verb.cstrm), status, out);
                     if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)
                         nvshmemi_signal_op_on_stream(sig_addr, signal, sig_op, pe, verb.cstrm);
                 }
             } else { /*!is_contig*/
-                CUDA_MEMCPY2D pCopy;
-                memset(&pCopy, 0, sizeof(pCopy));
-                pCopy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-                pCopy.dstDevice = (CUdeviceptr)dest->ptr;
-                pCopy.dstPitch = bytesdesc.deststride * bytesdesc.elembytes;
-                pCopy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-                pCopy.srcDevice = (CUdeviceptr)src->ptr;
-                pCopy.srcPitch = bytesdesc.srcstride * bytesdesc.elembytes;
-                pCopy.WidthInBytes = bytesdesc.elembytes;
-                pCopy.Height = bytesdesc.nelems;
-                status = cuMemcpy2DAsync(&pCopy, (CUstream)verb.cstrm);
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpy2DAsync() failed\n");
+                CUDA_RUNTIME_CHECK_GOTO(cudaMemcpy2DAsync(dest->ptr, bytesdesc.deststride * bytesdesc.elembytes, 
+                                                          src->ptr,  bytesdesc.srcstride * bytesdesc.elembytes,
+                                                          bytesdesc.elembytes, bytesdesc.nelems, cudaMemcpyDeviceToDevice,
+                                                          verb.cstrm), status, out);
             } /*is_contig*/
         }     /*is_nbi*/
     } else {  /*!is_stream*/
         if (verb.is_nbi) {
             if (is_contig) { /*can include iput,iget in future*/
-                status = cuMemcpyDtoDAsync((CUdeviceptr)dest->ptr, (CUdeviceptr)src->ptr,
-                                           bytesdesc.nelems * bytesdesc.elembytes, custrm);
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyDtoDAsync() failed\n");
+                CUDA_RUNTIME_CHECK_GOTO(cudaMemcpyAsync(dest->ptr, src->ptr, bytesdesc.nelems * bytesdesc.elembytes,
+                                                        cudaMemcpyDeviceToDevice,  custrm), status, out);
             }
         } else { /*!is_nbi*/
             if (is_contig) {
                 if (is_single_word) {
                     if (verb.desc == NVSHMEMI_OP_P) {
-                        status = cuMemcpyHtoDAsync((CUdeviceptr)dest->ptr, src->ptr,
-                                                   bytesdesc.nelems * bytesdesc.elembytes, custrm);
-                        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                     "cuMemcpyHtoDAsync() failed\n");
+                        CUDA_RUNTIME_CHECK_GOTO(cudaMemcpyAsync(dest->ptr, src->ptr, bytesdesc.nelems * bytesdesc.elembytes,
+                                                                cudaMemcpyHostToDevice, custrm), status, out);
                     } else { /*!is P*/
-                        status = cuMemcpyDtoHAsync(dest->ptr, (CUdeviceptr)src->ptr,
-                                                   bytesdesc.nelems * bytesdesc.elembytes, custrm);
-                        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                     "cuMemcpyDtoHAsync() failed\n");
+                        CUDA_RUNTIME_CHECK_GOTO(cudaMemcpyAsync(dest->ptr, src->ptr, bytesdesc.nelems * bytesdesc.elembytes,
+                                                                cudaMemcpyDeviceToHost, custrm), status, out);
                     }
                 } else { /*!is_single_word*/
-                    status = cuMemcpyDtoDAsync((CUdeviceptr)dest->ptr, (CUdeviceptr)src->ptr,
-                                               bytesdesc.nelems * bytesdesc.elembytes, custrm);
-                    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                 "cuMemcpyDtoDAsync() failed\n");
+                    CUDA_RUNTIME_CHECK_GOTO(cudaMemcpyAsync(dest->ptr, src->ptr, bytesdesc.nelems * bytesdesc.elembytes,
+                                                            cudaMemcpyDeviceToDevice, custrm), status, out);
                 }
             } else { /*!is_contig*/
-                CUDA_MEMCPY2D pCopy;
-                memset(&pCopy, 0, sizeof(pCopy));
-                pCopy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-                pCopy.dstDevice = (CUdeviceptr)dest->ptr;
-                pCopy.dstPitch = bytesdesc.deststride * bytesdesc.elembytes;
-                pCopy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-                pCopy.srcDevice = (CUdeviceptr)src->ptr;
-                pCopy.srcPitch = bytesdesc.srcstride * bytesdesc.elembytes;
-                pCopy.WidthInBytes = bytesdesc.elembytes;
-                pCopy.Height = bytesdesc.nelems;
-                status = cuMemcpy2DAsync(&pCopy, custrm);
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpy2DAsync() failed\n");
+                CUDA_RUNTIME_CHECK_GOTO(cudaMemcpy2DAsync(dest->ptr, bytesdesc.deststride * bytesdesc.elembytes,
+                                                          src->ptr, bytesdesc.srcstride * bytesdesc.elembytes,
+                                                          bytesdesc.elembytes, bytesdesc.nelems, cudaMemcpyDeviceToDevice, custrm),
+                                                          status, out);
             } /*is_contig*/
-            status = cuStreamSynchronize(custrm);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamSynchronize() failed \n");
+            CUDA_RUNTIME_CHECK_GOTO(cudaStreamSynchronize(custrm), status, out);
         } /*is_nbi*/
     }     /*is_stream*/
 
@@ -122,7 +89,7 @@ out:
     return status;
 }
 
-static int nvshmemi_p2p_rma_registered(CUstream custrm /* internal stream */, CUevent cuev, rma_verb_t verb,
+static int nvshmemi_p2p_rma_registered(cudaStream_t custrm /* internal stream */, cudaEvent_t cuev, rma_verb_t verb,
                             rma_memdesc_t *dest, rma_memdesc_t *src, rma_bytesdesc_t bytesdesc,
                             uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
     cudaStream_t stream_for_op;
@@ -135,10 +102,8 @@ static int nvshmemi_p2p_rma_registered(CUstream custrm /* internal stream */, CU
     }
 
     if (verb.is_nbi && verb.is_stream) {
-        status = cuEventRecord(cuev, (CUstream)verb.cstrm);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuEventRecord() failed\n");
-        status = cuStreamWaitEvent(custrm, cuev, 0);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamWaitEvent() failed\n");
+        CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(cuev, verb.cstrm), status, out);
+        CUDA_RUNTIME_CHECK_GOTO(cudaStreamWaitEvent(custrm, cuev, 0), status, out);
     }
 
     if ((bytesdesc.srcstride == 1) && (bytesdesc.deststride == 1)) {
@@ -153,17 +118,16 @@ static int nvshmemi_p2p_rma_registered(CUstream custrm /* internal stream */, CU
             nvshmemi_state->used_internal_streams = 1;
     } else {
         status = cudaMemcpy2DAsync(dest->ptr, bytesdesc.deststride * bytesdesc.elembytes,
-                                    src->ptr, bytesdesc.srcstride * bytesdesc.elembytes,
-                                    bytesdesc.elembytes, bytesdesc.nelems, cudaMemcpyDefault,
-                                    stream_for_op);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpy2DAsync() failed\n");
+                                   src->ptr, bytesdesc.srcstride * bytesdesc.elembytes,
+                                   bytesdesc.elembytes, bytesdesc.nelems, cudaMemcpyDefault,
+                                   stream_for_op);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cudaMemcpy2DAsync() failed\n");
         if (verb.is_nbi)
             nvshmemi_state->used_internal_streams = 1;
     }
 
     if (!verb.is_stream && !verb.is_nbi) {
-        status = cuStreamSynchronize(custrm);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamSynchronize() failed \n");
+        CUDA_RUNTIME_CHECK_GOTO(cudaStreamSynchronize(custrm), status, out);
     }
 
 out:
@@ -175,8 +139,8 @@ static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, size_t n
                                                         void *local, void *remote,
                                                         ptrdiff_t lstride, ptrdiff_t rstride,
                                                         int sig_op, int pe) {
-    CUstream custrm = nvshmemi_state->custreams[pe % MAX_PEER_STREAMS];
-    CUevent cuev = nvshmemi_state->cuevents[pe % MAX_PEER_STREAMS];
+    cudaStream_t custrm = nvshmemi_state->custreams[pe % MAX_PEER_STREAMS];
+    cudaEvent_t cuev = nvshmemi_state->cuevents[pe % MAX_PEER_STREAMS];
     void *destptr_actual, *srcptr_actual;
     rma_memdesc_t dest, src;
     rma_bytesdesc_t bytesdesc = {(size_t)nelems, (int)elembytes, lstride, rstride};

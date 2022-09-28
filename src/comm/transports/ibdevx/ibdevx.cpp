@@ -8,12 +8,11 @@
 #include "nvshmem_internal.h"
 
 #include "transport_common.h"
+#include "transport_ib_common.h"
 #include "ibdevx.h"
 
 #include <math.h>
 #include "infiniband/verbs.h"
-#include "mlx5_ifc.h"
-#include "infiniband/mlx5dv.h"
 #include <string.h>
 #include <assert.h>
 #include <map>
@@ -96,7 +95,7 @@ struct __attribute__ ((__packed__)) ibdevx_rw_inline_data_seg {
     static_assert(sizeof(struct ibdevx_rw_inline_data_seg) == 16, "static_assert(sizeof(T) == 16) failed");
 #endif
 
-struct __attribute__ ((__packed__)) ibdevx_rw_wqe {
+struct __attribute__ ((__packed__, aligned(4))) ibdevx_rw_wqe {
     struct mlx5_wqe_ctrl_seg ctrl;
     struct mlx5_wqe_raddr_seg raddr;
     union {
@@ -143,7 +142,7 @@ struct __attribute__ ((__packed__)) ibdevx_atomic_64_masked_compare_swap_seg {
     static_assert(sizeof(struct ibdevx_atomic_64_masked_compare_swap_seg) == 16, "static_assert(sizeof(T) >= 8) failed");
 #endif
 
-struct __attribute__ ((__packed__)) ibdevx_atomic_32_wqe {
+struct __attribute__ ((__packed__, aligned(4))) ibdevx_atomic_32_wqe {
     struct mlx5_wqe_ctrl_seg ctrl;
     struct mlx5_wqe_raddr_seg raddr;
     union {
@@ -157,7 +156,7 @@ struct __attribute__ ((__packed__)) ibdevx_atomic_32_wqe {
     static_assert(sizeof(struct ibdevx_atomic_32_wqe) == 64, "static_assert(sizeof(T) >= 8) failed");
 #endif
 
-struct __attribute__ ((__packed__)) ibdevx_atomic_64_amo_wqe {
+struct __attribute__ ((__packed__, aligned(4))) ibdevx_atomic_64_amo_wqe {
     struct mlx5_wqe_ctrl_seg ctrl;
     struct mlx5_wqe_raddr_seg raddr;
     union {
@@ -224,16 +223,11 @@ typedef struct {
     int proxy_ep_idx;
     int ep_count;
     int selected_dev_id;
+    bool dmabuf_support;
     struct ibdevx_ep **ep;
 } transport_ibdevx_state_t;
 
-struct ibdevx_mem_handle {
-    uint32_t lkey;
-    uint32_t rkey;
-    ibv_mr *mr;
-};
-
-struct ibdevx_mem_handle local_dummy_mr = {0,};
+struct nvshmemt_ib_common_mem_handle local_dummy_mr;
 
 pthread_mutex_t ibdevx_mutex_send_progress;
 
@@ -255,8 +249,8 @@ int nvshmemt_ibdevx_show_info(nvshmem_mem_handle_t *mem_handles, int transport_i
     for (int i = 0; i < npes; ++i) {
         INFO(NVSHMEM_TRANSPORT, "[%d] mem_handle %d : %p", mype, transport_id,
              &mem_handles[i * transport_count + transport_id]);
-        struct ibdevx_mem_handle *mem_handle =
-            (struct ibdevx_mem_handle *)&mem_handles[i * transport_count + transport_id];
+        struct nvshmemt_ib_common_mem_handle *mem_handle =
+            (struct nvshmemt_ib_common_mem_handle *)&mem_handles[i * transport_count + transport_id];
         INFO(NVSHMEM_TRANSPORT, "[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey,
              mem_handle->rkey, mem_handle->mr);
     }
@@ -716,21 +710,10 @@ int nvshmemt_ibdevx_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)transport->state;
     struct ibdevx_device *device =
         ((struct ibdevx_device *)ibdevx_state->devices + ibdevx_state->dev_ids[ibdevx_state->selected_dev_id]);
-    struct ibdevx_mem_handle *handle = (struct ibdevx_mem_handle *)mem_handle;
 
-    struct ibv_mr *mr = NULL;
-
-    assert(sizeof(struct ibdevx_mem_handle) <= NVSHMEM_MEM_HANDLE_SIZE);
-
-    mr = ftable.reg_mr(device->pd, buf, length,
-                       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                           IBV_ACCESS_REMOTE_ATOMIC);
-    NULL_ERROR_JMP(mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "mem registration failed \n");
-
-    handle->lkey = mr->lkey;
-    handle->rkey = mr->rkey;
-    handle->mr = mr;
-    INFO(NVSHMEM_TRANSPORT, "ibv_reg_mr handle %p handle->mr %p", handle, handle->mr);
+    status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf,
+                                               length, local_only, ibdevx_state->dmabuf_support);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to register memory handle.");
 
     if (local_dummy_mr.mr == NULL) {
         uint64_t *local_dummy_mem;
@@ -750,15 +733,7 @@ out:
 }
 
 int nvshmemt_ibdevx_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
-    int status = 0;
-    struct ibdevx_mem_handle *handle = (struct ibdevx_mem_handle *)mem_handle;
-
-    INFO(NVSHMEM_TRANSPORT, "ibv_dereg_mr handle %p handle->mr %p", handle, handle->mr);
-    status = ftable.dereg_mr((struct ibv_mr *)handle->mr);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_dereg_mr failed \n");
-
-out:
-    return status;
+    return nvshmemt_ib_common_release_mem_handle(&ftable, mem_handle);
 }
 
 int nvshmemt_ibdevx_finalize(nvshmem_transport_t transport) {
@@ -921,12 +896,12 @@ int nvshmemt_ibdevx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb
 
     /* TODO: store the rkeys in BE so we don't have to convert. */
     wqe->raddr.raddr = htobe64((uintptr_t)remote->ptr);
-    wqe->raddr.rkey = htobe32(((struct ibdevx_mem_handle *)remote->handle)->rkey);
+    wqe->raddr.rkey = htobe32(((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey);
 
     if (verb.desc != NVSHMEMI_OP_P) {
         assert(bytesdesc.nelems < (UINT32_MAX / bytesdesc.elembytes));
         wqe->data.data_seg.byte_count = htobe32((uint32_t)(bytesdesc.nelems * bytesdesc.elembytes));
-        wqe->data.data_seg.lkey = htobe32(((struct ibdevx_mem_handle *)local->handle)->lkey);
+        wqe->data.data_seg.lkey = htobe32(((struct nvshmemt_ib_common_mem_handle *)local->handle)->lkey);
         wqe->data.data_seg.addr = htobe64((uintptr_t)local->ptr);
     } else {
         uint32_t bytecount = bytesdesc.nelems * bytesdesc.elembytes;
@@ -974,7 +949,7 @@ static inline int nvshmemt_ibdevx_amo_32(struct nvshmem_transport *tcurr, int pe
                            amo_bytesdesc_t bytesdesc, int is_proxy) {
     struct ibdevx_ep            *ep;
     struct ibdevx_atomic_32_wqe *wqe;
-    struct ibdevx_mem_handle    *ret_handle;
+    struct nvshmemt_ib_common_mem_handle    *ret_handle;
     transport_ibdevx_state_t	*ibdevx_state = (transport_ibdevx_state_t *)tcurr->state;
     int                         status = 0;
 
@@ -1003,14 +978,14 @@ static inline int nvshmemt_ibdevx_amo_32(struct nvshmem_transport *tcurr, int pe
     wqe->ctrl.fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
     wqe->ctrl.qpn_ds = htobe32((uint32_t)(wqe_size / NVSHMEMT_IBDEVX_MLX5_SEND_WQE_DS) | ep->qpid << 8);
     wqe->raddr.raddr = htobe64((uintptr_t)remote->ptr);
-    wqe->raddr.rkey = htobe32(((struct ibdevx_mem_handle *)remote->handle)->rkey);
+    wqe->raddr.rkey = htobe32(((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey);
     wqe->data.byte_count = htobe32((uint32_t)4);
 
     if (verb.desc < NVSHMEMI_AMO_END_OF_NONFETCH) {
         wqe->data.lkey = htobe32(local_dummy_mr.lkey);
         wqe->data.addr = htobe64((uintptr_t)local_dummy_mr.mr->addr);
     } else {
-        ret_handle = (struct ibdevx_mem_handle *)remote->ret_handle;
+        ret_handle = (struct nvshmemt_ib_common_mem_handle *)remote->ret_handle;
         assert(ret_handle != NULL);
         wqe->data.lkey = htobe32(ret_handle->lkey);
         wqe->data.addr = htobe64((uintptr_t)remote->retptr);
@@ -1108,7 +1083,7 @@ static inline int nvshmemt_ibdevx_amo_64(struct nvshmem_transport *tcurr, int pe
     struct mlx5_wqe_data_seg                        *data = NULL, *fa_data = NULL;
     struct ibdevx_atomic_64_amo_wqe                 *wqe;
     struct ibdevx_atomic_64_masked_compare_swap_seg *cs_data, *cs_mask;
-    struct ibdevx_mem_handle                        *ret_handle;
+    struct nvshmemt_ib_common_mem_handle                        *ret_handle;
     transport_ibdevx_state_t			    *ibdevx_state = (transport_ibdevx_state_t *)tcurr->state;
     
     void                                            *wqe_1, *wqe_2;
@@ -1143,7 +1118,7 @@ static inline int nvshmemt_ibdevx_amo_64(struct nvshmem_transport *tcurr, int pe
                                         sizeof(struct mlx5_wqe_raddr_seg) +
                                         sizeof(struct ibdevx_atomic_64_masked_fetch_add_seg));
     raddr->raddr = htobe64((uintptr_t)remote->ptr);
-    raddr->rkey = htobe32(((struct ibdevx_mem_handle *)remote->handle)->rkey);
+    raddr->rkey = htobe32(((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey);
 
     switch(verb.desc) {
         case NVSHMEMI_AMO_FETCH_INC:
@@ -1250,7 +1225,7 @@ static inline int nvshmemt_ibdevx_amo_64(struct nvshmem_transport *tcurr, int pe
         data->lkey = htobe32(local_dummy_mr.lkey);
         data->addr = htobe64((uintptr_t)local_dummy_mr.mr->addr);
     } else {
-        ret_handle = (struct ibdevx_mem_handle *)remote->ret_handle;
+        ret_handle = (struct nvshmemt_ib_common_mem_handle *)remote->ret_handle;
         assert(ret_handle != NULL);
         data->lkey = htobe32(ret_handle->lkey);
         data->addr = htobe64((uintptr_t)remote->retptr);
@@ -1514,6 +1489,8 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
         ibdevx_qp_depth = 1 << (log_qp_depth + 1);
     }
 
+    memset(&local_dummy_mr, 0, sizeof(local_dummy_mr));
+
     transport = (struct nvshmem_transport *)malloc(sizeof(struct nvshmem_transport));
     memset(transport, 0, sizeof(struct nvshmem_transport));
     transport->is_successfully_initialized =
@@ -1582,11 +1559,10 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
         status = ftable.query_device(device->context, &device->device_attr);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_query_device failed \n");
 
-        if (device->device_attr.vendor_id != MELLANOX_VENDOR_ID ||
-            device->device_attr.vendor_part_id < MELLANOX_MIN_DEVICE_ID) {
-                WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
-                continue;
-            }
+        if(!nvshmemt_ib_common_query_mlx5_caps(device->context)) {
+            WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
+            continue;
+        }
 
         NVSHMEMT_IBDEVX_MAX_RD_ATOMIC = (device->device_attr).max_qp_rd_atom;
         INFO(NVSHMEM_INIT,
@@ -1720,6 +1696,18 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
     transport->is_successfully_initialized = true;
 
     *t = transport;
+
+    ibdevx_state->dmabuf_support = false;
+#if CUDA_VERSION >= 11070
+    int flag;
+    status = CUPFN(cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, nvshmemi_state->cudevice));
+    if (status != CUDA_SUCCESS) {
+        status = 0;
+        cudaGetLastError();
+    } else if (flag == 1) {
+        ibdevx_state->dmabuf_support = true;
+    }
+#endif
 
 out:
 

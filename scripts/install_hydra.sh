@@ -15,20 +15,20 @@ fi
 srcdir=$1
 builddir=$2
 
-if test -f $builddir/bin/mpiexec.hdra; then
+if test -f $builddir/bin/mpiexec.hydra; then
     echo "hydra already installed"
     exit 1
 fi
 
 mkdir -p $srcdir
 cd $srcdir
-#Download hydra-3.2 source
-wget http://www.mpich.org/static/downloads/3.2/hydra-3.2.tar.gz
-gunzip hydra-3.2.tar.gz
-tar -xvf hydra-3.2.tar
+#Download hydra-4.0.2 source
+wget http://www.mpich.org/static/downloads/4.0.2/hydra-4.0.2.tar.gz
+gunzip hydra-4.0.2.tar.gz
+tar -xvf hydra-4.0.2.tar
 
 #Install hydra
-cd hydra-3.2
+cd hydra-4.0.2
 touch aclocal.m4; 
 touch Makefile.am; 
 touch Makefile.in; 
@@ -42,7 +42,7 @@ make install
 rm -f -- $builddir/include/mpl*
 mv $builddir/bin/mpiexec.hydra $builddir/bin/nvshmrun.hydra
 # create a soft link with name nvshmrun
-ln -s $builddir/bin/nvshmrun.hydra $builddir/bin/nvshmrun
+ln -s nvshmrun.hydra $builddir/bin/nvshmrun
 rm -f $builddir/bin/mpiexec $builddir/bin/mpirun
 
 echo "Hydra binaries have been installed in $builddir/bin"

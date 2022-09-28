@@ -21,51 +21,25 @@
 #define THREADS_PER_WARP 32
 #define THREADS_PER_BLOCK 1024
 
-__global__ void latency(int *data_d, int len, int pe, int iter, int skip, double *lat_result) {
-    long long int start, stop;
-    double time;
-    int i, tid, peer;
+__global__ void latency(int *data_d, int len, int pe, int iter) {
+    int i, peer;
 
     peer = !pe;
-    tid = threadIdx.x;
 
-    for (i = 0; i < (iter + skip); i++) {
-        if (i == skip) {
-            nvshmem_quiet();
-            start = clock64();
-        }
-
+    for (i = 0; i < iter; i++) {
         nvshmem_int_put_nbi(data_d, data_d, len, peer);
-
         nvshmem_quiet();
-    }
-    stop = clock64();
-
-    if (!tid) {
-        time = (stop - start) / iter;
-        *lat_result = time * 1000 / clockrate;
     }
 }
 
 #define LATENCY_THREADGROUP(group)                                                    \
-    __global__ void latency_##group(int *data_d, int len, int pe, int iter, int skip, \
-                                    double *lat_result) {                             \
-        long long int start, stop;                                                    \
-        double time;                                                                  \
+    __global__ void latency_##group(int *data_d, int len, int pe, int iter) {         \
         int i, tid, peer;                                                             \
                                                                                       \
         peer = !pe;                                                                   \
         tid = threadIdx.x;                                                            \
                                                                                       \
-        for (i = 0; i < (iter + skip); i++) {                                         \
-            if (i == skip) {                                                          \
-                __syncthreads();                                                      \
-                if (!tid) {                                                           \
-                    nvshmem_quiet();                                                  \
-                    start = clock64();                                                \
-                }                                                                     \
-                __syncthreads();                                                      \
-            }                                                                         \
+        for (i = 0; i < iter; i++) {                                                  \
                                                                                       \
             nvshmemx_int_put_##group(data_d, data_d, len, peer);                      \
                                                                                       \
@@ -74,11 +48,6 @@ __global__ void latency(int *data_d, int len, int pe, int iter, int skip, double
             __syncthreads();                                                          \
         }                                                                             \
                                                                                       \
-        if (!tid) {                                                                   \
-            stop = clock64();                                                         \
-            time = (stop - start) / iter;                                             \
-            *lat_result = time * 1000 / clockrate;                                    \
-        }                                                                             \
     }
 
 LATENCY_THREADGROUP(warp)
@@ -97,7 +66,13 @@ int main(int c, char *v[]) {
     uint64_t *h_size_arr;
     double *h_lat;
 
+    float milliseconds;
+    cudaEvent_t start, stop;
+
     init_wrapper(&c, &v);
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
@@ -126,10 +101,17 @@ int main(int c, char *v[]) {
             h_size_arr[i] = size;
             nelems = size / sizeof(int);
 
-            latency<<<1, 1>>>(data_d, nelems, mype, iter, skip, &h_lat[i]);
+            latency<<<1, 1>>>(data_d, nelems, mype, skip);
+            cudaEventRecord(start);
+            latency<<<1, 1>>>(data_d, nelems, mype, iter);
+            cudaEventRecord(stop);
 
             CUDA_CHECK(cudaGetLastError());
-            CUDA_CHECK(cudaDeviceSynchronize());
+            CUDA_CHECK(cudaEventSynchronize(stop));
+
+            /* give latency in us */
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            h_lat[i] = (milliseconds * 1000) / iter;
             i++;
         }
 
@@ -147,10 +129,17 @@ int main(int c, char *v[]) {
             h_size_arr[i] = size;
             nelems = size / sizeof(int);
 
-            latency_warp<<<1, THREADS_PER_WARP>>>(data_d, nelems, mype, iter, skip, &h_lat[i]);
+            latency_warp<<<1, THREADS_PER_WARP>>>(data_d, nelems, mype, skip);
+            cudaEventRecord(start);
+            latency_warp<<<1, THREADS_PER_WARP>>>(data_d, nelems, mype, iter);
+            cudaEventRecord(stop);
 
             CUDA_CHECK(cudaGetLastError());
-            CUDA_CHECK(cudaDeviceSynchronize());
+            CUDA_CHECK(cudaEventSynchronize(stop));
+
+            /* give latency in us */
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            h_lat[i] = (milliseconds * 1000) / iter;
             i++;
         }
 
@@ -168,10 +157,17 @@ int main(int c, char *v[]) {
             h_size_arr[i] = size;
             nelems = size / sizeof(int);
 
-            latency_block<<<1, THREADS_PER_BLOCK>>>(data_d, nelems, mype, iter, skip, &h_lat[i]);
+            latency_block<<<1, THREADS_PER_BLOCK>>>(data_d, nelems, mype, skip);
+            cudaEventRecord(start);
+            latency_block<<<1, THREADS_PER_BLOCK>>>(data_d, nelems, mype, iter);
+            cudaEventRecord(stop);
 
             CUDA_CHECK(cudaGetLastError());
-            CUDA_CHECK(cudaDeviceSynchronize());
+            CUDA_CHECK(cudaEventSynchronize(stop));
+
+            /* give latency in us */
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            h_lat[i] = (milliseconds * 1000) / iter;
             i++;
         }
 

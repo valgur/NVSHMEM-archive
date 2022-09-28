@@ -131,7 +131,7 @@ __device__ inline void nvshmemi_fcollect_threadgroup(nvshmem_team_t team, T *des
         nvshmemi_device_state_d.fcollect_ll_threshold >= (nelems * sizeof(T)) &&
         SCOPE == NVSHMEMI_THREADGROUP_BLOCK)
         nvshmemi_fcollect_allpush_ll_threadgroup<T, SCOPE>(team, dest, source, nelems);  
-    else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST)
+    else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS)
         nvshmemi_fcollect_p2p_allpush_threadgroup<T, SCOPE>(team, dest, source, nelems);
     else {
         nvshmemi_fcollect_allpush_threadgroup<T, SCOPE>(team, dest, source, nelems);

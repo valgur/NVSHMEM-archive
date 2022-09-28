@@ -6,6 +6,7 @@
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
+#include "nvshmemi_proxy.h"
 
 __global__ void nvshmemi_proxy_rma_entrypoint(void *rptr, void *lptr,
                                               rma_bytesdesc_t bytesdesc,

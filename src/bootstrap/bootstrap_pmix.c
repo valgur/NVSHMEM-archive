@@ -13,6 +13,7 @@
 #include "nvshmem_bootstrap.h"
 #include "nvshmemx_error.h"
 #include "bootstrap_util.h"
+#include "nvshmem_constants.h"
 
 
 #define BOOTSTRAP_PMIX_KEYSIZE 64
@@ -204,11 +205,16 @@ out:
 }
 
 
-int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle) {
+int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const int nvshmem_version) {
     pmix_status_t status = PMIX_SUCCESS;
     pmix_proc_t proc;
     proc.rank = PMIX_RANK_WILDCARD;
     pmix_value_t *val;
+    int bootstrap_version = NVSHMEM_VENDOR_VERSION;
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
+        BOOTSTRAP_ERROR_PRINT("PMIx bootstrap version (%d) is not compatible with NVSHMEM version (%d)", bootstrap_version, nvshmem_version);
+        exit(-1);
+    }
 
     PMIX_PROC_CONSTRUCT(&myproc);
 

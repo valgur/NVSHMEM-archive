@@ -195,6 +195,17 @@
         assert(cudaSuccess == result);                                            \
     } while (0)
 
+#define CUDA_RUNTIME_CHECK_GOTO(stmt, res, label)                                 \
+    do {                                                                          \
+        cudaError_t result = (stmt);                                              \
+        if (unlikely(cudaSuccess != result)) {                                    \
+            fprintf(stderr, "[%s:%d] cuda failed with %s \n", __FILE__, __LINE__, \
+                    cudaGetErrorString(result));                                  \
+            res = NVSHMEMI_UNHANDLED_CUDA_ERROR;			                      \
+            goto label;					                                          \
+        }                                                                         \
+    } while (0)
+
 #define NCCL_CHECK(cmd) do {                         \
   ncclResult_t r = cmd;                             \
   if (r!= ncclSuccess) {                            \
@@ -245,8 +256,6 @@ void nvshmemu_thread_cs_enter();
 void nvshmemu_thread_cs_exit();
 
 int nvshmemu_get_num_gpus_per_node();
-int cuCheck(CUresult res);
-int cudaCheck(cudaError_t res);
 
 uint64_t getHostHash();
 nvshmemResult_t nvshmemu_gethostname(char* hostname, int maxlen);

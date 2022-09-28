@@ -11,9 +11,9 @@
 #include <dlfcn.h>
 #ifdef NVSHMEM_USE_NCCL
 #include "nccl.h"
+struct nccl_function_table nccl_ftable;
 #endif /* NVSHMEM_USE_NCCL */
 
-struct nccl_function_table nccl_ftable;
 #define LOAD_SYM(handle, symbol, funcptr)  \
     do {                                   \
         void **cast = (void **)&funcptr;   \

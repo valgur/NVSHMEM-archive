@@ -8,6 +8,8 @@
 
 #include <dlfcn.h>
 
+int nvshmemi_gdrapi_compile_time_major_version;
+int nvshmemi_gdrapi_compile_time_minor_version;
 int nvshmemt_parse_hca_list(const char *string, struct nvshmemt_hca_info *hca_list, int max_count) {
     if (!string) return 0;
 
@@ -92,11 +94,14 @@ out:
 bool nvshmemt_gdrcopy_ftable_init(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc, void **gdrcopy_handle) {
     bool use_gdrcopy = true;
     void *local_gdrcopy_handle;
+    int major, minor;
+    nvshmemi_gdrapi_compile_time_major_version = GDR_API_MAJOR_VERSION;
+    nvshmemi_gdrapi_compile_time_minor_version = GDR_API_MINOR_VERSION;
     if (nvshmemi_options.DISABLE_GDRCOPY) {
         use_gdrcopy = false;
         goto skip_gdrcopy_dlsym;
     }
-
+    
     *gdrcopy_handle = dlopen("libgdrapi.so.2", RTLD_LAZY);
     if (!*gdrcopy_handle) {
         INFO(NVSHMEM_INIT, "GDRCopy library not found. disabling GDRCopy.\n");
@@ -106,11 +111,21 @@ bool nvshmemt_gdrcopy_ftable_init(struct gdrcopy_function_table *gdrcopy_ftable,
         local_gdrcopy_handle = *gdrcopy_handle;
         LOAD_SYM(local_gdrcopy_handle, "gdr_runtime_get_version", gdrcopy_ftable->runtime_get_version);
         if (!gdrcopy_ftable->runtime_get_version) {
-            INFO(NVSHMEM_INIT, "GDRCopy library found by version older than 2.0. disabling GDRCopy.\n");
+            INFO(NVSHMEM_INIT, "GDRCopy library is older than v2.0. Disabling GDRCopy.");
             use_gdrcopy = false;
             goto skip_gdrcopy_dlsym;
         }
-        LOAD_SYM(local_gdrcopy_handle, "gdr_runtime_get_version", gdrcopy_ftable->driver_get_version);
+        int gdrapi_runtime_major_version, gdrapi_runtime_minor_version;
+        gdrcopy_ftable->runtime_get_version(&gdrapi_runtime_major_version, &gdrapi_runtime_minor_version);
+        if (gdrapi_runtime_major_version != nvshmemi_gdrapi_compile_time_major_version ||
+            gdrapi_runtime_minor_version < nvshmemi_gdrapi_compile_time_minor_version) {
+            INFO(NVSHMEM_INIT, "GDRCopy library version is not compatible with gdrapi.h (%d.%d) used during compilation. "
+                                "Disabling GDRCopy.\n", nvshmemi_gdrapi_compile_time_major_version,
+                                nvshmemi_gdrapi_compile_time_minor_version);
+            use_gdrcopy = false;
+            goto skip_gdrcopy_dlsym;
+        }
+        LOAD_SYM(local_gdrcopy_handle, "gdr_driver_get_version", gdrcopy_ftable->driver_get_version);
         LOAD_SYM(local_gdrcopy_handle, "gdr_open", gdrcopy_ftable->open);
         LOAD_SYM(local_gdrcopy_handle, "gdr_close", gdrcopy_ftable->close);
         LOAD_SYM(local_gdrcopy_handle, "gdr_pin_buffer", gdrcopy_ftable->pin_buffer);
@@ -127,7 +142,10 @@ bool nvshmemt_gdrcopy_ftable_init(struct gdrcopy_function_table *gdrcopy_ftable,
         dlclose(*gdrcopy_handle);
         *gdrcopy_handle = NULL;
         INFO(NVSHMEM_INIT, "GDRCopy open call failed, disabling GDRCopy.\n");
+        use_gdrcopy = false;
     }
+    gdrcopy_ftable->driver_get_version(*gdr_desc, &major, &minor);
+    INFO(NVSHMEM_INIT, "GDR driver version: (%d, %d)", major, minor);
 
 skip_gdrcopy_dlsym:
     return use_gdrcopy;
@@ -172,6 +190,7 @@ int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_tab
     LOAD_SYM(*ibv_handle, "ibv_destroy_qp", ftable->destroy_qp);
     LOAD_SYM(*ibv_handle, "ibv_destroy_cq", ftable->destroy_cq);
     LOAD_SYM(*ibv_handle, "ibv_destroy_srq", ftable->destroy_srq);
+    LOAD_SYM(*ibv_handle, "ibv_destroy_ah", ftable->destroy_ah);
 
     return 0;
 }

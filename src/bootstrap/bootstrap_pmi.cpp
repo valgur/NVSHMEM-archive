@@ -10,6 +10,7 @@
 #include "nvshmemx_error.h"
 #include "nvshmem_bootstrap.h"
 #include "bootstrap_util.h"
+#include "nvshmem_constants.h"
 
 #ifdef NVSHMEM_BUILD_PMI2
 
@@ -345,10 +346,15 @@ error:
     return status;
 }
 
-int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle) {
+int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const int nvshmem_version) {
     int status = 0;
     int spawned = 0;
     int rank, size, key_length, value_length, name_length;
+    int bootstrap_version = NVSHMEM_VENDOR_VERSION;
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
+        BOOTSTRAP_ERROR_PRINT("PMI bootstrap version (%d) is not compatible with NVSHMEM version (%d)", bootstrap_version, nvshmem_version);
+        exit(-1);
+    }
 
     status = WRAP_PMI_Init(&spawned);
     BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_Init_failed failed \n");

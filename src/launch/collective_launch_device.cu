@@ -4,13 +4,13 @@
  * See COPYRIGHT for license information
  */
 
+#include <algorithm>
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
 
 #include <stdio.h>
 #include "nvshmemx_error.h"
 #include "util.h"
-#include <algorithm>
 
 inline int nvshmemi_minv(int *vec, int count) {
     int minval = INT_MAX;
@@ -96,7 +96,7 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
             launchFailed = 0;
         }
     }
-
+#ifdef _NVSHMEM_DEBUG
     INFO(NVSHMEM_COLL, "nvshmemi_maxv allgather target %p source %p nbytes %ld", &launchFailed,
          nvshmemi_state->scratch, sizeof(int));
     status =
@@ -106,18 +106,14 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
                  "allgather of launch capability failed \n");
 
     launchFailed = nvshmemi_maxv(nvshmemi_state->scratch, nvshmemi_state->npes);
+#endif
+    /* TODO: make it obvious we aren't going to complete this call from this thread. Possibly global exit? */
     NZ_ERROR_JMP(launchFailed, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
                  "One or more PEs cannot launch \n");
 
-    status =
-        cuEventRecord(nvshmemi_state->claunch_params.begin_event, static_cast<CUstream>(stream));
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
-                 "Recording begin event failed \n");
-
-    status = cuStreamWaitEvent(nvshmemi_state->claunch_params.stream,
-                               nvshmemi_state->claunch_params.begin_event, 0);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
-                 "Waiting on stream for begin event failed \n");
+    CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(nvshmemi_state->claunch_params.begin_event, stream), status, out);
+    CUDA_RUNTIME_CHECK_GOTO(cudaStreamWaitEvent(nvshmemi_state->claunch_params.stream,
+                                               nvshmemi_state->claunch_params.begin_event, 0), status, out);
 
     if (nvshmemi_state->cu_dev_attrib.cooperative_launch) {
         status = cudaLaunchCooperativeKernel(func, gridDims, blockDims, args, sharedMem,
@@ -131,15 +127,10 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
                      "Kernel launch failed \n");
     }
 
-    status = cuEventRecord(nvshmemi_state->claunch_params.end_event,
-                           nvshmemi_state->claunch_params.stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
-                 "Recording end event failed \n");
+    CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(nvshmemi_state->claunch_params.end_event,
+                           nvshmemi_state->claunch_params.stream), status, out);
 
-    status = cuStreamWaitEvent(static_cast<CUstream>(stream),
-                               nvshmemi_state->claunch_params.end_event, 0);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
-                 "Waiting on stream for end failed \n");
+    CUDA_RUNTIME_CHECK_GOTO(cudaStreamWaitEvent(stream, nvshmemi_state->claunch_params.end_event, 0), status, out);
 
 out:
     return status;

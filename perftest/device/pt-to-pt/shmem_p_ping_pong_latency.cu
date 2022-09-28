@@ -21,18 +21,13 @@
 #define MAX_MSG_SIZE 16 * 1024
 #define UNROLL 8
 
-__global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int iter, int skip,
-                          double *lat_result) {
-    long long int start, stop;
-    double time;
+__global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int iter) {
     int i, j, tid, peer;
 
     peer = !pe;
     tid = threadIdx.x;
 
-    for (i = 0; i < (iter + skip); i++) {
-        if (i == skip) start = clock64();
-
+    for (i = 0; i < iter; i++) {
         if (pe) {
             if (!tid) {
                 nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
@@ -67,21 +62,15 @@ __global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int it
             __syncthreads();
         }
     }
-    stop = clock64();
+
     if(!tid)
         nvshmem_quiet();
-
-    if ((pe == 0) && !tid) {
-        time = (stop - start) / iter;
-        *lat_result = time * 1000 / clockrate;
-    }
 }
 
 int main(int c, char *v[]) {
     int mype, npes, size;
     uint64_t *flag_d = NULL;
     int *data_d = NULL;
-    double *cur_lat;
 
     sleep(10);
 
@@ -94,7 +83,13 @@ int main(int c, char *v[]) {
     uint64_t *h_size_arr;
     double *h_lat;
 
+    float milliseconds;
+    cudaEvent_t start, stop;
+
     init_wrapper(&c, &v);
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
@@ -126,20 +121,28 @@ int main(int c, char *v[]) {
         int nelems, status = 0;
         nelems = size / sizeof(int);
         h_size_arr[i] = size;
-        cur_lat = &h_lat[i];
-        void *args[7] = {&data_d, &flag_d, &nelems, &mype, &iter, &skip, &cur_lat};
+        void *args_1[5] = {&data_d, &flag_d, &nelems, &mype, &skip};
+        void *args_2[5] = {&data_d, &flag_d, &nelems, &mype, &iter};
 
         CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
         CUDA_CHECK(cudaDeviceSynchronize());
         nvshmem_barrier_all();
+        status = nvshmemx_collective_launch((const void *)ping_pong, 1, THREADS, args_1, 0, 0);
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
-        status = nvshmemx_collective_launch((const void *)ping_pong, 1, THREADS, args, 0, 0);
+        cudaEventRecord(start);
+        status = nvshmemx_collective_launch((const void *)ping_pong, 1, THREADS, args_2, 0, 0);
         if (status != NVSHMEMX_SUCCESS) {
             printf("shmemx_collective_launch failed %d \n", status);
             exit(-1);
         }
-        CUDA_CHECK(cudaDeviceSynchronize());
+        cudaEventRecord(stop);
 
+        /* give latency in us */
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        h_lat[i] = (milliseconds * 1000) / iter;
         nvshmem_barrier_all();
         i++;
     }

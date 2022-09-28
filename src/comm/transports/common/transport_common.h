@@ -23,10 +23,6 @@
         *cast = tmp;                       \
     } while (0)
 
-/* Mellanox (IEEE) vendor and device information */
-#define MELLANOX_VENDOR_ID 0x02c9
-#define MELLANOX_MIN_DEVICE_ID 4113
-
 struct nvshmemt_hca_info {
     char name[64];
     int port;
@@ -82,6 +78,7 @@ struct nvshmemt_ibv_function_table {
     int (*destroy_qp)(struct ibv_qp *qp);
     int (*destroy_cq)(struct ibv_cq *cq);
     int (*destroy_srq)(struct ibv_srq *srq);
+    int (*destroy_ah)(struct ibv_ah *ah);
 };
 
 int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable);

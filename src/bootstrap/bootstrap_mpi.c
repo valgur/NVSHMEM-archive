@@ -6,10 +6,12 @@
 
 #include <stdlib.h>
 #include <mpi.h>
+#include <stdbool.h>
 
 #include "nvshmem_bootstrap.h"
 #include "nvshmemx_error.h"
 #include "bootstrap_util.h"
+#include "nvshmem_constants.h"
 
 static MPI_Comm bootstrap_comm          = MPI_COMM_NULL;
 static int      nvshmem_initialized_mpi = 0;
@@ -90,9 +92,14 @@ out:
     return status;
 }
 
-int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle) {
+int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle, const int nvshmem_version) {
     int status = MPI_SUCCESS, initialized = 0, finalized = 0;
     MPI_Comm src_comm;
+    int bootstrap_version = NVSHMEM_VENDOR_VERSION;
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
+        BOOTSTRAP_ERROR_PRINT("MPI bootstrap version (%d) is not compatible with NVSHMEM version (%d)", bootstrap_version, nvshmem_version);
+        exit(-1);
+    }
 
     if (NULL == mpi_comm)
         src_comm = MPI_COMM_WORLD;

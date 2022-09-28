@@ -66,7 +66,7 @@ static inline int try_again(nvshmem_transport_t transport, int *status, int * nu
             *status = NVSHMEMX_ERROR_INTERNAL;
             return 0;
         }
-        *num_retries++;
+        (*num_retries)++;
         *status = nvshmemt_libfabric_progress(transport);
     }
 
@@ -89,27 +89,24 @@ static int nvshmemt_libfabric_quiet(struct nvshmem_transport *tcurr, int pe, int
         ep = &libfabric_state->eps[NVSHMEMT_LIBFABRIC_HOST_EP_IDX];
     }
 
-#if 1
-    // Polling approach below is needed so that the proxy can generate manual
-    // progress while waiting for operations to complete
-
-    uint64_t submitted, completed;
-    for (;;) {
-        completed = fi_cntr_read(ep->counter);
-        submitted = ep->submitted_ops;
-        if (completed == submitted) break;
-        else nvshmemt_libfabric_progress(tcurr);
+    if (likely(!libfabric_state->is_verbs)) {
+        uint64_t submitted, completed;
+        for (;;) {
+            completed = fi_cntr_read(ep->counter);
+            submitted = ep->submitted_ops;
+            if (completed == submitted) break;
+            else nvshmemt_libfabric_progress(tcurr);
+        }
+    } else {
+        status = fi_cntr_wait(ep->counter, ep->submitted_ops, NVSHMEMT_LIBFABRIC_QUIET_TIMEOUT_MS);
+        if (status) {
+            /* note - Status is negative for this function in error cases but
+            * fi_strerror only accepts positive values.
+            */
+            ERROR_PRINT("Error in quiet operation (%d): %s.\n", status, fi_strerror(status * -1));
+            status = NVSHMEMX_ERROR_INTERNAL;
+        }
     }
-#else
-    status = fi_cntr_wait(ep->counter, ep->submitted_ops, NVSHMEMT_LIBFABRIC_QUIET_TIMEOUT_MS);
-    if (status) {
-        /* note - Status is negative for this function in error cases but
-         * fi_strerror only accepts positive values.
-         */
-        ERROR_PRINT("Error in quiet operation (%d): %s.\n", status, fi_strerror(status * -1));
-        status = NVSHMEMX_ERROR_INTERNAL;
-    }
-#endif
 
     return status;
 }

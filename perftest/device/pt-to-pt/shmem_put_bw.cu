@@ -24,23 +24,15 @@
 #define BLOCKS 4
 #define THREADS_PER_BLOCK 1024
 
-__global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, int pe, int iter,
-                   int skip, double *bw_result) {
+__global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, int pe, int iter) {
     int i, peer;
     unsigned int counter;
     int tid = (threadIdx.x * blockDim.y * blockDim.z + threadIdx.y * blockDim.z + threadIdx.z);
     int bid = blockIdx.x;
     int nblocks = gridDim.x;
-    long long int start = 0, stop = 0;
-    double time = 0;
 
     peer = !pe;
-    for (i = 0; i < (iter + skip); i++) {
-        if (i == skip) {
-            nvshmem_quiet();
-            start = clock64();
-        }
-
+    for (i = 0; i < iter; i++) {
         nvshmemx_double_put_nbi_block(data_d + (bid * (len / nblocks)),
                                       data_d + (bid * (len / nblocks)), len / nblocks, peer);
 
@@ -71,13 +63,6 @@ __global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, in
             ;
     }
     __syncthreads();
-
-    stop = clock64();
-    time = (stop - start);
-
-    if (!tid && !bid) {
-        *bw_result = ((float)iter * (float)len * sizeof(double) * clockrate) / ((time / 1000) * 1024 * 1024 * 1024);
-    }
 }
 
 int main(int argc, char *argv[]) {
@@ -94,7 +79,13 @@ int main(int argc, char *argv[]) {
     int iter = MAX_ITERS;
     int skip = MAX_SKIP;
 
+    float milliseconds;
+    cudaEvent_t start, stop;
+
     init_wrapper(&argc, &argv);
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
@@ -141,10 +132,20 @@ int main(int argc, char *argv[]) {
         for (int size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
             h_size_arr[i] = size;
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
-            bw<<<max_blocks, max_threads>>>(data_d, counter_d, size / sizeof(double), mype, iter,
-                                            skip, &h_bw[i]);
+            bw<<<max_blocks, max_threads>>>(data_d, counter_d, size / sizeof(double), mype, skip);
             CUDA_CHECK(cudaGetLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
+            CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
+
+            cudaEventRecord(start);
+            bw<<<max_blocks, max_threads>>>(data_d, counter_d, size / sizeof(double), mype, iter);
+            cudaEventRecord(stop);
+
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaEventSynchronize(stop));
+
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            h_bw[i] = size / (milliseconds * (B_TO_GB / (iter * MS_TO_S)));
             nvshmem_barrier_all();
             i++;
         }

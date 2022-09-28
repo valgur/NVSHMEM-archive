@@ -195,8 +195,11 @@ alloc_tables(void ***table_mem, int num_tables, int num_entries_per_table)
 {
     void **tables;
     int i, dev_property;
+    int dev_count;
 
-    CUDA_CHECK(cudaDeviceGetAttribute(&dev_property, cudaDevAttrUnifiedAddressing, nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE)));
+    CUDA_CHECK(cudaGetDeviceCount(&dev_count));
+    int mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
+    CUDA_CHECK(cudaDeviceGetAttribute(&dev_property, cudaDevAttrUnifiedAddressing, mype_node % dev_count));
     assert(dev_property == 1);
 
     assert(num_tables >= 1);

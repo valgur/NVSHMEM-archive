@@ -155,22 +155,22 @@ void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami) {
             step2_nbrs[i][j] = teami->start + step2_nbrs[i][j] * teami->stride;
 
     // Copy the data to device memory
-    CUDA_CHECK(cuMemAlloc((CUdeviceptr *)&step1_recvfrom_device, sizeof(int) * (k - 1)));
-    CUDA_CHECK(cuMemAlloc((CUdeviceptr *)&step2_nbrs_device, sizeof(int *) * (step2_nphases + 1))); /* + 1 to make it non-zero otherwise cuMemAlloc returns error when step2_nphases is 0 */
+    CUDA_RUNTIME_CHECK(cudaMalloc(&step1_recvfrom_device, sizeof(int) * (k - 1)));
+    CUDA_RUNTIME_CHECK(cudaMalloc(&step2_nbrs_device, sizeof(int *) * (step2_nphases + 1))); /* + 1 to make it non-zero otherwise cuMemAlloc returns error when step2_nphases is 0 */
 
     for (int i = 0; i < step2_nphases; i++) {
         void *dev_ptr;
         CUDA_RUNTIME_CHECK(cudaMalloc(&dev_ptr, sizeof(int) * (k - 1)));
-        CUDA_CHECK(
-            cuMemcpyHtoD((CUdeviceptr)((int **)step2_nbrs_device + i), &dev_ptr, sizeof(int *)));
+        CUDA_RUNTIME_CHECK(
+            cudaMemcpy((int **)step2_nbrs_device + i, &dev_ptr, sizeof(int *), cudaMemcpyHostToDevice));
     }
-    CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)step1_recvfrom_device, step1_recvfrom,
-                            sizeof(int) * step1_nrecvs));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(step1_recvfrom_device, step1_recvfrom,
+                            sizeof(int) * step1_nrecvs, cudaMemcpyHostToDevice));
     void *dev_ptr, *dev_ptr_2;
     dev_ptr = step2_nbrs_device;
     for (int i = 0; i < step2_nphases; i++) {
-        CUDA_CHECK(cuMemcpyDtoH(&dev_ptr_2, (CUdeviceptr)((int **)dev_ptr + i), sizeof(int *)));
-        CUDA_CHECK(cuMemcpyHtoD((CUdeviceptr)dev_ptr_2, step2_nbrs[i], sizeof(int) * (k - 1)));
+        CUDA_RUNTIME_CHECK(cudaMemcpy(&dev_ptr_2, (int **)dev_ptr + i, sizeof(int *), cudaMemcpyDeviceToHost));
+        CUDA_RUNTIME_CHECK(cudaMemcpy(dev_ptr_2, step2_nbrs[i], sizeof(int) * (k - 1), cudaMemcpyHostToDevice));
     }
     teami->reduce_recexch.step1_sendto = step1_sendto;
     teami->reduce_recexch.step1_nrecvs = step1_nrecvs;

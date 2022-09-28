@@ -14,27 +14,8 @@
         nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, cudaStream_t stream) { \
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                            \
         NVSHMEMI_CHECK_INIT_STATUS();                                                              \
-        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                                 \
-        nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                         \
-        int team_n_pes = nvshmem_team_n_pes(team);                                                 \
-        if (nvshmemi_use_nccl && NCCL_DT_##TYPENAME != -1 &&                                       \
-            ((nccl_version >= 2700 && team_n_pes <= 4096 /* NCCL limit for Group API */) ||        \
-             (nccl_version >= 2800 && team_n_pes <= 32768 /* NCCL limit for Group API */))) {      \
-            size_t rank_offset = nelems * sizeof(TYPE);                                            \
-            NCCL_CHECK(nccl_ftable.GroupStart());                                                  \
-            for (int pe = 0; pe < team_n_pes; pe++) {                                              \
-                NCCL_CHECK(nccl_ftable.Send(((char *)source) + pe * rank_offset, nelems,           \
-                                            (ncclDataType_t)NCCL_DT_##TYPENAME, pe,                \
-                                            teami->nccl_comm, stream));                            \
-                NCCL_CHECK(nccl_ftable.Recv(((char *)dest) + pe * rank_offset, nelems,             \
-                                            (ncclDataType_t)NCCL_DT_##TYPENAME, pe,                \
-                                            teami->nccl_comm, stream));                            \
-            }                                                                                      \
-            NCCL_CHECK(nccl_ftable.GroupEnd());                                                    \
-        } else {                                                                                   \
-            nvshmemi_call_alltoall_on_stream_kernel<TYPE>(team, dest, source, nelems, stream);     \
-        }                                                                                          \
-        return 0;                                                                                  \
+        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                         \
+        return nvshmemi_alltoall_on_stream<TYPE>(team, dest, source, nelems, stream);              \
     }
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFN_NVSHMEMX_TYPENAME_ALLTOALL_ON_STREAM)

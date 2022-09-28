@@ -18,9 +18,9 @@
 #ifdef NVSHMEM_COMPLEX_SUPPORT
 #include <complex.h>
 #endif
+#include "nvshmemi_constants.h"
 #include "nvshmem_types.h"
 #include "nvshmem_constants.h"
-#include "nvshmemi_constants.h"
 #include "nvshmemi_util.h"
 #include "nvshmemx_error.h"
 
@@ -510,7 +510,7 @@ typedef struct {
     int *global_exit_request_state;
     int * global_exit_code;
 
-    void *gic_state;
+    bool gic_is_initialized;
 } nvshmemi_device_state_t;
 
 extern nvshmemi_device_state_t nvshmemi_device_state;

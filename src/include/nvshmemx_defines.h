@@ -428,7 +428,7 @@ __device__ inline void nvshmemi_signal_op(uint64_t *sig_addr, uint64_t signal, i
             (volatile uint64_t *)((char *)(peer_base_addr) +
                                   ((char *)sig_addr - (char *)(nvshmemi_device_state_d.heap_base)));
         *dest_actual = signal;
-    } else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {
+    } else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST) {
         volatile uint64_t *dest_actual =
             (volatile uint64_t *)((char *)(peer_base_addr) +
                                   ((char *)sig_addr - (char *)(nvshmemi_device_state_d.heap_base)));

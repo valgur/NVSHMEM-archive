@@ -19,22 +19,6 @@
 #include "nvshmemx_api.h"
 #include "nvshmemi_transfer.h"
 
-template <typename T>
-__device__ void nvshmemi_proxy_rma_p(void *rptr, T value, int pe);
-__device__ void nvshmemi_proxy_rma_nbi(void *rptr, void *lptr, size_t nelems, int pe, nvshmemi_op_t channel_op);
-template <typename T>
-__device__ void nvshmemi_proxy_amo_nonfetch(void *rptr, const T value, int pe,
-               nvshmemi_amo_t op);
-template <typename T>
-__device__ void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T value, T compare, int pe,
-               nvshmemi_amo_t op);
-template<typename T>
-__device__ T nvshmemi_proxy_rma_g(void *source, int pe);
-__device__ void nvshmemi_proxy_fence();
-__device__ void nvshmemi_proxy_quiet(bool use_membar);
-__device__ void nvshmemi_proxy_global_exit(int status);
-__device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar);
-
 #ifdef __CUDA_ARCH__
 template <typename T>
 __device__ inline void nvshmemi_p(T *dest, const T value, int pe) {
@@ -760,7 +744,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_SOME_VECTOR)
 
 /* nvshmem_quiet and nvshmem_fence API */
 __device__ inline void nvshmem_quiet() {
-    if ((nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST_ATOMICS)) {
+    if ((nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST)) {
         nvshmemi_transfer_quiet(true);
     } else {
         __threadfence_system(); /* Use __threadfence_system instead of __threadfence
@@ -769,7 +753,7 @@ __device__ inline void nvshmem_quiet() {
 }
 
 __device__ inline void nvshmem_fence() {
-    if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST_ATOMICS) { 
+    if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST) {
     	nvshmemi_transfer_fence();
     }
     __threadfence_system(); /* Use __threadfence_system instead of __threadfence

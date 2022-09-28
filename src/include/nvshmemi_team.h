@@ -6,7 +6,6 @@
 #include "nccl.h"
 #endif
 #include "nvshmem_constants.h"
-#include "nvshmem_types.h"
 #include "nvshmem_common.cuh"
 
 #define N_PSYNC_BYTES 8

@@ -188,7 +188,7 @@ NVSHMEMI_ENV_DEF(DISABLE_LOCAL_ONLY_PROXY, bool, false, NVSHMEMI_ENV_CAT_TRANSPO
                 "timeout polling (enabled by ``NVSHMEM_TIMEOUT_DEVICE_POLLING`` build-time variable) "
                 "because these are processed by the proxy thread.")
 
-NVSHMEMI_ENV_DEF(LIBFABRIC_PERSONA, string, "cxi", NVSHMEMI_ENV_CAT_TRANSPORT,
+NVSHMEMI_ENV_DEF(LIBFABRIC_PERSONA, string, "cxi", NVSHMEMI_ENV_CAT_HIDDEN,
                  "Set the feature set persona for the libfabric transport: cxi, verbs")
 
 /** Runtime optimimzations **/
@@ -208,11 +208,27 @@ NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_DCT, int, 2, NVSHMEMI_ENV_CAT_TRANSPORT,
 NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_DCI, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Total number of DCI QPs used in GPU-initiated communication transport. "
                  "Set to 0 or a negative number to use automatic configuration.")
-NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_DCI_PER_SM, int, 1, NVSHMEMI_ENV_CAT_TRANSPORT,
-                 "Number of exclusive DCI QPs assigned to each SM.")
+NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_SHARED_DCI, int, 1, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Number of DCI QPs in the shared pool. "
+                 "The rest of DCI QPs (NVSHMEM_IB_GPUINITIATED_NUM_DCI - NVSHMEM_IB_GPUINITIATED_NUM_SHARED_DCI) are exclusively assigned. "
+                 "Valid value: [1, NVSHMEM_IB_GPUINITIATED_NUM_DCI].")
+NVSHMEMI_ENV_DEF(IB_GPUINITIATED_DCI_MAP_BY, string, "cta", NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Specifies how exclusive DCI QPs are assigned.\n"
+                 "Choices are: cta, sm, warp, dct.\n"
+                 "   cta: round-robin by CTA ID (default)\n"
+                 "    sm: round-robin by SM ID\n"
+                 "  warp: round-robin by Warp ID\n"
+                 "   dct: round-robin by DCT ID\n")
 NVSHMEMI_ENV_DEF(IB_GPUINITIATED_FORCE_NIC_BUF_MEMTYPE, string, "auto", NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Force NIC buffer memory type. Valid choices are: gpumem, hostmem. "
                  "For other values, use auto discovery (default).")
+NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_REQUESTS_IN_BATCH, int, 32, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Number of requests to be batched before submitting to the NIC. "
+                 "It will be rounded up to the nearest power of 2. "
+                 "Set to 1 for aggressive submission.")
+NVSHMEMI_ENV_DEF(IB_GPUINITIATED_NUM_FETCH_SLOTS_PER_DCI, int, 1024, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Number of internal buffer slots for fetch operations. "
+                 "It will be rounded up to the nearest power of 2.")
 NVSHMEMI_ENV_DEF(IB_ENABLE_GPUINITIATED, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Set to enable GPU-initiated communication transport.")
 #endif

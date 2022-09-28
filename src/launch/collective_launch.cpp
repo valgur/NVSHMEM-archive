@@ -15,38 +15,23 @@
 
 int nvshmemi_setup_collective_launch(nvshmemi_state_t *state) {
     int leastPriority, greatestPriority, status = 0;
-    status = cuDeviceGetAttribute(&(state->cu_dev_attrib.multi_processor_count),
-                                  CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, state->cudevice);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuDeviceGetAttribute of CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT failed \n");
+    CUDA_RUNTIME_CHECK_GOTO(cudaDeviceGetAttribute(&(state->cu_dev_attrib.multi_processor_count),
+                                                   cudaDevAttrMultiProcessorCount, state->device_id), status, out);
     state->cu_dev_attrib.cooperative_launch = 0;
 
-    status = cuDeviceGetAttribute(&(state->cu_dev_attrib.cooperative_launch),
-                                  CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH, state->cudevice);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuDeviceGetAttribute CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH failed \n");
+    CUDA_RUNTIME_CHECK_GOTO(cudaDeviceGetAttribute(&(state->cu_dev_attrib.cooperative_launch),
+                                                   cudaDevAttrCooperativeLaunch, state->device_id), status, out);
 
     if (!state->cu_dev_attrib.cooperative_launch)
         WARN_PRINT(
             "Cooperative launch not supported on PE %d; GPU-side synchronize may cause hang\n",
             state->mype);
 
-    status = cuCtxGetStreamPriorityRange(&leastPriority, &greatestPriority);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuCtxGetStreamPriorityRange failed \n");
-
-    status = cuStreamCreateWithPriority(&state->claunch_params.stream, CU_STREAM_NON_BLOCKING,
-                                        greatestPriority);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuStreamCreateWithPriority failed \n");
-
-    status = cuEventCreate(&state->claunch_params.begin_event, CU_EVENT_DISABLE_TIMING);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuEventCreate for begin event failed \n");
-
-    status = cuEventCreate(&state->claunch_params.end_event, CU_EVENT_DISABLE_TIMING);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuEventCreate for end event failed \n");
+    CUDA_RUNTIME_CHECK_GOTO(cudaDeviceGetStreamPriorityRange(&leastPriority, &greatestPriority), status, out);
+    CUDA_RUNTIME_CHECK_GOTO(cudaStreamCreateWithPriority(&state->claunch_params.stream, cudaStreamNonBlocking,
+                                        greatestPriority), status, out);
+    CUDA_RUNTIME_CHECK_GOTO(cudaEventCreate(&state->claunch_params.begin_event, cudaEventDisableTiming), status, out);
+    CUDA_RUNTIME_CHECK_GOTO(cudaEventCreate(&state->claunch_params.end_event, cudaEventDisableTiming), status, out);
 
 out:
     return status;
@@ -58,16 +43,9 @@ int nvshmemi_teardown_collective_launch(nvshmemi_state_t *state) {
 
     if (!nvshmemi_is_nvshmem_initialized) goto out;
 
-    status = cuStreamDestroy(state->claunch_params.stream);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "cuStreamDestroy failed \n");
-
-    status = cuEventDestroy(state->claunch_params.begin_event);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuEventDestroy for begin event failed \n");
-
-    status = cuEventDestroy(state->claunch_params.end_event);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cuEventDestroy for end event failed \n");
+    CUDA_RUNTIME_CHECK_GOTO(cudaStreamDestroy(state->claunch_params.stream), status, out);
+    CUDA_RUNTIME_CHECK_GOTO(cudaEventDestroy(state->claunch_params.begin_event), status, out);
+    CUDA_RUNTIME_CHECK_GOTO(cudaEventDestroy(state->claunch_params.end_event), status, out);
 
 out:
     return status;

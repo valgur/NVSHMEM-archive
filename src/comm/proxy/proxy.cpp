@@ -41,25 +41,25 @@ int nvshmemi_proxy_create_channels(proxy_state_t *proxy_state) {
 
     for (int i = 0; i < proxy_state->channel_count; i++) {
         // for put/get
-        CUDA_CHECK(cuMemAllocHost((void **)&channels[i].buf,
-                                  proxy_state->channel_bufsize)); /* CPU reads, GPU writes */
+        CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&channels[i].buf,
+                                          proxy_state->channel_bufsize, 0)); /* CPU reads, GPU writes */
         memset(channels[i].buf, 0, proxy_state->channel_bufsize);
 
-        CUDA_CHECK(cuMemAlloc((CUdeviceptr *)&channels[i].issue,
-                              sizeof(uint64_t))); /* issue is not accessed through LD/ST by CPU
-                                                     thread, therefore on device memory */
-        CUDA_CHECK(cuMemsetD8((CUdeviceptr)channels[i].issue, 0, sizeof(uint64_t)));
+        CUDA_RUNTIME_CHECK(cudaMalloc(&channels[i].issue,
+                                      sizeof(uint64_t))); /* issue is not accessed through LD/ST by CPU
+                                                             thread, therefore on device memory */
+        CUDA_RUNTIME_CHECK(cudaMemset(channels[i].issue, 0, sizeof(uint64_t)));
 
-        CUDA_CHECK(cuMemAllocHost((void **)&channels[i].complete,
-                                  sizeof(uint64_t))); /* CPU writes, GPU reads */
-        CUDA_CHECK(cuMemAllocHost((void **)&channels[i].quiet_issue,
-                                  sizeof(uint64_t))); /* CPU reads, GPU writes */
-        CUDA_CHECK(cuMemAllocHost((void **)&channels[i].quiet_ack,
-                                  sizeof(uint64_t))); /* CPU writes, GPU reads */
-        CUDA_CHECK(cuMemAllocHost((void **)&channels[i].cst_issue,
-                                  sizeof(uint64_t))); /* CPU reads, GPU writes */
-        CUDA_CHECK(cuMemAllocHost((void **)&channels[i].cst_ack,
-                                  sizeof(uint64_t))); /* CPU writes, GPU reads */
+        CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&channels[i].complete,
+                                  sizeof(uint64_t), 0)); /* CPU writes, GPU reads */
+        CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&channels[i].quiet_issue,
+                                  sizeof(uint64_t), 0)); /* CPU reads, GPU writes */
+        CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&channels[i].quiet_ack,
+                                  sizeof(uint64_t), 0)); /* CPU writes, GPU reads */
+        CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&channels[i].cst_issue,
+                                  sizeof(uint64_t), 0)); /* CPU reads, GPU writes */
+        CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&channels[i].cst_ack,
+                                  sizeof(uint64_t), 0)); /* CPU writes, GPU reads */
 
         *channels[i].complete = 0;
         *channels[i].quiet_issue = 0;
@@ -144,10 +144,10 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level) {
     proxy_state->channel_count = CHANNEL_COUNT;
     proxy_state->nvshmemi_state = state;
 
-    CUDA_CHECK(cuMemAllocHost((void **)&proxy_state->global_exit_request_state, sizeof(int)));
-    CUDA_CHECK(cuMemAllocHost((void **)&proxy_state->global_exit_code, sizeof(int)));
-    CUDA_CHECK(cuMemAllocHost((void **)&proxy_state->nvshmemi_timeout,
-                              sizeof(nvshmemi_timeout_t))); /* GPU writes, CPU reads */
+    CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&proxy_state->global_exit_request_state, sizeof(int), 0));
+    CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&proxy_state->global_exit_code, sizeof(int), 0));
+    CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&proxy_state->nvshmemi_timeout,
+                              sizeof(nvshmemi_timeout_t), 0)); /* GPU writes, CPU reads */
     memset(proxy_state->nvshmemi_timeout, 0, sizeof(nvshmemi_timeout_t));
     status = nvshmemi_proxy_prep_minimal_state(proxy_state);
     if (status) {
@@ -190,10 +190,10 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level) {
 
     INFO(NVSHMEM_PROXY, "[%d] after setting up proxy channels on device", state->mype);
 
-    CUDA_CHECK(cuStreamCreate(&proxy_state->stream, CU_STREAM_NON_BLOCKING));
-    CUDA_CHECK(cuStreamCreate(&proxy_state->queue_stream_out, CU_STREAM_NON_BLOCKING));
-    CUDA_CHECK(cuStreamCreate(&proxy_state->queue_stream_in, CU_STREAM_NON_BLOCKING));
-    CUDA_CHECK(cuEventCreate(&proxy_state->cuev, CU_EVENT_DEFAULT));
+    CUDA_RUNTIME_CHECK(cudaStreamCreateWithFlags(&proxy_state->stream, cudaStreamNonBlocking));
+    CUDA_RUNTIME_CHECK(cudaStreamCreateWithFlags(&proxy_state->queue_stream_out, cudaStreamNonBlocking));
+    CUDA_RUNTIME_CHECK(cudaStreamCreateWithFlags(&proxy_state->queue_stream_in, cudaStreamNonBlocking));
+    CUDA_RUNTIME_CHECK(cudaEventCreateWithFlags(&proxy_state->cuev, cudaEventDefault));
 
     proxy_state->progress_params.state = proxy_state;
     proxy_state->progress_params.stop = 0;
@@ -205,25 +205,29 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level) {
 #if CUDART_VERSION >= 11030
     int device;
     CUDA_RUNTIME_CHECK(cudaGetDevice(&device));
-    if (nvshmemi_cuda_driver_version >= 11030) { /* Because cudaDevAttrGPUDirectRDMAFlushWritesOptions was
-                                      introduced only in 11.3 */
-        int write_options;
-        CUDA_RUNTIME_CHECK(cudaDeviceGetAttribute(
-            &write_options, cudaDevAttrGPUDirectRDMAFlushWritesOptions, device));
-        if (write_options & cudaFlushGPUDirectRDMAWritesOptionHost)
-            proxy_state->is_consistency_api_supported = true;
-        CUDA_RUNTIME_CHECK(cudaDeviceGetAttribute(&proxy_state->gdr_device_native_ordering,
-                                                  cudaDevAttrGPUDirectRDMAWritesOrdering,
-                                                  device));
-    } else {
+    int write_options;
+    status = cudaDeviceGetAttribute(
+        &write_options, cudaDevAttrGPUDirectRDMAFlushWritesOptions, device);
+    if (status != CUDA_SUCCESS) {
         proxy_state->is_consistency_api_supported = false;
+        cudaGetLastError();
+        goto post_cst_api_check;
+    }
+    if (write_options & cudaFlushGPUDirectRDMAWritesOptionHost)
+        proxy_state->is_consistency_api_supported = true;
+    status = cudaDeviceGetAttribute(&proxy_state->gdr_device_native_ordering,
+                                    cudaDevAttrGPUDirectRDMAWritesOrdering,
+                                    device);
+    if (status != CUDA_SUCCESS) {
         proxy_state->gdr_device_native_ordering = 0;
+        cudaGetLastError();
     }
 #else  /* CUDART_VERSION >= 11030 */
     proxy_state->is_consistency_api_supported = false;
     proxy_state->gdr_device_native_ordering = 0;
 #endif /* CUDART_VERSION >= 11030 */
 
+post_cst_api_check:
     INFO(NVSHMEM_PROXY, "[%d] creating proxy thread", state->mype);
     
     status = pthread_create(&proxy_state->progress_thread, NULL, nvshmemi_proxy_progress,
@@ -526,7 +530,7 @@ void enforce_cst(proxy_state_t *proxy_state) {
     }
 #endif
 #if defined(NVSHMEM_PPC64LE)
-    status = cuEventRecord(proxy_state->cuev, proxy_state->stream);
+    status = cudaEventRecord(proxy_state->cuev, proxy_state->stream);
     if (unlikely(status != CUDA_SUCCESS)) {
         ERROR_EXIT("cuEventRecord() failed in the proxy thread \n");
     }
@@ -956,7 +960,7 @@ void *nvshmemi_proxy_progress(void *in) {
     INFO(NVSHMEM_PROXY, "setting current CUDA context to saved context: %p",
          proxy_state->nvshmemi_state->cucontext);
     CUresult curesult = CUDA_SUCCESS;
-    curesult = cuCtxSetCurrent(proxy_state->nvshmemi_state->cucontext);
+    curesult = CUPFN(cuCtxSetCurrent(proxy_state->nvshmemi_state->cucontext));
     if (curesult != CUDA_SUCCESS) {
         ERROR_EXIT("failed setting context on the proxy thread \n");
     }
@@ -998,7 +1002,7 @@ int nvshmemi_proxy_finalize(nvshmemi_state_t *state) {
     pthread_join(proxy_state->progress_thread, NULL);
 
     if (proxy_state->stream != NULL) {
-        CUDA_CHECK(cuStreamDestroy(proxy_state->stream));
+        CUDA_RUNTIME_CHECK(cudaStreamDestroy(proxy_state->stream));
     }
 
     // free up all proxy state

@@ -31,7 +31,7 @@ __global__ void barrier_on_stream_kernel_threadgroup(nvshmem_team_t team) {
 #ifdef __CUDA_ARCH__
     int myidx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
 
-    if (nvshmemi_device_state_d.job_connectivity >= NVSHMEMI_JOB_GPU_PROXY) {
+    if (nvshmemi_device_state_d.job_connectivity >= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
         if (!myidx) nvshmemi_transfer_quiet(false);
         nvshmemi_threadgroup_sync<SCOPE>();
     }
@@ -55,7 +55,7 @@ __global__ void sync_on_stream_kernel_threadgroup(nvshmem_team_t team) {
 int nvshmemi_call_barrier_on_stream_kernel(nvshmem_team_t team, cudaStream_t stream) {
     int num_blocks = 1;
     int num_threads_per_block;
-    if (nvshmemi_job_connectivity <= NVSHMEMI_JOB_GPU_LDST) {
+    if (nvshmemi_job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
         int size = nvshmemi_team_pool[team]->size;
         num_threads_per_block = size - 1; // Have enough threads for alltoall algo
     } else {
@@ -77,7 +77,7 @@ int nvshmemi_call_barrier_on_stream_kernel(nvshmem_team_t team, cudaStream_t str
 int nvshmemi_call_sync_on_stream_kernel(nvshmem_team_t team, cudaStream_t stream) {
     int num_blocks = 1;
     int num_threads_per_block;
-    if (nvshmemi_job_connectivity <= NVSHMEMI_JOB_GPU_LDST) {
+    if (nvshmemi_job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
         int size = nvshmemi_team_pool[team]->size;
         num_threads_per_block = size - 1; // Have enough threads for alltoall algo
     } else {

@@ -21,16 +21,13 @@
 #define MAX_MSG_SIZE 64 * 1024
 #define UNROLL 8
 
-__global__ void pull(int *data_d, int len, int pe, int iter, int skip, double *lat_result) {
-    long long int start, stop;
-    double time;
+__global__ void pull(int *data_d, int len, int pe, int iter) {
     int i, j, tid, peer;
 
     peer = !pe;
     tid = threadIdx.x;
 
-    for (i = 0; i < (iter + skip); i++) {
-        if (i == skip) start = clock64();
+    for (i = 0; i < iter; i++) {
 
         if (!pe) {
             for (j = 0; j < len; j += THREADS) {
@@ -38,14 +35,7 @@ __global__ void pull(int *data_d, int len, int pe, int iter, int skip, double *l
             }
 
             __syncthreads();
-
         }
-    }
-    stop = clock64();
-
-    if ((pe == 0) && !tid) {
-        time = (stop - start) / iter;
-        *lat_result = time * 1000 / clockrate;
     }
 }
 
@@ -62,7 +52,13 @@ int main(int c, char *v[]) {
     uint64_t *h_size_arr;
     double *h_lat;
 
+    float milliseconds;
+    cudaEvent_t start, stop;
+
     init_wrapper(&c, &v);
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
@@ -90,9 +86,16 @@ int main(int c, char *v[]) {
         h_size_arr[i] = size;
         nelems = size / sizeof(int);
 
-        pull<<<1, THREADS>>>(data_d, nelems, mype, iter, skip, &h_lat[i]);
+        pull<<<1, THREADS>>>(data_d, nelems, mype, skip);
+        cudaEventRecord(start);
+        pull<<<1, THREADS>>>(data_d, nelems, mype, iter);
+        cudaEventRecord(stop);
 
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaEventSynchronize(stop));
+
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        /* give latency in us */
+        h_lat[i] = (milliseconds * 1000) / iter;
         nvshmem_barrier_all();
         i++;
     }

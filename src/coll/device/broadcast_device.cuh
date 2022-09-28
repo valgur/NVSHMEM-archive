@@ -120,7 +120,7 @@ __device__ inline void nvshmemi_broadcast_threadgroup(nvshmem_team_t team, T *de
         nelems % 2 == 0) {
         nvshmemi_bcast_tree_threadgroup<T, SCOPE>(team, dest, source, nelems, PE_root);
     }
-    else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST) {
+    else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
         nvshmemi_bcast_put2all_direct_threadgroup<T, SCOPE>(team, dest, source, nelems, PE_root);
     }
     else {

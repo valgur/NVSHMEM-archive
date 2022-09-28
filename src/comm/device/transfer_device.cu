@@ -8,9 +8,11 @@
 #include "nvshmemi_util.h"
 #include "nvshmemi_constants.h"
 #include "nvshmemx_api.h"
+#include "nvshmemi_proxy.h"
 
 #ifdef NVSHMEM_GPUINITIATED_SUPPORT
     #include "nvshmemi_gic.h"
+    #include "gic_device.cuh"
 #endif
 
 #define TRANSFER_REPT_FOR_STANDARD_RMA_TYPES(FN_TEMPLATE) \
@@ -46,28 +48,12 @@
     FN_TEMPLATE(NVSHMEMI_THREADGROUP_WARP) \
     FN_TEMPLATE(NVSHMEMI_THREADGROUP_BLOCK)
 
-template <typename T>
-__device__ void nvshmemi_proxy_rma_p(void *rptr, T value, int pe);
-__device__ void nvshmemi_proxy_rma_nbi(void *rptr, void *lptr, size_t nelems, int pe, nvshmemi_op_t channel_op);
-template <typename T>
-__device__ void nvshmemi_proxy_amo_nonfetch(void *rptr, const T value, int pe,
-               nvshmemi_amo_t op);
-template <typename T>
-__device__ void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T value, T compare, int pe,
-               nvshmemi_amo_t op);
-template<typename T>
-__device__ T nvshmemi_proxy_rma_g(void *source, int pe);
-__device__ void nvshmemi_proxy_fence();
-__device__ void nvshmemi_proxy_quiet(bool use_membar);
-__device__ void nvshmemi_proxy_global_exit(int status);
-__device__ void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar);
-
 
 #ifdef __CUDA_ARCH__
 template <typename T>
 __device__ void nvshmemi_transfer_rma_p(void *rptr, const T value, int pe) {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_rma_p<T>(rptr, value, pe);
     } 
     else
@@ -86,7 +72,7 @@ TRANSFER_REPT_FOR_STANDARD_RMA_TYPES(TRANSFER_DECL_RMA_P)
 template <typename T>
 __device__ T nvshmemi_transfer_rma_g(void *rptr, int pe) {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         return nvshmemi_gic_rma_g<T>(rptr, pe);
     } 
     else
@@ -105,7 +91,7 @@ TRANSFER_REPT_FOR_STANDARD_RMA_TYPES(TRANSFER_DECL_RMA_G)
 template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
 __device__ void nvshmemi_transfer_rma(void *rptr, void *lptr, size_t bytes, int pe) {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_rma<SCOPE, channel_op>(rptr, lptr, bytes, pe);
     } 
     else
@@ -136,7 +122,7 @@ __device__ void nvshmemi_transfer_put_signal(void *rptr, void *lptr, size_t byte
                                              void *sig_addr, uint64_t signal,
                                              nvshmemi_amo_t sig_op, int pe, bool is_nbi) {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_put_signal<SCOPE>(rptr, lptr, bytes, sig_addr, signal, sig_op, pe, is_nbi);
     } 
     else
@@ -166,7 +152,7 @@ TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_PUT_SIGNAL)
 template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
 __device__ void nvshmemi_transfer_rma_nbi(void *rptr, void *lptr, size_t bytes, int pe) {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_rma_nbi<SCOPE, channel_op>(rptr, lptr, bytes, pe);
     } 
     else
@@ -192,7 +178,7 @@ TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_RMA_NBI)
 template <typename T>
 __device__ T nvshmemi_transfer_amo_fetch(void *rptr, T value, T compare, int pe, nvshmemi_amo_t op) {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         return nvshmemi_gic_amo_fetch<T>(rptr, value, compare, pe, op);
     }
     else
@@ -214,7 +200,7 @@ TRANSFER_REPT_FOR_EXTENDED_AMO_TYPES(TRANSFER_DECL_AMO_FETCH);
 template <typename T>
 __device__ void nvshmemi_transfer_amo_nonfetch(void *rptr, T value, int pe, nvshmemi_amo_t op) {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {                                         
+    if (nvshmemi_device_state_d.gic_is_initialized) {                                         
         nvshmemi_gic_amo_nonfetch<T>(rptr, value, pe, op);       
     } 
     else 
@@ -234,8 +220,11 @@ TRANSFER_REPT_FOR_EXTENDED_AMO_TYPES(TRANSFER_DECL_AMO_NONFETCH);
 __device__ void nvshmemi_transfer_quiet(bool use_membar) {
     // quiet_on_stream also shares this code path.
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_quiet();
+        if (use_membar) {
+            __threadfence_system();
+        }
     } 
     #endif
     if (nvshmemi_device_state_d.proxy == NVSHMEMI_PROXY_FULL) {
@@ -245,7 +234,7 @@ __device__ void nvshmemi_transfer_quiet(bool use_membar) {
 
 __device__ void nvshmemi_transfer_fence() {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_fence();
     } 
     #endif
@@ -257,7 +246,7 @@ __device__ void nvshmemi_transfer_fence() {
 
 __device__ void nvshmemi_transfer_enforce_consistency_at_target(bool use_membar) {
     #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    if (nvshmemi_device_state_d.gic_state) {
+    if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_enforce_consistency_at_target(use_membar);
     } 
     else

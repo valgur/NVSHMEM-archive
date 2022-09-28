@@ -23,7 +23,7 @@
 #define NVSHMEMT_IBDEVX_SRQ_TYPE_VALUE 0x1
 
 #ifndef MLX5DV_UAR_ALLOC_TYPE_BF
-#define MLX5DV_UAR_ALLOC_TYPE_BF 0x1
+#define MLX5DV_UAR_ALLOC_TYPE_BF 0x0
 #endif
 
 /* Enables remote read/write/atomic access for a QP */

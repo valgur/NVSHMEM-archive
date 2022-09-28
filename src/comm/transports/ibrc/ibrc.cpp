@@ -8,6 +8,7 @@
 #include "nvshmem_internal.h"
 #include "transport.h"
 #include "transport_common.h"
+#include "transport_ib_common.h"
 #include "infiniband/verbs.h"
 
 #include <linux/types.h>
@@ -127,14 +128,9 @@ typedef struct {
     int proxy_ep_idx;
     int ep_count;
     int selected_dev_id;
+    bool dmabuf_support;
     struct ibrc_ep **ep;
 } transport_ibrc_state_t;
-
-struct ibrc_mem_handle {
-    uint32_t lkey;
-    uint32_t rkey;
-    void *mr;
-};
 
 typedef struct ibrc_mem_handle_info {
     struct ibv_mr *mr;
@@ -175,12 +171,6 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *transport);
 int check_poll_avail(struct ibrc_ep *ep, int wait_predicate);
 int progress_send(transport_ibrc_state_t *ibrc_state);
 int poll_recv(transport_ibrc_state_t *ibrc_state);
-
-#define DIVUP(x, y) \
-    (((x)+(y)-1)/(y))
-
-#define ROUNDUP(x, y) \
-    (DIVUP((x), (y))*(y))
 
 // Allocate memory to be potentially ibv_reg_mr'd. This needs to be
 // // allocated on separate pages as those pages will be marked DONTFORK
@@ -245,8 +235,8 @@ int nvshmemt_ibrc_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
     for (int i = 0; i < npes; ++i) {
         INFO(NVSHMEM_TRANSPORT, "[%d] mem_handle %d : %p", mype, transport_id,
              &mem_handles[i * transport_count + transport_id]);
-        struct ibrc_mem_handle *mem_handle =
-            (struct ibrc_mem_handle *)&mem_handles[i * transport_count + transport_id];
+        struct nvshmemt_ib_common_mem_handle *mem_handle =
+            (struct nvshmemt_ib_common_mem_handle *)&mem_handles[i * transport_count + transport_id];
         INFO(NVSHMEM_TRANSPORT, "[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey,
              mem_handle->rkey, mem_handle->mr);
     }
@@ -490,24 +480,16 @@ int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     struct ibrc_device *device =
         ((struct ibrc_device *)ibrc_state->devices + ibrc_state->dev_ids[ibrc_state->selected_dev_id]);
     struct ibrc_mem_handle_info handle_info;
-    struct ibrc_mem_handle *handle = (struct ibrc_mem_handle *)mem_handle;
+    struct nvshmemt_ib_common_mem_handle *handle;
 
-    struct ibv_mr *mr = NULL;
+    status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf,
+                                               length, local_only, ibrc_state->dmabuf_support);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to register memory handle.");
 
-    assert(sizeof(struct ibrc_mem_handle) <= NVSHMEM_MEM_HANDLE_SIZE);
-
-    mr = ftable.reg_mr(device->pd, buf, length,
-                       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                           IBV_ACCESS_REMOTE_ATOMIC);
-    NULL_ERROR_JMP(mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "mem registration failed \n");
-
-    handle->lkey = mr->lkey;
-    handle->rkey = mr->rkey;
-    handle->mr = (void *)mr;
-    handle_info.mr = mr;
+    handle = (struct nvshmemt_ib_common_mem_handle *)mem_handle;
+    handle_info.mr = handle->mr;
     handle_info.ptr = buf;
     handle_info.size = length;
-    INFO(NVSHMEM_TRANSPORT, "ibv_reg_mr handle %p handle->mr %p", handle, handle->mr);
 
 #ifdef NVSHMEM_USE_GDRCOPY
     if (use_gdrcopy && !local_only) {
@@ -562,16 +544,19 @@ int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
                        "mem registration failed \n");
     }
 out:
+    if (status) {
+        nvshmemt_ib_common_release_mem_handle(&ftable, mem_handle);
+    }
     return status;
 }
 
 int nvshmemt_ibrc_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
     int status = 0;
-    struct ibrc_mem_handle *handle = (struct ibrc_mem_handle *)mem_handle;
+    struct nvshmemt_ib_common_mem_handle *handle = (struct nvshmemt_ib_common_mem_handle *)mem_handle;
 
-    INFO(NVSHMEM_TRANSPORT, "ibv_dereg_mr handle %p handle->mr %p", handle, handle->mr);
-    status = ftable.dereg_mr((struct ibv_mr *)handle->mr);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_dereg_mr failed \n");
+    status = nvshmemt_ib_common_release_mem_handle(&ftable, mem_handle);
+    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to dereg memory.\n");
+
     for (std::vector<ibrc_mem_handle_info_t>::iterator it = mem_handle_cache.begin(); it != mem_handle_cache.end(); it++) {
        if (handle->mr == it->mr) {
 #ifdef NVSHMEM_USE_GDRCOPY
@@ -612,7 +597,9 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
     }
 
 #ifdef NVSHMEM_USE_GDRCOPY
-    nvshmemt_gdrcopy_ftable_fini(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
+    if (use_gdrcopy) {
+        nvshmemt_gdrcopy_ftable_fini(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
+    }
 #endif
 
     // clear qp map
@@ -1026,12 +1013,12 @@ int nvshmemt_ibrc_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, 
 
     sr->wr.rdma.remote_addr = (uint64_t)remote->ptr;
     assert(remote->handle);
-    sr->wr.rdma.rkey = ((struct ibrc_mem_handle *)remote->handle)->rkey;
+    sr->wr.rdma.rkey = ((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey;
     sge->length = bytesdesc.nelems * bytesdesc.elembytes;
     sge->addr = (uintptr_t)local->ptr;
     /* local->handle is unset for p operations since they are sent by value. */
     if (likely(local->handle != NULL)) {
-        sge->lkey = ((struct ibrc_mem_handle *)local->handle)->lkey;
+        sge->lkey = ((struct nvshmemt_ib_common_mem_handle *)local->handle)->lkey;
     }
     if (verb.desc == NVSHMEMI_OP_P) {
         sr->opcode = IBV_WR_RDMA_WRITE;
@@ -1106,7 +1093,7 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
 
                 sr->wr.atomic.remote_addr = (uint64_t)remote->ptr;
                 assert(remote->handle);
-                sr->wr.atomic.rkey = ((struct ibrc_mem_handle *)remote->handle)->rkey;
+                sr->wr.atomic.rkey = ((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey;
                 sr->wr.atomic.compare_add = remote->val;
 
                 sge->length = bytesdesc.elembytes;
@@ -1160,7 +1147,7 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
 
                 sr->wr.atomic.remote_addr = (uint64_t)remote->ptr;
                 assert(remote->handle);
-                sr->wr.atomic.rkey = ((struct ibrc_mem_handle *)remote->handle)->rkey;
+                sr->wr.atomic.rkey = ((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey;
                 sr->wr.atomic.compare_add = remote->val;
 
                 sge->length = bytesdesc.elembytes;
@@ -1175,7 +1162,7 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
 
             sr->wr.rdma.remote_addr = (uint64_t)remote->ptr;
             assert(remote->handle);
-            sr->wr.rdma.rkey = ((struct ibrc_mem_handle *)remote->handle)->rkey;
+            sr->wr.rdma.rkey = ((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey;
 
             sge->length = bytesdesc.elembytes;
             sge->addr = (uintptr_t)&remote->val;
@@ -1650,6 +1637,18 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     transport->is_successfully_initialized = true;
 
     *t = transport;
+
+    ibrc_state->dmabuf_support = false;
+#if CUDA_VERSION >= 11070
+    int flag;
+    status = CUPFN(cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, nvshmemi_state->cudevice));
+    if (status != CUDA_SUCCESS) {
+        status = 0;
+        cudaGetLastError();
+    } else if (flag == 1) {
+        ibrc_state->dmabuf_support = true;
+    }
+#endif
 
 out:
 

@@ -29,9 +29,7 @@ template <typename T>
 __device__ inline void nvshmemi_signal_for_barrier(T *dest, const T value, int pe) {
     const void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
-    if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS ||
-        (nvshmemi_device_state_d.job_connectivity == NVSHMEMI_JOB_GPU_LDST &&
-         nvshmemi_device_state_d.proxy < NVSHMEMI_PROXY_FULL)) {
+    if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST) {
         volatile T *dest_actual =
             (volatile T *)((char *)(peer_base_addr) +
                            ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));

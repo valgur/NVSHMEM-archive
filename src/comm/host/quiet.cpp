@@ -27,9 +27,8 @@ void nvshmem_quiet(void) {
     int tbitmap = nvshmemi_state->transport_bitmap;
     if (nvshmemi_state->npes_node > 1) {
         for (int s = 0; s < MAX_PEER_STREAMS; s++) {
-            CUstream custrm = nvshmemi_state->custreams[s];
-            status = cuStreamSynchronize(custrm);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_quiet() failed \n");
+            cudaStream_t custrm = nvshmemi_state->custreams[s];
+            CUDA_RUNTIME_CHECK_GOTO(cudaStreamSynchronize(custrm), status, out);
         }
         nvshmemi_state->used_internal_streams = 0;
     }
@@ -52,22 +51,15 @@ out:
 }
 
 void nvshmemi_quiesce_internal_streams(cudaStream_t cstrm) {
-    int status = 0;
     if (nvshmemi_state->npes_node > 1 && nvshmemi_state->used_internal_streams) {
         for (int s = 0; s < MAX_PEER_STREAMS; s++) {
-            CUstream custrm = nvshmemi_state->custreams[s];
-            CUevent cuev = nvshmemi_state->cuevents[s];
-            status = cuEventRecord(cuev, custrm);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                         "nvshmem_quiet_on_stream() failed \n");
-            status = cuStreamWaitEvent((CUstream)cstrm, cuev, 0);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                         "nvshmem_quiet_on_stream() failed \n");
+            cudaStream_t custrm = nvshmemi_state->custreams[s];
+            cudaEvent_t cuev = nvshmemi_state->cuevents[s];
+            CUDA_RUNTIME_CHECK(cudaEventRecord(cuev, custrm));
+            CUDA_RUNTIME_CHECK(cudaStreamWaitEvent(cstrm, cuev, 0));
         }
         nvshmemi_state->used_internal_streams = 0;
     }
-out:
-    return;
 }
 
 void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {

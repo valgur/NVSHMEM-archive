@@ -85,6 +85,8 @@
 #define SHMEM_WRK_VALUE 0
 #define MAX_ELEMS (1 * 1024 * 1024)
 #define MAX_ELEMS_LOG 20
+#define MS_TO_S 1000
+#define B_TO_GB (1 << 30)
 
 extern __device__ int clockrate;
 

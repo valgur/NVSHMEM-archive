@@ -18,163 +18,116 @@
 #endif
 #define MAX_ITERS 50
 
-#define CALL_RDXN_BLOCK(TYPENAME, TYPE, OP, usec)                                          \
-    do {                                                                                   \
-        double time;                                                                       \
-        int i;                                                                             \
-        int iter = MAX_ITERS;                                                              \
-        int skip = MAX_SKIP;                                                               \
-        long long int start = 0, stop = 0;                                                 \
-                                                                                           \
-        time = 0;                                                                          \
-        for (i = 0; i < (iter + skip); i++) {                                              \
-            nvshmemx_barrier_all_block();                                                  \
-            if (i > skip) start = clock64();                                               \
-            nvshmemx_##TYPENAME##_##OP##_reduce_block(team, dest, source, nelems);         \
-            if (i > skip) stop = clock64();                                                \
-            time += (stop - start);                                                        \
-        }                                                                                  \
-        nvshmemx_barrier_all_block();                                                      \
-        if (!threadIdx.x && !mype) {                                                       \
-            time = time / iter;                                                            \
-            *usec = time * 1000 / clockrate;                                               \
-        }                                                                                  \
+#define CALL_RDXN(TG_PRE, TG, TYPENAME, TYPE, OP, THREAD_COMP, ELEM_COMP)                 \
+__global__ void test_##TYPENAME##_##OP##_reduce_kern##TG(nvshmem_team_t team, TYPE *dest, \
+                                                         const TYPE *source, int nelems,  \
+                                                         int iter) {                      \
+    int i;                                                                                \
+                                                                                          \
+    if (!blockIdx.x && (threadIdx.x < THREAD_COMP) && (nelems < ELEM_COMP)) {             \
+        for (i = 0; i < iter; i++) {                                                      \
+            nvshmem##TG_PRE##_##TYPENAME##_##OP##_reduce##TG(team, dest, source, nelems); \
+        }                                                                                 \
+    }                                                                                     \
+}
+
+#define CALL_RDXN_OPS_ALL_TG(TYPENAME, TYPE)                 \
+CALL_RDXN(x, _block, TYPENAME, TYPE, sum, INT_MAX, INT_MAX)  \
+CALL_RDXN(x, _block, TYPENAME, TYPE, prod, INT_MAX, INT_MAX) \
+CALL_RDXN(x, _block, TYPENAME, TYPE, and, INT_MAX, INT_MAX)  \
+CALL_RDXN(x, _block, TYPENAME, TYPE, or, INT_MAX, INT_MAX)   \
+CALL_RDXN(x, _block, TYPENAME, TYPE, xor, INT_MAX, INT_MAX)  \
+CALL_RDXN(x, _block, TYPENAME, TYPE, min, INT_MAX, INT_MAX)  \
+CALL_RDXN(x, _block, TYPENAME, TYPE, max, INT_MAX, INT_MAX)  \
+CALL_RDXN(x, _warp, TYPENAME, TYPE, sum, warpSize, 4096)     \
+CALL_RDXN(x, _warp, TYPENAME, TYPE, prod, warpSize, 4096)    \
+CALL_RDXN(x, _warp, TYPENAME, TYPE, and, warpSize, 4096)     \
+CALL_RDXN(x, _warp, TYPENAME, TYPE, or, warpSize, 4096)      \
+CALL_RDXN(x, _warp, TYPENAME, TYPE, xor, warpSize, 4096)     \
+CALL_RDXN(x, _warp, TYPENAME, TYPE, min, warpSize, 4096)     \
+CALL_RDXN(x, _warp, TYPENAME, TYPE, max, warpSize, 4096)     \
+CALL_RDXN(,, TYPENAME, TYPE, sum, 1, 512)                    \
+CALL_RDXN(,, TYPENAME, TYPE, prod, 1, 512)                   \
+CALL_RDXN(,, TYPENAME, TYPE, and, 1, 512)                    \
+CALL_RDXN(,, TYPENAME, TYPE, or, 1, 512)                     \
+CALL_RDXN(,, TYPENAME, TYPE, xor, 1, 512)                    \
+CALL_RDXN(,, TYPENAME, TYPE, min, 1, 512)                    \
+CALL_RDXN(,, TYPENAME, TYPE, max, 1, 512)
+
+CALL_RDXN_OPS_ALL_TG(int32, int32_t)
+CALL_RDXN_OPS_ALL_TG(int64, int64_t)
+
+#define SET_SIZE_ARR(TYPE, ELEM_COMP)                            \
+do {                                                             \
+    j = 0;                                                       \
+    for (num_elems = 1; num_elems < max_elems; num_elems *= 2) { \
+        if (num_elems < ELEM_COMP) {                             \
+            size_arr[j] = num_elems * sizeof(TYPE);              \
+        } else {                                                 \
+            size_arr[j] = 0;                                     \
+        }                                                        \
+        j++;                                                     \
+    }                                                            \
+} while (0)
+
+#define RUN_ITERS_OP(TYPENAME, TYPE, GROUP, OP, ELEM_COMP)                                                 \
+    do {                                                                                                   \
+        void *skip_arg_list[] = {&team, &dest, &source, &num_elems, &skip};                                \
+        void *time_arg_list[] = {&team, &dest, &source, &num_elems, &iter};                                \
+        float milliseconds;                                                                                \
+        cudaEvent_t start, stop;                                                                           \
+        cudaEventCreate(&start);                                                                           \
+        cudaEventCreate(&stop);                                                                            \
+        SET_SIZE_ARR(TYPE, ELEM_COMP);                                                                     \
+                                                                                                           \
+        nvshmem_barrier_all();                                                                             \
+        j = 0;                                                                                             \
+        for (num_elems = 1; num_elems < ELEM_COMP; num_elems *= 2) {                                       \
+            status = nvshmemx_collective_launch((const void *)test_##TYPENAME##_##OP##_reduce_kern##GROUP, \
+                                                num_blocks, nvshm_test_num_tpb, skip_arg_list, 0, stream); \
+            if (status != NVSHMEMX_SUCCESS) {                                                              \
+                fprintf(stderr, "shmemx_collective_launch failed %d \n", status);                          \
+                exit(-1);                                                                                  \
+            }                                                                                              \
+            CUDA_CHECK(cudaStreamSynchronize(stream));                                                     \
+            nvshmem_barrier_all();                                                                         \
+                                                                                                           \
+            cudaEventRecord(start, stream);                                                                \
+            status = nvshmemx_collective_launch((const void *)test_##TYPENAME##_##OP##_reduce_kern##GROUP, \
+                                                num_blocks, nvshm_test_num_tpb, time_arg_list, 0, stream); \
+            if (status != NVSHMEMX_SUCCESS) {                                                              \
+                fprintf(stderr, "shmemx_collective_launch failed %d \n", status);                          \
+                exit(-1);                                                                                  \
+            }                                                                                              \
+            cudaEventRecord(stop, stream);                                                                 \
+            CUDA_CHECK(cudaStreamSynchronize(stream));                                                     \
+                                                                                                           \
+            if (!mype) {                                                                                   \
+                cudaEventElapsedTime(&milliseconds, start, stop);                                          \
+                h_##OP##_lat[j] = (milliseconds * 1000.0) / (float)iter;                                   \
+            }                                                                                              \
+            nvshmem_barrier_all();                                                                         \
+            j++;                                                                                           \
+        }                                                                                                  \
     } while (0)
 
-#define CALL_RDXN_WARP(TYPENAME, TYPE, OP, usec)                                                   \
-    do {                                                                                           \
-        double time;                                                                               \
-        int i;                                                                                     \
-        int iter = MAX_ITERS;                                                                      \
-        int skip = MAX_SKIP;                                                                       \
-        long long int start = 0, stop = 0;                                                         \
-                                                                                                   \
-        time = 0;                                                                                  \
-        for (i = 0; i < (iter + skip); i++) {                                                      \
-            nvshmemx_barrier_all_warp();                                                           \
-            if (i > skip) start = clock64();                                                       \
-            nvshmemx_##TYPENAME##_##OP##_reduce_warp(team, dest, source, nelems);                  \
-            if (i > skip) stop = clock64();                                                        \
-            time += (stop - start);                                                                \
-        }                                                                                          \
-        nvshmemx_barrier_all_warp();                                                               \
-        if (!threadIdx.x && !mype) {                                                               \
-            time = time / iter;                                                                    \
-            *usec = time * 1000 / clockrate;                                                       \
-        }                                                                                          \
-    } while (0)
-
-#define CALL_RDXN_THREAD(TYPENAME, TYPE, OP, usec)                                           \
-    do {                                                                                     \
-        double time;                                                                         \
-        int i;                                                                               \
-        int iter = MAX_ITERS;                                                                \
-        int skip = MAX_SKIP;                                                                 \
-        long long int start = 0, stop = 0;                                                   \
-                                                                                             \
-        time = 0;                                                                            \
-        for (i = 0; i < (iter + skip); i++) {                                                \
-            nvshmem_barrier_all();                                                           \
-            if (i > skip) start = clock64();                                                 \
-            nvshmem_##TYPENAME##_##OP##_reduce(team, dest, source, nelems);                  \
-            if (i > skip) stop = clock64();                                                  \
-            time += (stop - start);                                                          \
-        }                                                                                    \
-        nvshmem_barrier_all();                                                               \
-        if (!threadIdx.x && !mype) {                                                         \
-            time = time / iter;                                                              \
-            *usec = time * 1000 / clockrate;                                                 \
-        }                                                                                    \
-    } while (0)
-
-#define DEFN_RDXN_BLOCK_FXNS(TYPENAME, TYPE)                                                     \
-    __global__ void test_##TYPENAME##_call_kern_block(                                           \
-        nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, int mype, double *d_time_avg, \
-        double *usec_sum, double *usec_prod, double *usec_and, double *usec_or,                   \
-        double *usec_xor, double *usec_min, double *usec_max) {                                   \
-                                                                                                 \
-        if (!blockIdx.x) nvshmemx_barrier_all_block();                                           \
-        if (!blockIdx.x && nelems < 65536) {                                                     \
-            CALL_RDXN_BLOCK(TYPENAME, TYPE, sum, usec_sum);                                      \
-            CALL_RDXN_BLOCK(TYPENAME, TYPE, prod, usec_prod);                                    \
-            CALL_RDXN_BLOCK(TYPENAME, TYPE, and, usec_and);                                      \
-            CALL_RDXN_BLOCK(TYPENAME, TYPE, or, usec_or);                                        \
-            CALL_RDXN_BLOCK(TYPENAME, TYPE, xor, usec_xor);                                      \
-            CALL_RDXN_BLOCK(TYPENAME, TYPE, min, usec_min);                                      \
-            CALL_RDXN_BLOCK(TYPENAME, TYPE, max, usec_max);                                      \
-        }                                                                                        \
-        if (!blockIdx.x) nvshmemx_barrier_all_block();                                           \
-    }
-
-#define DEFN_RDXN_WARP_FXNS(TYPENAME, TYPE)                                                       \
-    __global__ void test_##TYPENAME##_call_kern_warp(                                             \
-        nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, int mype, double *d_time_avg, \
-        double *usec_sum, double *usec_prod, double *usec_and, double *usec_or,                   \
-        double *usec_xor, double *usec_min, double *usec_max) {                                   \
-                                                                                                  \
-        if (!blockIdx.x) nvshmemx_barrier_all_block();                                            \
-        if (!blockIdx.x && !(threadIdx.x / warpSize) && nelems < 4096) {                          \
-            CALL_RDXN_WARP(TYPENAME, TYPE, sum, usec_sum);                                        \
-            CALL_RDXN_WARP(TYPENAME, TYPE, prod, usec_prod);                                      \
-            CALL_RDXN_WARP(TYPENAME, TYPE, and, usec_and);                                        \
-            CALL_RDXN_WARP(TYPENAME, TYPE, or, usec_or);                                          \
-            CALL_RDXN_WARP(TYPENAME, TYPE, xor, usec_xor);                                        \
-            CALL_RDXN_WARP(TYPENAME, TYPE, min, usec_min);                                        \
-            CALL_RDXN_WARP(TYPENAME, TYPE, max, usec_max);                                        \
-        }                                                                                         \
-        __syncthreads();                                                                          \
-        if (!blockIdx.x) nvshmemx_barrier_all_block();                                            \
-    }
-
-#define DEFN_RDXN_THREAD_FXNS(TYPENAME, TYPE)                                                    \
-    __global__ void test_##TYPENAME##_call_kern_thread(                                          \
-        nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, int mype, double *d_time_avg,          \
-        double *usec_sum, double *usec_prod, double *usec_and, double *usec_or,                  \
-        double *usec_xor, double *usec_min, double *usec_max) {                                  \
-                                                                                                 \
-        if (!blockIdx.x) nvshmemx_barrier_all_block();                                           \
-        if (!blockIdx.x && !threadIdx.x && nelems < 512) {                                       \
-            CALL_RDXN_THREAD(TYPENAME, TYPE, sum, usec_sum);                                     \
-            CALL_RDXN_THREAD(TYPENAME, TYPE, prod, usec_prod);                                   \
-            CALL_RDXN_THREAD(TYPENAME, TYPE, and, usec_and);                                     \
-            CALL_RDXN_THREAD(TYPENAME, TYPE, or, usec_or);                                       \
-            CALL_RDXN_THREAD(TYPENAME, TYPE, xor, usec_xor);                                     \
-            CALL_RDXN_THREAD(TYPENAME, TYPE, min, usec_min);                                     \
-            CALL_RDXN_THREAD(TYPENAME, TYPE, max, usec_max);                                     \
-        }                                                                                        \
-        __syncthreads();                                                                         \
-        if (!blockIdx.x) nvshmemx_barrier_all_block();                                           \
-    }
-
-DEFN_RDXN_THREAD_FXNS(int32, int32_t);
-DEFN_RDXN_THREAD_FXNS(int64, int64_t);
-DEFN_RDXN_WARP_FXNS(int32, int32_t);
-DEFN_RDXN_WARP_FXNS(int64, int64_t);
-DEFN_RDXN_BLOCK_FXNS(int32, int32_t);
-DEFN_RDXN_BLOCK_FXNS(int64, int64_t);
-
-#define RUN_ITERS(TYPENAME, TYPE, GROUP)                                                           \
-    do {                                                                                           \
-        nvshmem_barrier_all();                                                                     \
-        j = 0;                                                                                     \
-        for (num_elems = 1; num_elems < max_elems; num_elems *= 2) {                               \
-            size_arr[j] = num_elems * sizeof(TYPE);                                                \
-            nvshmem_barrier_all();                                                                 \
-            test_##TYPENAME##_call_kern_##GROUP<<<num_blocks, nvshm_test_num_tpb, 0, stream>>>(    \
-                team, (TYPE *)dest, (const TYPE *)source, num_elems, mype, d_time_avg, &h_sum_lat[j], &h_prod_lat[j],          \
-                &h_and_lat[j], &h_or_lat[j], &h_xor_lat[j], &h_min_lat[j], &h_max_lat[j]);         \
-            cuda_check_error();                                                                    \
-            CUDA_CHECK(cudaStreamSynchronize(stream));                                             \
-            j++;                                                                                   \
-        }                                                                                          \
-    } while (0)
+#define RUN_ITERS(TYPENAME, TYPE, GROUP, ELEM_COMP)   \
+RUN_ITERS_OP(TYPENAME, TYPE, GROUP, sum, ELEM_COMP);  \
+RUN_ITERS_OP(TYPENAME, TYPE, GROUP, prod, ELEM_COMP); \
+RUN_ITERS_OP(TYPENAME, TYPE, GROUP, and, ELEM_COMP);  \
+RUN_ITERS_OP(TYPENAME, TYPE, GROUP, or, ELEM_COMP);   \
+RUN_ITERS_OP(TYPENAME, TYPE, GROUP, xor, ELEM_COMP);  \
+RUN_ITERS_OP(TYPENAME, TYPE, GROUP, min, ELEM_COMP);  \
+RUN_ITERS_OP(TYPENAME, TYPE, GROUP, max, ELEM_COMP);
 
 int rdxn_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int mype, int max_elems, cudaStream_t stream,
-                        double *d_time_avg, run_opt_t run_options, void **h_tables) {
+                        run_opt_t run_options, void **h_tables) {
     int status = 0;
     int nvshm_test_num_tpb = TEST_NUM_TPB_BLOCK;
     int num_blocks = 1;
     int num_elems = 1;
+    int iter = MAX_ITERS;
+    int skip = MAX_SKIP;
     int j;
     uint64_t *size_arr = (uint64_t *)h_tables[0];
     double *h_sum_lat = (double *)h_tables[1];
@@ -189,7 +142,7 @@ int rdxn_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int
     // operations of reduction API in us\n");
     if (run_options.run_thread) {
 
-        RUN_ITERS(int32, int32_t, thread);
+        RUN_ITERS(int32, int32_t,, 512);
         if (!mype) {
             print_table("device_reduction", "int32-sum-t", "size (Bytes)", "latency", "us", '-', size_arr, h_sum_lat, j);
             print_table("device_reduction", "int32-prod-t", "size (Bytes)", "latency", "us", '-', size_arr, h_prod_lat, j);
@@ -200,7 +153,7 @@ int rdxn_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int
             print_table("device_reduction", "int32-max-t", "size (Bytes)", "latency", "us", '-', size_arr, h_max_lat, j);
         }
 
-        RUN_ITERS(int64, int64_t, thread);
+        RUN_ITERS(int64, int64_t,, 512);
         if (!mype) {
             print_table("device_reduction", "int64-sum-t", "size (Bytes)", "latency", "us", '-', size_arr, h_sum_lat, j);
             print_table("device_reduction", "int64-prod-t", "size (Bytes)", "latency", "us", '-', size_arr, h_prod_lat, j);
@@ -214,7 +167,7 @@ int rdxn_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int
 
     if (run_options.run_warp) {
 
-        RUN_ITERS(int32, int32_t, warp);
+        RUN_ITERS(int32, int32_t, _warp, 4096);
         if (!mype) {
             print_table("device_reduction", "int32-sum-w", "size (Bytes)", "latency", "us", '-', size_arr, h_sum_lat, j);
             print_table("device_reduction", "int32-prod-w", "size (Bytes)", "latency", "us", '-', size_arr, h_prod_lat, j);
@@ -225,7 +178,7 @@ int rdxn_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int
             print_table("device_reduction", "int32-max-w", "size (Bytes)", "latency", "us", '-', size_arr, h_max_lat, j);
         }
 
-        RUN_ITERS(int64, int64_t, warp);
+        RUN_ITERS(int64, int64_t, _warp, 4096);
         if (!mype) {
             print_table("device_reduction", "int64-sum-w", "size (Bytes)", "latency", "us", '-', size_arr, h_sum_lat, j);
             print_table("device_reduction", "int64-prod-w", "size (Bytes)", "latency", "us", '-', size_arr, h_prod_lat, j);
@@ -239,7 +192,7 @@ int rdxn_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int
 
     if (run_options.run_block) {
 
-        RUN_ITERS(int32, int32_t, block);
+        RUN_ITERS(int32, int32_t, _block, max_elems);
         if (!mype) {
             print_table("device_reduction", "int32-sum-b", "size (Bytes)", "latency", "us", '-', size_arr, h_sum_lat, j);
             print_table("device_reduction", "int32-prod-b", "size (Bytes)", "latency", "us", '-', size_arr, h_prod_lat, j);
@@ -250,7 +203,7 @@ int rdxn_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int
             print_table("device_reduction", "int32-max-b", "size (Bytes)", "latency", "us", '-', size_arr, h_max_lat, j);
         }
 
-        RUN_ITERS(int64, int64_t, block);
+        RUN_ITERS(int64, int64_t, _block, max_elems);
         if (!mype) {
             print_table("device_reduction", "int64-sum-b", "size (Bytes)", "latency", "us", '-', size_arr, h_sum_lat, j);
             print_table("device_reduction", "int64-prod-b", "size (Bytes)", "latency", "us", '-', size_arr, h_prod_lat, j);
@@ -277,7 +230,6 @@ int main(int argc, char **argv) {
     int *d_source, *d_dest;
     int *h_source, *h_dest;
     char size_string[100];
-    double *d_time_avg;
     cudaStream_t cstrm;
     run_opt_t run_options;
     void **h_tables;
@@ -316,8 +268,6 @@ int main(int argc, char **argv) {
 
     CUDA_CHECK(cudaStreamCreateWithFlags(&cstrm, cudaStreamNonBlocking));
 
-    d_time_avg = (double *)nvshmem_align(getpagesize(), sizeof(double) * 2);
-
     num_elems = MAX_ELEMS / 2;
     alloc_size = (num_elems * 2) * sizeof(long);
 
@@ -333,7 +283,7 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaMemcpyAsync(d_dest, h_dest, (sizeof(LARGEST_DT) * num_elems),
                                cudaMemcpyHostToDevice, cstrm));
 
-    rdxn_calling_kernel(NVSHMEM_TEAM_WORLD, d_dest, d_source, mype, max_elems, cstrm, d_time_avg, run_options, h_tables);
+    rdxn_calling_kernel(NVSHMEM_TEAM_WORLD, d_dest, d_source, mype, max_elems, cstrm, run_options, h_tables);
 
     DEBUG_PRINT("last error = %s\n", cudaGetErrorString(cudaGetLastError()));
 
@@ -347,7 +297,6 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaFreeHost(h_buffer));
     nvshmem_free(d_source);
     nvshmem_free(d_dest);
-    nvshmem_free(d_time_avg);
 
     CUDA_CHECK(cudaStreamDestroy(cstrm));
 

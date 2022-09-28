@@ -12,219 +12,130 @@
 
 #include "coll_test.h"
 
-__device__ double *pWrk;
-
-__global__ void test_sync_call_kern(nvshmem_team_t team, int mype, double *d_time_avg, double *h_thread_lat,
-                                    double *h_warp_lat, double *h_block_lat) {
-    int iter = MAX_ITERS;
-    int skip = MAX_SKIP;
-    long long int start = 0, stop = 0;
-    double thread_usec, warp_usec, block_usec, time = 0;
-    int i;
-    double *dest_r, *source_r;
-    int PE_size = nvshmem_team_n_pes(team);
-
-    source_r = d_time_avg;
-    dest_r = (double *)((double *)d_time_avg + 1);
-
-    if (!blockIdx.x) nvshmemx_barrier_all_block();
-
-    time = 0;
-
-    if (!blockIdx.x && !threadIdx.x) {
-        for (i = 0; i < (iter + skip); i++) {
-            if (i > skip) start = clock64();
-            nvshmem_team_sync(team);
-            if (i > skip) stop = clock64();
-            time += (stop - start);
-        }
-        nvshmem_barrier_all();
-        if (!threadIdx.x) {
-            *source_r = time;
-            nvshmem_double_sum_reduce(team, dest_r, source_r, 1);
-            time = *dest_r;
-
-            if (mype == 0) {
-                time = time / iter;
-                time = time / PE_size;
-                thread_usec = time * 1000 / clockrate;
-            }
-        }
-    }
-
-    __syncthreads();
-    if (!blockIdx.x) nvshmemx_barrier_all_block();
-
-    time = 0;
-
-    if (!blockIdx.x && !(threadIdx.x / warpSize)) {
-        for (i = 0; i < (iter + skip); i++) {
-            if (i > skip) start = clock64();
-            nvshmemx_team_sync_warp(team);
-            if (i > skip) stop = clock64();
-            time += (stop - start);
-        }
-        nvshmemx_barrier_all_warp();
-        if (!threadIdx.x) {
-            *source_r = time;
-            nvshmem_double_sum_reduce(team, dest_r, source_r, 1);
-            time = *dest_r;
-
-            if (mype == 0) {
-                time = time / iter;
-                time = time / PE_size;
-                warp_usec = time * 1000 / clockrate;
-            }
-        }
-    }
-
-    __syncthreads();
-    if (!blockIdx.x) nvshmemx_barrier_all_block();
-
-    time = 0;
-
-    if (!blockIdx.x) {
-        for (i = 0; i < (iter + skip); i++) {
-            if (i > skip) start = clock64();
-            nvshmemx_team_sync_block(team);
-            if (i > skip) stop = clock64();
-            time += (stop - start);
-        }
-        nvshmemx_barrier_all_block();
-        if (!threadIdx.x) {
-            *source_r = time;
-            nvshmem_double_sum_reduce(team, dest_r, source_r, 1);
-            time = *dest_r;
-
-            if (mype == 0) {
-                time = time / iter;
-                time = time / PE_size;
-                block_usec = time * 1000 / clockrate;
-            }
-        }
-    }
-
-    __syncthreads();
-    if (!blockIdx.x && !threadIdx.x) nvshmem_barrier_all();
-
-    if (!threadIdx.x && !blockIdx.x && !mype) {
-        *h_thread_lat = thread_usec;
-        *h_warp_lat = warp_usec;
-        *h_block_lat = block_usec;
-    }
+#define SYNC_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)                                 \
+__global__ void test_sync_call_kernel##THREADGROUP(nvshmem_team_t team, int iter) {   \
+    int i;                                                                            \
+    if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                                 \
+        for (i = 0; i < iter; i++) {                                                  \
+            nvshmem##TG_PRE##_team_sync##THREADGROUP(team);                           \
+        }                                                                             \
+    }                                                                                 \
 }
 
-__global__ void test_sync_all_call_kern(nvshmem_team_t team, int mype, double *d_time_avg, double *h_thread_lat,
-                                        double *h_warp_lat, double *h_block_lat) {
-    int iter = MAX_ITERS;
-    int skip = MAX_SKIP;
-    long long int start = 0, stop = 0;
-    double thread_usec, warp_usec, block_usec, time = 0;
-    int i;
-    double *dest_r, *source_r;
-    int PE_size = nvshmem_team_n_pes(team);
-
-    source_r = d_time_avg;
-    dest_r = (double *)((double *)d_time_avg + 1);
-
-    if (!blockIdx.x) nvshmemx_barrier_all_block();
-
-    time = 0;
-
-    if (!blockIdx.x && !threadIdx.x) {
-        for (i = 0; i < (iter + skip); i++) {
-            if (i > skip) start = clock64();
-            nvshmem_sync_all();
-            if (i > skip) stop = clock64();
-            time += (stop - start);
-        }
-        if (!threadIdx.x) {
-            *source_r = time;
-            nvshmem_double_sum_reduce(team, dest_r, source_r, 1);
-            time = *dest_r;
-
-            if (mype == 0) {
-                time = time / iter;
-                time = time / PE_size;
-                thread_usec = time * 1000 / clockrate;
-            }
-        }
-    }
-
-    __syncthreads();
-    if (!blockIdx.x) nvshmemx_barrier_all_block();
-
-    time = 0;
-
-    if (!blockIdx.x && !(threadIdx.x / warpSize)) {
-        for (i = 0; i < (iter + skip); i++) {
-            if (i > skip) start = clock64();
-            nvshmemx_sync_all_warp();
-            if (i > skip) stop = clock64();
-            time += (stop - start);
-        }
-        if (!threadIdx.x) {
-            *source_r = time;
-            nvshmem_double_sum_reduce(team, dest_r, source_r, 1);
-            time = *dest_r;
-
-            if (mype == 0) {
-                time = time / iter;
-                time = time / PE_size;
-                warp_usec = time * 1000 / clockrate;
-            }
-        }
-    }
-
-    __syncthreads();
-    if (!blockIdx.x) nvshmemx_barrier_all_block();
-
-    time = 0;
-
-    if (!blockIdx.x) {
-        for (i = 0; i < (iter + skip); i++) {
-            if (i > skip) start = clock64();
-            nvshmemx_sync_all_block();
-            if (i > skip) stop = clock64();
-            time += (stop - start);
-        }
-        if (!threadIdx.x) {
-            *source_r = time;
-            nvshmem_double_sum_reduce(team, dest_r, source_r, 1);
-            time = *dest_r;
-
-            if (mype == 0) {
-                time = time / iter;
-                time = time / PE_size;
-                block_usec = time * 1000 / clockrate;
-            }
-        }
-    }
-
-    __syncthreads();
-    if (!blockIdx.x && !threadIdx.x) nvshmem_barrier_all();
-
-    if (!threadIdx.x && !blockIdx.x && !mype) {
-        *h_thread_lat = thread_usec;
-        *h_warp_lat = warp_usec;
-        *h_block_lat = block_usec;
-    }
+#define SYNC_ALL_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)                              \
+__global__ void test_sync_all_call_kernel##THREADGROUP(int iter) {                     \
+    int i;                                                                             \
+    if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                                  \
+        for (i = 0; i < iter; i++) {                                                   \
+            nvshmem##TG_PRE##_sync_all##THREADGROUP();                                 \
+        }                                                                              \
+    }                                                                                  \
 }
 
-int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, double *d_time_avg, void **h_tables) {
+SYNC_KERNEL(,,1);
+SYNC_KERNEL(x,_warp,warpSize);
+SYNC_KERNEL(x,_block,INT_MAX);
+
+SYNC_ALL_KERNEL(,,1);
+SYNC_ALL_KERNEL(x,_warp,warpSize);
+SYNC_ALL_KERNEL(x,_block,INT_MAX);
+
+int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, void **h_tables) {
     int status = 0;
     int nvshm_test_num_tpb = TEST_NUM_TPB_BLOCK;
+    int skip = MAX_SKIP;
+    int iter = MAX_ITERS;
     int num_blocks = 1;
     double *h_thread_lat = (double *)h_tables[0];
     double *h_warp_lat = (double *)h_tables[1];
     double *h_block_lat = (double *)h_tables[2];
     uint64_t num_tpb = TEST_NUM_TPB_BLOCK;
+    void *sync_args_1[] = {&team, &skip};
+    void *sync_args_2[] = {&team, &iter};
+    void *sync_all_args_1[] = {&skip};
+    void *sync_all_args_2[] = {&iter};
+    float milliseconds;
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
     nvshmem_barrier_all();
-    test_sync_call_kern<<<num_blocks, nvshm_test_num_tpb, 0, stream>>>(team, mype, d_time_avg,
-                                                                h_thread_lat, h_warp_lat, h_block_lat);
-    cuda_check_error();
+    status = nvshmemx_collective_launch((const void *)test_sync_call_kernel, num_blocks,
+                                        nvshm_test_num_tpb, sync_args_1, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
     CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    nvshmem_barrier_all();
+
+    cudaEventRecord(start, stream);
+    status = nvshmemx_collective_launch((const void *)test_sync_call_kernel, num_blocks,
+                                        nvshm_test_num_tpb, sync_args_2, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    cudaEventRecord(stop, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    if (!mype) {
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        h_thread_lat[0] = (milliseconds * 1000.0) / (float)iter;
+    }
+
+    nvshmem_barrier_all();
+    status = nvshmemx_collective_launch((const void *)test_sync_call_kernel_warp, num_blocks,
+                                        nvshm_test_num_tpb, sync_args_1, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    nvshmem_barrier_all();
+
+    cudaEventRecord(start, stream);
+    status = nvshmemx_collective_launch((const void *)test_sync_call_kernel_warp, num_blocks,
+                                        nvshm_test_num_tpb, sync_args_2, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    cudaEventRecord(stop, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    if (!mype) {
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        h_warp_lat[0] = (milliseconds * 1000.0) / (float)iter;
+    }
+
+    nvshmem_barrier_all();
+    status = nvshmemx_collective_launch((const void *)test_sync_call_kernel_block, num_blocks,
+                                        nvshm_test_num_tpb, sync_args_1, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    nvshmem_barrier_all();
+
+    cudaEventRecord(start, stream);
+    status = nvshmemx_collective_launch((const void *)test_sync_call_kernel_block, num_blocks,
+                                        nvshm_test_num_tpb, sync_args_2, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    cudaEventRecord(stop, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    if (!mype) {
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        h_block_lat[0] = (milliseconds * 1000.0) / (float)iter;
+    }
 
     if (!mype) {
         print_table("sync_device", "thread", "threads per block", "latency", "us", '-', &num_tpb, h_thread_lat, 1);
@@ -233,10 +144,81 @@ int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, doub
     }
 
     nvshmem_barrier_all();
-    test_sync_all_call_kern<<<num_blocks, nvshm_test_num_tpb, 0, stream>>>(team, mype, d_time_avg,
-                                                                        h_thread_lat, h_warp_lat, h_block_lat);
-    cuda_check_error();
+    status = nvshmemx_collective_launch((const void *)test_sync_all_call_kernel, num_blocks,
+                                        nvshm_test_num_tpb, sync_all_args_1, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
     CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    nvshmem_barrier_all();
+    cudaEventRecord(start, stream);
+    status = nvshmemx_collective_launch((const void *)test_sync_all_call_kernel, num_blocks,
+                                        nvshm_test_num_tpb, sync_all_args_2, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    cudaEventRecord(stop, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    if (!mype) {
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        h_thread_lat[0] = (milliseconds * 1000.0) / (float)iter;
+    }
+
+    nvshmem_barrier_all();
+    status = nvshmemx_collective_launch((const void *)test_sync_all_call_kernel_warp, num_blocks,
+                                        nvshm_test_num_tpb, sync_all_args_1, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    nvshmem_barrier_all();
+
+    cudaEventRecord(start, stream);
+    status = nvshmemx_collective_launch((const void *)test_sync_all_call_kernel_warp, num_blocks,
+                                        nvshm_test_num_tpb, sync_all_args_2, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    cudaEventRecord(stop, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    if (!mype) {
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        h_warp_lat[0] = (milliseconds * 1000.0) / (float)iter;
+    }
+
+    nvshmem_barrier_all();
+    status = nvshmemx_collective_launch((const void *)test_sync_all_call_kernel_block, num_blocks,
+                                        nvshm_test_num_tpb, sync_all_args_1, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    nvshmem_barrier_all();
+
+    cudaEventRecord(start, stream);
+    status = nvshmemx_collective_launch((const void *)test_sync_all_call_kernel_block, num_blocks,
+                                        nvshm_test_num_tpb, sync_all_args_2, 0, stream);
+    if (status != NVSHMEMX_SUCCESS) {
+        fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+        exit(-1);
+    }
+    cudaEventRecord(stop, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    if (!mype) {
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        h_block_lat[0] = (milliseconds * 1000.0) / (float)iter;
+    }
 
     if (!mype) {
         print_table("sync_all_device", "thread", "threads per block", "latency", "us", '-', &num_tpb, h_thread_lat, 1);
@@ -249,7 +231,6 @@ int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, doub
 
 int main(int argc, char **argv) {
     int mype;
-    double *d_time_avg;
     cudaStream_t cstrm;
     void **h_tables;
 
@@ -259,13 +240,9 @@ int main(int argc, char **argv) {
     mype = nvshmem_my_pe();
     CUDA_CHECK(cudaStreamCreateWithFlags(&cstrm, cudaStreamNonBlocking));
 
-    d_time_avg = (double *)nvshmem_malloc(sizeof(double) * 2);
-
-    sync_calling_kernel(NVSHMEM_TEAM_WORLD, cstrm, mype, d_time_avg, h_tables);
+    sync_calling_kernel(NVSHMEM_TEAM_WORLD, cstrm, mype, h_tables);
 
     nvshmem_barrier_all();
-
-    nvshmem_free(d_time_avg);
 
     CUDA_CHECK(cudaStreamDestroy(cstrm));
     free_tables(h_tables, 3);

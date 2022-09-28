@@ -81,14 +81,9 @@ typedef enum {
 typedef enum { 
     NVSHMEMI_JOB_GPU_LDST_ATOMICS = 1,
     NVSHMEMI_JOB_GPU_LDST = 1 << 1,
-    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    NVSHMEMI_JOB_GIC = 1 << 2,
+    NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS = 1 << 2,
     NVSHMEMI_JOB_GPU_PROXY = 1 << 3,
     NVSHMEMI_JOB_GPU_PROXY_CST = 1 << 4,
-    #else
-    NVSHMEMI_JOB_GPU_PROXY = 1 << 2,
-    NVSHMEMI_JOB_GPU_PROXY_CST = 1 << 3,
-    #endif
 } nvshmemi_job_connectivity_t;
 
 typedef enum {
@@ -96,4 +91,11 @@ typedef enum {
     NVSHMEMI_PROXY_MINIMAL = 1,
     NVSHMEMI_PROXY_FULL = 1 << 1,
 } nvshmemi_proxy_status;
+
+typedef struct {
+    int major;
+    int minor;
+    int patch;
+} nvshmemi_version_t;
+
 #endif

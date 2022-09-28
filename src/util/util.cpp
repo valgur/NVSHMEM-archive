@@ -53,24 +53,6 @@ uint64_t getHostHash() {
 // TODO: force to single node
 int nvshmemu_get_num_gpus_per_node() { return 128; }
 
-int cuCheck(CUresult res) {
-    cuGetErrorString(res, (const char **)&p_err_str);
-    if (CUDA_SUCCESS != res) {
-        fprintf(stderr, "[%s:%d] cuda failed with %s\n", __FILE__, __LINE__, p_err_str);
-        return static_cast<int>(res);
-    }
-    return static_cast<int>(res);
-}
-
-int cudaCheck(cudaError_t res) {
-    char *errstr = (char *)cudaGetErrorString(res);
-    if (cudaSuccess != res) {
-        fprintf(stderr, "[%s:%d] cuda failed with %s\n", __FILE__, __LINE__, errstr);
-        return static_cast<int>(res);
-    }
-    return static_cast<int>(res);
-}
-
 /* Convert data to a hexadecimal string */
 char * nvshmemu_hexdump(void *ptr, size_t len) {
     const char *hex = "0123456789abcdef";

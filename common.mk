@@ -40,6 +40,9 @@ NVSHMEM_IBDEVX_SUPPORT ?= 0
 NVSHMEM_LIBFABRIC_SUPPORT ?= 0
 # whether to build with GPU-initiated communication support.
 NVSHMEM_GPUINITIATED_SUPPORT ?= 0
+# whether to build with GPU-initiated communication support for GPU memory only.
+# host memory will not be supported but users could gain improved performance.
+NVSHMEM_GPUINITIATED_SUPPORT_GPUMEM_ONLY ?= 0
 # UCX install location
 UCX_HOME ?= /usr/local/ucx
 # libfabric installation location
@@ -60,12 +63,14 @@ OSHCC ?= $(SHMEM_HOME)/bin/oshcc
 NVSHMEM_LSHMEM ?= -loshmem
 # Whether to build NVSHMEM static library
 NVSHMEM_TEST_STATIC_LIB ?= 0
+# Whether to build the PMIX bootstrap
+NVSHMEM_PMIX_SUPPORT ?= 0
 
 MPI_LIBS := $(NVSHMEM_LMPI)
 SHMEM_LIBS := $(NVSHMEM_LSHMEM)
-LDFLAGS := -lcuda -L$(CUDA_LIB) -lcudart -L$(CUDA_DRV) -lnvidia-ml
+LDFLAGS := -L$(CUDA_LIB) -lcudart_static -L$(CUDA_DRV) -lnvidia-ml
 TESTCUFLAGS  := -dc -ccbin $(CXX) -std=c++11 -Xcompiler -fPIC
-TESTLDFLAGS := -ccbin $(CXX) -lcuda -L$(CUDA_LIB) -lcudart -L$(CUDA_DRV) -lnvidia-ml -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
+TESTLDFLAGS := -ccbin $(CXX) -lcuda -L$(CUDA_LIB) -L$(CUDA_DRV) -lnvidia-ml -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
 ifeq ($(NVSHMEM_TEST_STATIC_LIB), 1)
 TESTLDFLAGS += -lnvshmem
 else
@@ -75,9 +80,16 @@ TESTINC := -I$(CUDA_INC) -I$(mkfile_dir)/common
 
 # Better define NVCC_GENCODE in your environment to the minimal set
 # of archs to reduce compile time.
-NVCC_GENCODE_DEFAULT = -gencode=arch=compute_60,code=sm_60 -gencode=arch=compute_61,code=sm_61 -gencode=arch=compute_70,code=sm_70
+NVCC_GENCODE_DEFAULT = -gencode=arch=compute_70,code=sm_70
 ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 11; echo $$?),0)
 NVCC_GENCODE_DEFAULT += -gencode=arch=compute_80,code=sm_80
+ifeq ($(shell test "0$(CUDA_MINOR)" -ge 8; echo $$?),0)
+NVCC_GENCODE_DEFAULT += -gencode=arch=compute_90,code=sm_90
+else
+ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 12; echo $$?),0)
+NVCC_GENCODE_DEFAULT += -gencode=arch=compute_90,code=sm_90
+endif
+endif
 # The threads option was introuced to NVCC in CUDA 11.2
 ifeq ($(shell test "0$(CUDA_MINOR)" -ge 2; echo $$?),0)
 NVCUFLAGS += -t 4
@@ -92,7 +104,6 @@ TESTCUFLAGS += $(NVCC_GENCODE)
 ifeq ($(NVSHMEM_COMPLEX_SUPPORT), 1)
 CXXFLAGS  += -DNVSHMEM_COMPLEX_SUPPORT
 NVCUFLAGS += -DNVSHMEM_COMPLEX_SUPPORT
-TESTCUFLAGS += -DENABLE_COMPLEX_SUPPORT
 endif
 
 ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1)

@@ -1,0 +1,16 @@
+set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+add_subdirectory(common)
+
+macro(nvshmem_add_perftest_prefix SOURCE PREFIX)
+  get_filename_component(NAME_ ${SOURCE} NAME_WE)
+  set(NAME "${PREFIX}${NAME_}")
+  add_executable(${NAME} ${SOURCE})
+  if(NVSHMEM_TEST_STATIC_LIB)
+    target_link_libraries(${NAME} nvshmem_host nvshmem_device nvshmem_perftest_helper)
+  else()
+  target_link_libraries(${NAME} nvshmem nvshmem_perftest_helper)
+  endif()
+endmacro()
+
+add_subdirectory(device)
+add_subdirectory(host)

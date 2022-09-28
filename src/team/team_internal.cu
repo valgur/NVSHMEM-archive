@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include "util.h"
 #include "gpu_coll.h"
+#include "cpu_coll.h"
 #include "team_internal.h"
 
 long nvshmemi_max_teams;
@@ -635,8 +636,9 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
     /* This OR reduction assures all PEs return the same value.  */
     CUDA_RUNTIME_CHECK(cudaMemcpy(device_team_ret_val, team_ret_val, sizeof(int), cudaMemcpyHostToDevice));
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
-    nvshmemi_int_max_reduce(parent_team->team_idx, device_team_ret_val_reduced, device_team_ret_val,
-                            1);
+    nvshmemi_call_rdxn_on_stream_kernel<int, RDXN_OPS_MAX>(parent_team->team_idx, device_team_ret_val_reduced, device_team_ret_val,
+                            1, nvshmemi_state->my_stream);
+    CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));
     CUDA_RUNTIME_CHECK(cudaMemcpy(team_ret_val_reduced, device_team_ret_val_reduced, sizeof(int), cudaMemcpyDeviceToHost));
 
     /* If no team was available, print some team triplet info and return nonzero. */

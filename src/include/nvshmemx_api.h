@@ -16,7 +16,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "cuda.h"
-#include "nvshmem_types.h"
 #include "nvshmem_constants.h"
 #include "nvshmem_common.cuh"
 #include "nvshmemx_coll_api.h"
@@ -46,7 +45,10 @@ void nvshmemx_query_thread(int *provided) __attribute__((deprecated));
 
 static inline int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attributes) {
     int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
-    status = nvshmemi_init_thread(requested, &provided, flags, attributes);
+    nvshmemi_version_t app_nvshmem_version = {NVSHMEM_VENDOR_MAJOR_VERSION,
+                                              NVSHMEM_VENDOR_MINOR_VERSION,
+                                              NVSHMEM_VENDOR_PATCH_VERSION};
+    status = nvshmemi_init_thread(requested, &provided, flags, attributes, app_nvshmem_version);
     NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
 	return status;
 }

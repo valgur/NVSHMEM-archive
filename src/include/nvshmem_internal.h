@@ -9,10 +9,10 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include "cudawrap.h"
 #include "bootstrap_internal.h"
 #include "transport.h"
 #include "common.h"
-#include "nvshmem_types.h"
 #include "nvshmem_common.cuh"
 #include <map>
 #include <vector>
@@ -22,9 +22,6 @@
 #include "nvshmemx_error.h"
 #include "util.h"
 using namespace std;
-#ifdef NVSHMEM_USE_NCCL
-#include "nccl.h"
-#endif /* NVSHMEM_USE_NCCL */
 
 #define MAX_PEER_STREAMS 3
 
@@ -52,9 +49,9 @@ typedef struct {
 } cuda_device_attributes_t;
 
 typedef struct {
-    CUstream stream;
-    CUevent begin_event;
-    CUevent end_event;
+    cudaStream_t stream;
+    cudaEvent_t begin_event;
+    cudaEvent_t end_event;
 } collective_launch_params_t;
 
 typedef struct nvshmemi_mps_shmdata_t {
@@ -97,7 +94,7 @@ typedef struct nvshmemi_state_dec {
     void **peer_heap_base;
     void *heap_mspace;
     /* variables for VMM */
-#if CUDART_VERSION >= 11030
+#if CUDA_VERSION >= 11000
     vector<CUmemGenericAllocationHandle> cumem_handles;
     size_t physical_heap_size;
 #endif
@@ -122,12 +119,11 @@ typedef struct nvshmemi_state_dec {
     int *scratch;
     cuda_device_attributes_t cu_dev_attrib;
     collective_launch_params_t claunch_params;
-    CUstream my_stream;
+    cudaStream_t my_stream;
     // proxy
     void *proxy;
-    CUstream *custreams;
-    CUevent *cuevents;
-    CUdeviceptr *curets;
+    cudaStream_t *custreams;
+    cudaEvent_t *cuevents;
     /* MPS support */
     cudaEvent_t mps_event;
     cudaEvent_t same_gpu_other_pe_mps_events[MAX_PES_PER_GPU - 1]; /* CUDA IPC mapped mps_events from the PEs sharing the same GPU */
@@ -135,7 +131,7 @@ typedef struct nvshmemi_state_dec {
 
     nvshmemi_state_dec()
         :
-#if CUDART_VERSION >= 11030
+#if CUDA_VERSION >= 11000
           cumem_handles(),
 #endif
           handles(),
@@ -153,6 +149,8 @@ typedef struct {
     int error_checks;
 } nvshmem_options_t;
 
+typedef int (*nvshmemi_state_change_handler_fn_t)(void);
+
 extern nvshmemi_state_t *nvshmemi_state;
 extern bootstrap_handle_t nvshmemi_boot_handle;
 extern int nvshmemi_init_counter;
@@ -166,122 +164,6 @@ extern int nccl_version;
 extern long nvshmemi_max_teams;
 extern size_t cumem_granularity;
 extern size_t log2_cumem_granularity;
-
-#ifdef NVSHMEM_USE_NCCL
-/* Reduction operation types */
-#define NCCL_REDOP_sum ncclSum
-#define NCCL_REDOP_prod ncclProd
-#define NCCL_REDOP_min ncclMin
-#define NCCL_REDOP_max ncclMax
-#define NCCL_REDOP_and -1
-#define NCCL_REDOP_or -1
-#define NCCL_REDOP_xor -1
-
-/* Reduction datatypes */
-/* 
- * ncclChar is an unsigned type. char in c++ can be signed or unsigned
- * so pick the "right" nccl type depending on the implementation of char.
- */
-#if (CHAR_MIN == 0)
-#define NCCL_DT_char        ncclUint8
-#else
-#define NCCL_DT_char        ncclChar
-#endif
-#define NCCL_DT_schar       ncclChar
-#define NCCL_DT_short       -1
-#define NCCL_DT_int         ncclInt
-#define NCCL_DT_long        ncclInt64
-#define NCCL_DT_longlong    ncclInt64
-#define NCCL_DT_ptrdiff     ncclUint64
-#define NCCL_DT_uchar       ncclUint8
-#define NCCL_DT_ushort      -1
-#define NCCL_DT_uint        ncclUint32
-#define NCCL_DT_ulong       ncclUint64
-#define NCCL_DT_ulonglong   ncclUint64
-#define NCCL_DT_int8        ncclInt8
-#define NCCL_DT_int16       -1
-#define NCCL_DT_int32       ncclInt
-#define NCCL_DT_int64       ncclInt64
-#define NCCL_DT_uint8       ncclUint8
-#define NCCL_DT_uint16       -1
-#define NCCL_DT_uint32      ncclUint32
-#define NCCL_DT_uint64      ncclUint64
-#define NCCL_DT_size        ncclUint64
-#define NCCL_DT_float       ncclFloat
-#define NCCL_DT_double      ncclDouble
-#define NCCL_DT_longdouble  -1
-#define NCCL_DT_complexd    -1
-#define NCCL_DT_complexf    -1
-
-#else /* NVSHMEM_USE_NCCL */
-
-/* Reduction operation types */
-#define NCCL_REDOP_sum -1
-#define NCCL_REDOP_prod -1
-#define NCCL_REDOP_min -1
-#define NCCL_REDOP_max -1
-#define NCCL_REDOP_and -1
-#define NCCL_REDOP_or -1
-#define NCCL_REDOP_xor -1
-
-/* Reduction datatypes */
-#define NCCL_DT_char        -1
-#define NCCL_DT_schar       -1
-#define NCCL_DT_short       -1
-#define NCCL_DT_int         -1
-#define NCCL_DT_long        -1
-#define NCCL_DT_longlong    -1
-#define NCCL_DT_ptrdiff     -1
-#define NCCL_DT_uchar       -1
-#define NCCL_DT_ushort      -1
-#define NCCL_DT_uint        -1
-#define NCCL_DT_ulong       -1
-#define NCCL_DT_ulonglong   -1
-#define NCCL_DT_int8        -1
-#define NCCL_DT_int16       -1
-#define NCCL_DT_int32       -1
-#define NCCL_DT_int64       -1
-#define NCCL_DT_uint8       -1
-#define NCCL_DT_uint16      -1
-#define NCCL_DT_uint32      -1
-#define NCCL_DT_uint64      -1
-#define NCCL_DT_size        -1
-#define NCCL_DT_float       -1
-#define NCCL_DT_double      -1
-#define NCCL_DT_longdouble  -1
-#define NCCL_DT_complexd    -1
-#define NCCL_DT_complexf    -1
-
-typedef int ncclRedOp_t;
-typedef int ncclDataType_t;
-typedef int ncclComm_t;
-typedef int ncclResult_t;
-typedef int ncclUniqueId;
-#define ncclSuccess 0
-
-#endif /* NVSHMEM_USE_NCCL */
-
-struct nccl_function_table {
-    ncclResult_t (*GetVersion)(int *version);
-    const char*  (*GetErrorString)(ncclResult_t result);
-    ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
-    ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
-    ncclResult_t (*CommDestroy)(ncclComm_t comm);
-    ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count,
-                              ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
-    ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count,
-                              ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream);
-    ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount,
-                              ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
-    ncclResult_t (*GroupStart)();
-    ncclResult_t (*GroupEnd)();
-    ncclResult_t (*Send)(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer,
-                         ncclComm_t comm, cudaStream_t stream);
-    ncclResult_t (*Recv)(void* recvbuff, size_t count, ncclDataType_t datatype, int peer,
-                         ncclComm_t comm, cudaStream_t stream);
-};
-
-extern struct nccl_function_table nccl_ftable;
 
 #include "nvshmemi_team.h"
 
@@ -299,6 +181,7 @@ int nvshmemi_teardown_collective_launch(nvshmemi_state_t *state);
 int nvshmemi_setup_mops_kernels(nvshmemi_state_t *state);
 extern "C" {
 void *nvshmemi_malloc(size_t size);
+bool nvshmemi_is_version_compatible(const nvshmemi_version_t version_1, const nvshmemi_version_t version_2);
 }
 void *nvshmemi_calloc(size_t count, size_t size);
 void *nvshmemi_align(size_t alignment, size_t size);
@@ -408,5 +291,10 @@ static inline void nvshmemi_process_multisend_rma(struct nvshmem_transport *tcur
         rptr = (char *)rptr + chunk_size;
     }
 }
+
+extern "C" {
+void nvshmemi_register_state_change_handler(nvshmemi_state_change_handler_fn_t fn);
+}
+int nvshmemi_update_device_state();
 
 #endif

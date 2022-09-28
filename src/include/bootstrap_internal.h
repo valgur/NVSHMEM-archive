@@ -29,6 +29,7 @@ typedef struct bootstrap_attr {
     bootstrap_attr() : initialize_shmem(0), mpi_comm(NULL) {}
     int initialize_shmem;
     void *mpi_comm;
+    void *meta_data;
 } bootstrap_attr_t;
 
 int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle);

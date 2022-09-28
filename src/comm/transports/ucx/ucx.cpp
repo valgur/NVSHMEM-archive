@@ -1043,7 +1043,9 @@ int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
     }
 
 #ifdef NVSHMEM_USE_GDRCOPY
-    nvshmemt_gdrcopy_ftable_fini(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
+    if (use_gdrcopy) {
+        nvshmemt_gdrcopy_ftable_fini(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
+    }
 #endif
 
     return 0;

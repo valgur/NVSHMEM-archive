@@ -9,96 +9,139 @@ typedef struct {
 
 #ifdef NVSHMEM_USE_NCCL
 #include "nccl.h"
-/* Reduction operation types */
-#define NCCL_REDOP_sum ncclSum
-#define NCCL_REDOP_prod ncclProd
-#define NCCL_REDOP_min ncclMin
-#define NCCL_REDOP_max ncclMax
-#define NCCL_REDOP_and -1
-#define NCCL_REDOP_or -1
-#define NCCL_REDOP_xor -1
+
+template<rdxn_ops_t op>
+inline ncclRedOp_t nvshmemi_get_nccl_op();
+
+template<>
+inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_SUM>() {
+    return ncclSum;
+}
+template<>
+inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_PROD>() {
+    return ncclProd;
+}
+template<>
+inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_MIN>() {
+    return ncclMin;
+}
+template<>
+inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_MAX>() {
+    return ncclMax;
+}
+template<>
+inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_AND>() {
+    return ncclNumOps;
+}
+template<>
+inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_OR>() {
+    return ncclNumOps;
+}
+template<>
+inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_XOR>() {
+    return ncclNumOps;
+}
 
 /* Reduction datatypes */
 /* 
  * ncclChar is an unsigned type. char in c++ can be signed or unsigned
  * so pick the "right" nccl type depending on the implementation of char.
  */
+template<typename T>
+inline ncclDataType_t nvshmemi_get_nccl_dt();
+
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<char>() {
 #if (CHAR_MIN == 0)
-#define NCCL_DT_char ncclUint8
+    return ncclUint8;
 #else
-#define NCCL_DT_char ncclChar
+    return ncclChar;
 #endif
-#define NCCL_DT_schar ncclChar
-#define NCCL_DT_short -1
-#define NCCL_DT_int ncclInt
-#define NCCL_DT_long ncclInt64
-#define NCCL_DT_longlong ncclInt64
-#define NCCL_DT_ptrdiff ncclUint64
-#define NCCL_DT_uchar ncclUint8
-#define NCCL_DT_ushort -1
-#define NCCL_DT_uint ncclUint32
-#define NCCL_DT_ulong ncclUint64
-#define NCCL_DT_ulonglong ncclUint64
-#define NCCL_DT_int8 ncclInt8
-#define NCCL_DT_int16 -1
-#define NCCL_DT_int32 ncclInt
-#define NCCL_DT_int64 ncclInt64
-#define NCCL_DT_uint8 ncclUint8
-#define NCCL_DT_uint16 -1
-#define NCCL_DT_uint32 ncclUint32
-#define NCCL_DT_uint64 ncclUint64
-#define NCCL_DT_size ncclUint64
-#define NCCL_DT_float ncclFloat
-#define NCCL_DT_double ncclDouble
-#define NCCL_DT_longdouble -1
-#define NCCL_DT_complexd -1
-#define NCCL_DT_complexf -1
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<signed char>() {
+    return ncclChar;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<short>() {
+    return ncclNumTypes;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<int>() {
+    return ncclInt;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<long>() {
+    return ncclInt64;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<long long>() {
+    return ncclInt64;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned char>() {
+    return ncclUint8;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned short>() {
+    return ncclNumTypes;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned int>() {
+    return ncclUint32;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned long>() {
+    return ncclUint64;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned long long>() {
+    return ncclUint64;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<float>() {
+    return ncclFloat;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<double>() {
+    return ncclDouble;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<long double>() {
+    return ncclNumTypes;
+}
+#ifdef NVSHMEM_COMPLEX_SUPPORT
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<complex double>() {
+    return ncclNumTypes;
+}
+template<>
+inline ncclDataType_t nvshmemi_get_nccl_dt<complex float>() {
+    return ncclNumTypes;
+}
+#endif
 
-#else /* NVSHMEM_USE_NCCL */
+struct nccl_function_table {
+    ncclResult_t (*GetVersion)(int *version);
+    const char*  (*GetErrorString)(ncclResult_t result);
+    ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
+    ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
+    ncclResult_t (*CommDestroy)(ncclComm_t comm);
+    ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count,
+                              ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
+    ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count,
+                              ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream);
+    ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount,
+                              ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
+    ncclResult_t (*GroupStart)();
+    ncclResult_t (*GroupEnd)();
+    ncclResult_t (*Send)(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer,
+                         ncclComm_t comm, cudaStream_t stream);
+    ncclResult_t (*Recv)(void* recvbuff, size_t count, ncclDataType_t datatype, int peer,
+                         ncclComm_t comm, cudaStream_t stream);
+};
 
-/* Reduction operation types */
-#define NCCL_REDOP_sum -1
-#define NCCL_REDOP_prod -1
-#define NCCL_REDOP_min -1
-#define NCCL_REDOP_max -1
-#define NCCL_REDOP_and -1
-#define NCCL_REDOP_or -1
-#define NCCL_REDOP_xor -1
-
-/* Reduction datatypes */
-#define NCCL_DT_char -1
-#define NCCL_DT_schar -1
-#define NCCL_DT_short -1
-#define NCCL_DT_int -1
-#define NCCL_DT_long -1
-#define NCCL_DT_longlong -1
-#define NCCL_DT_ptrdiff -1
-#define NCCL_DT_uchar -1
-#define NCCL_DT_ushort -1
-#define NCCL_DT_uint -1
-#define NCCL_DT_ulong -1
-#define NCCL_DT_ulonglong -1
-#define NCCL_DT_int8 -1
-#define NCCL_DT_int16 -1
-#define NCCL_DT_int32 -1
-#define NCCL_DT_int64 -1
-#define NCCL_DT_uint8 -1
-#define NCCL_DT_uint16 -1
-#define NCCL_DT_uint32 -1
-#define NCCL_DT_uint64 -1
-#define NCCL_DT_size -1
-#define NCCL_DT_float -1
-#define NCCL_DT_double -1
-#define NCCL_DT_longdouble -1
-#define NCCL_DT_complexd -1
-#define NCCL_DT_complexf -1
-
-typedef int ncclRedOp_t;
-typedef int ncclDataType_t;
-typedef int ncclComm_t;
-typedef int ncclResult_t;
-typedef int ncclUniqueId;
-#define ncclSuccess 0
+extern struct nccl_function_table nccl_ftable;
 
 #endif /* NVSHMEM_USE_NCCL */
 
@@ -116,7 +159,9 @@ typedef struct {
     int team_idx;
     nvshmem_team_config_t config;
     long config_mask;
+#ifdef NVSHMEM_USE_NCCL
     ncclComm_t nccl_comm;
+#endif
     nvshmemi_reduce_recexch_t reduce_recexch;
     size_t rdxn_count;
     uint32_t ll_flag;

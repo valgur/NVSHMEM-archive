@@ -37,6 +37,7 @@
 #include "nvshmem_internal.h"
 #include "nvshmemx_error.h"
 #include "utils.h"
+#include "nvshmemi_proxy.h"
 
 char *proxy_channel_g_buf;
 char *proxy_channel_g_coalescing_buf;
@@ -622,12 +623,12 @@ int nvshmemi_proxy_prep_minimal_state(proxy_state_t *state) {
 
     nvshmemi_device_state.global_exit_request_state = state->global_exit_request_state;
 
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_global_exit_request_state,
-    state->global_exit_request_state, 0));
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_global_exit_code,
-    state->global_exit_code, 0));
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&nvshmemi_timeout_dptr,
-    state->nvshmemi_timeout, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_global_exit_request_state,
+                                                state->global_exit_request_state, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_global_exit_code,
+                                                state->global_exit_code, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&nvshmemi_timeout_dptr,
+                                                state->nvshmemi_timeout, 0));
 
     nvshmemi_device_state.global_exit_request_state = temp_global_exit_request_state;
     nvshmemi_device_state.global_exit_code = temp_global_exit_code;
@@ -643,8 +644,7 @@ int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
 
     nvshmemi_device_state.proxy_channel_buf_size = state->channel_bufsize;
     nvshmemi_device_state.proxy_channel_buf_logsize = state->channel_bufsize_log;
-    CUDA_CHECK(cuMemAlloc((CUdeviceptr *)&state->channels_device,
-                          sizeof(proxy_channel_t) * state->channel_count));
+    CUDA_RUNTIME_CHECK(cudaMalloc(&state->channels_device, sizeof(proxy_channel_t) * state->channel_count));
     INFO(NVSHMEM_PROXY, "channel buf: %p complete: %p quiet_issue: %p quiet_ack: %p",
          state->channels[0].buf, state->channels[0].complete, state->channels[0].quiet_issue,
          state->channels[0].quiet_ack);
@@ -656,17 +656,12 @@ int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
     uint64_t *temp_cst_issue_dptr;
     uint64_t *temp_cst_ack_dptr;
 
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_buf_dptr, state->channels[0].buf, 0));
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_complete_dptr,
-                                         state->channels[0].complete, 0));
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_quiet_issue_dptr,
-                                         state->channels[0].quiet_issue, 0));
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_quiet_ack_dptr,
-                                         state->channels[0].quiet_ack, 0));
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_cst_issue_dptr,
-                                         state->channels[0].cst_issue, 0));
-    CUDA_CHECK(cuMemHostGetDevicePointer((CUdeviceptr *)&temp_cst_ack_dptr,
-                                         state->channels[0].cst_ack, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_buf_dptr, state->channels[0].buf, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_complete_dptr, state->channels[0].complete, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_quiet_issue_dptr, state->channels[0].quiet_issue, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_quiet_ack_dptr, state->channels[0].quiet_ack, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_cst_issue_dptr, state->channels[0].cst_issue, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_cst_ack_dptr, state->channels[0].cst_ack, 0));
 
     INFO(NVSHMEM_PROXY,
          "channel device_ptr buf: %p issue: %p complete: %p quiet_issue: %p quiet_ack: %p \n",

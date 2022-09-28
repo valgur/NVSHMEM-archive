@@ -11,6 +11,7 @@
 #include "nvshmemx_error.h"
 #include "nvshmem_bootstrap.h"
 #include "bootstrap_internal.h"
+#include "nvshmem_constants.h"
 
 #define GET_SYMBOL(lib_handle, name, var, status)                                              \
     do {                                                                                       \
@@ -37,7 +38,7 @@ int bootstrap_loader_finalize(bootstrap_handle_t *handle) {
 }
 
 int bootstrap_loader_init(const char *plugin, void *arg, bootstrap_handle_t *handle) {
-    int (*bootstrap_plugin_init)(void *arg, bootstrap_handle_t *handle);
+    int (*bootstrap_plugin_init)(void *arg, bootstrap_handle_t *handle, int nvshmem_version);
     int status = 0;
 
     dlerror(); /* Clear any existing error */
@@ -48,7 +49,7 @@ int bootstrap_loader_init(const char *plugin, void *arg, bootstrap_handle_t *han
     dlerror(); /* Clear any existing error */
     GET_SYMBOL(plugin_hdl, "nvshmemi_bootstrap_plugin_init", bootstrap_plugin_init, status);
 
-    status = bootstrap_plugin_init(arg, handle);
+    status = bootstrap_plugin_init(arg, handle, NVSHMEM_VENDOR_VERSION);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "Bootstrap plugin init failed for '%s'\n", plugin);
 
     goto out;

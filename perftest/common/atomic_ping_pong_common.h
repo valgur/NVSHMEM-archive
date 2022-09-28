@@ -73,18 +73,13 @@ void atomic_usage(void) {
 }
 
 #define DEFINE_PING_PONG_TEST_FOR_AMO_NO_ARG(TYPE, TYPE_NAME, AMO, COMPARE_EXPR)               \
-__global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip,        \
-                                              double *lat_result) {                            \
-    long long int start, stop;                                                                 \
-    double time;                                                                               \
-    int i, tid, peer;                                                                          \
+__global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter) {                \
+    int i, peer;                                                                               \
                                                                                                \
     assert( 1 == blockDim.x * blockDim.y * blockDim.z * gridDim.x * gridDim.y * gridDim.z );   \
     peer = !pe;                                                                                \
-    tid = threadIdx.x;                                                                         \
                                                                                                \
-    for (i = 0; i < (iter + skip); i++) {                                                      \
-        if (i == skip) start = clock64();                                                      \
+    for (i = 0; i < iter; i++) {                                                               \
         if (pe) {                                                                              \
             nvshmem_##TYPE_NAME##_wait_until(flag_d, NVSHMEM_CMP_EQ, COMPARE_EXPR);            \
             nvshmem_##TYPE_NAME##_atomic_##AMO(flag_d, peer);                                  \
@@ -93,28 +88,18 @@ __global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, in
             nvshmem_##TYPE_NAME##_wait_until(flag_d, NVSHMEM_CMP_EQ, COMPARE_EXPR);            \
         }                                                                                      \
     }                                                                                          \
-    stop = clock64();                                                                          \
     nvshmem_quiet();                                                                           \
-                                                                                               \
-    if ((pe == 0) && !tid) {                                                                   \
-        time = (stop - start) / iter;                                                          \
-        *lat_result = time * 1000 / clockrate;                                                 \
-    }                                                                                          \
 }
 
 #define DEFINE_PING_PONG_TEST_FOR_AMO_ONE_ARG(TYPE, TYPE_NAME, AMO, COMPARE_EXPR, SET_EXPR)    \
-__global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip,        \
-                                              double *lat_result, TYPE value, TYPE cmp) {      \
-    long long int start, stop;                                                                 \
-    double time;                                                                               \
-    int i, tid, peer;                                                                          \
+__global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter,                  \
+                                              TYPE value, TYPE cmp) {                          \
+    int i, peer;                                                                               \
                                                                                                \
     assert( 1 == blockDim.x * blockDim.y * blockDim.z * gridDim.x * gridDim.y * gridDim.z );   \
     peer = !pe;                                                                                \
-    tid = threadIdx.x;                                                                         \
                                                                                                \
-    for (i = 0; i < (iter + skip); i++) {                                                      \
-        if (i == skip) start = clock64();                                                      \
+    for (i = 0; i < iter; i++) {                                                               \
                                                                                                \
         if (pe) {                                                                              \
             nvshmem_##TYPE_NAME##_wait_until(flag_d, NVSHMEM_CMP_EQ, COMPARE_EXPR);            \
@@ -124,28 +109,18 @@ __global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, in
             nvshmem_##TYPE_NAME##_wait_until(flag_d, NVSHMEM_CMP_EQ, COMPARE_EXPR);            \
         }                                                                                      \
     }                                                                                          \
-    stop = clock64();                                                                          \
     nvshmem_quiet();                                                                           \
-                                                                                               \
-    if ((pe == 0) && !tid) {                                                                   \
-        time = (stop - start) / iter;                                                          \
-        *lat_result = time * 1000 / clockrate;                                                 \
-    }                                                                                          \
 }
 
 #define DEFINE_PING_PONG_TEST_FOR_AMO_TWO_ARG(TYPE, TYPE_NAME, AMO, COMPARE_EXPR, SET_EXPR)    \
-__global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, int skip,        \
-                                              double *lat_result, TYPE value, TYPE cmp) {      \
-    long long int start, stop;                                                                 \
-    double time;                                                                               \
-    int i, tid, peer;                                                                          \
+__global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter,                  \
+                                              TYPE value, TYPE cmp) {                          \
+    int i, peer;                                                                               \
                                                                                                \
     assert( 1 == blockDim.x * blockDim.y * blockDim.z * gridDim.x * gridDim.y * gridDim.z );   \
     peer = !pe;                                                                                \
-    tid = threadIdx.x;                                                                         \
                                                                                                \
-    for (i = 0; i < (iter + skip); i++) {                                                      \
-        if (i == skip) start = clock64();                                                      \
+    for (i = 0; i < iter; i++) {                                                               \
                                                                                                \
         if (pe) {                                                                              \
             nvshmem_##TYPE_NAME##_wait_until(flag_d, NVSHMEM_CMP_EQ, SET_EXPR);                \
@@ -155,13 +130,7 @@ __global__ void ping_pong_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, in
             nvshmem_##TYPE_NAME##_wait_until(flag_d, NVSHMEM_CMP_EQ, SET_EXPR);                \
         }                                                                                      \
     }                                                                                          \
-    stop = clock64();                                                                          \
     nvshmem_quiet();                                                                           \
-                                                                                               \
-    if ((pe == 0) && !tid) {                                                                   \
-        time = (stop - start) / iter;                                                          \
-        *lat_result = time * 1000 / clockrate;                                                 \
-    }                                                                                          \
 }
 
 #define MAIN_SETUP(c, v, mype, npes, flag_d, stream, h_size_arr,                               \
@@ -211,28 +180,49 @@ do {                                                                            
     }                                                                                          \
 } while(0)
 
-#define MAIN_LOOP_NO_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip,                       \
-                         h_lat, h_size_arr)                                                    \
+#define RUN_TEST_WITHOUT_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip,                   \
+                         h_lat, h_size_arr, flag_init)                                         \
 do {                                                                                           \
     int size = sizeof(TYPE);                                                                   \
-    double *cur_lat;                                                                           \
                                                                                                \
     int status = 0;                                                                            \
     h_size_arr[0] = size;                                                                      \
-    cur_lat = &h_lat[0];                                                                       \
-    void *args[] = {&flag_d, &mype, &iter, &skip, &cur_lat};                                   \
+    void *args_1[] = {&flag_d, &mype, &skip};                                                  \
+    void *args_2[] = {&flag_d, &mype, &iter};                                                  \
+                                                                                               \
+    float milliseconds;                                                                        \
+    cudaEvent_t start, stop;                                                                   \
+    cudaEventCreate(&start);                                                                   \
+    cudaEventCreate(&stop);                                                                    \
+    TYPE flag_init_var = flag_init;                                                            \
                                                                                                \
     CUDA_CHECK(cudaDeviceSynchronize());                                                       \
+    CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
     nvshmem_barrier_all();                                                                     \
                                                                                                \
+    cudaEventRecord(start, stream);                                                            \
     status = nvshmemx_collective_launch((const void *)ping_pong_##TYPE_NAME##_##AMO,           \
-                                        1, 1, args, 0, stream);                                \
+                                        1, 1, args_1, 0, stream);                              \
     if (status != NVSHMEMX_SUCCESS) {                                                          \
         fprintf(stderr, "shmemx_collective_launch failed %d \n", status);                      \
         exit(-1);                                                                              \
     }                                                                                          \
+    cudaEventRecord(stop, stream);                                                             \
                                                                                                \
     cudaStreamSynchronize(stream);                                                             \
+                                                                                               \
+    nvshmem_barrier_all();                                                                     \
+    CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
+    status = nvshmemx_collective_launch((const void *)ping_pong_##TYPE_NAME##_##AMO,           \
+                                        1, 1, args_2, 0, stream);                              \
+    if (status != NVSHMEMX_SUCCESS) {                                                          \
+        fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                     \
+        exit(-1);                                                                              \
+    }                                                                                          \
+    CUDA_CHECK(cudaStreamSynchronize(stream));                                                 \
+    /* give latency in us */                                                                   \
+    cudaEventElapsedTime(&milliseconds, start, stop);                                          \
+    h_lat[0] = (milliseconds * 1000) / iter;                                                   \
                                                                                                \
     nvshmem_barrier_all();                                                                     \
                                                                                                \
@@ -245,28 +235,53 @@ do {                                                                            
                                                                                                \
 } while (0)
 
-#define MAIN_LOOP_WITH_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat,              \
-                            h_size_arr, value, compare)                                        \
+#define RUN_TEST_WITH_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat,               \
+                            h_size_arr, val, cmp, flag_init)                                   \
 do {                                                                                           \
     int size = sizeof(TYPE);                                                                   \
-    double *cur_lat;                                                                           \
+    TYPE compare, value, flag_init_var;                                                        \
                                                                                                \
     int status = 0;                                                                            \
     h_size_arr[0] = size;                                                                      \
-    cur_lat = &h_lat[0];                                                                       \
-    void *args[] = {&flag_d, &mype, &iter, &skip, &cur_lat, &value, &compare};                 \
+    void *args_1[] = {&flag_d, &mype, &skip, &value, &compare};                                \
+    void *args_2[] = {&flag_d, &mype, &iter, &value, &compare};                                \
+                                                                                               \
+    float milliseconds;                                                                        \
+    cudaEvent_t start, stop;                                                                   \
+    cudaEventCreate(&start);                                                                   \
+    cudaEventCreate(&stop);                                                                    \
+                                                                                               \
+    compare = cmp;                                                                             \
+    value = val;                                                                               \
+    flag_init_var = flag_init;                                                                 \
                                                                                                \
     CUDA_CHECK(cudaDeviceSynchronize());                                                       \
+    CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
     nvshmem_barrier_all();                                                                     \
                                                                                                \
     status = nvshmemx_collective_launch((const void *)ping_pong_##TYPE_NAME##_##AMO,           \
-                                        1, 1, args, 0, stream);                                \
+                                        1, 1, args_1, 0, stream);                              \
     if (status != NVSHMEMX_SUCCESS) {                                                          \
         fprintf(stderr, "shmemx_collective_launch failed %d \n", status);                      \
         exit(-1);                                                                              \
     }                                                                                          \
                                                                                                \
     cudaStreamSynchronize(stream);                                                             \
+                                                                                               \
+    nvshmem_barrier_all();                                                                     \
+    CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
+    cudaEventRecord(start, stream);                                                            \
+    status = nvshmemx_collective_launch((const void *)ping_pong_##TYPE_NAME##_##AMO,           \
+                                        1, 1, args_2, 0, stream);                              \
+    if (status != NVSHMEMX_SUCCESS) {                                                          \
+        fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                     \
+        exit(-1);                                                                              \
+    }                                                                                          \
+    cudaEventRecord(stop, stream);                                                             \
+    cudaStreamSynchronize(stream);                                                             \
+    /* give latency in us */                                                                   \
+    cudaEventElapsedTime(&milliseconds, start, stop);                                          \
+    h_lat[0] = (milliseconds * 1000) / iter;                                                   \
                                                                                                \
     nvshmem_barrier_all();                                                                     \
                                                                                                \
@@ -278,28 +293,6 @@ do {                                                                            
     CUDA_CHECK(cudaDeviceSynchronize());                                                       \
                                                                                                \
 } while (0)
-
-#define RUN_TEST_WITH_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip,                      \
-                          h_lat, h_size_arr, val, cmp, flag_init)                              \
-do {                                                                                           \
-    TYPE compare, value, flag_init_var;                                                        \
-                                                                                               \
-    compare = cmp;                                                                             \
-    value = val;                                                                               \
-    flag_init_var = flag_init;                                                                 \
-    CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
-    MAIN_LOOP_WITH_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip,                         \
-                       h_lat, h_size_arr, value, compare);                                     \
-} while(0);
-
-#define RUN_TEST_WITHOUT_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip,                   \
-                             h_lat, h_size_arr, flag_init)                                     \
-do {                                                                                           \
-    TYPE flag_init_var = flag_init;                                                            \
-    CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
-    MAIN_LOOP_NO_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip,                           \
-                     h_lat, h_size_arr);                                                       \
-} while(0);
 
 #define MAIN_CLEANUP(flag_d, stream, h_tables, num_entries)                                    \
 do {                                                                                           \

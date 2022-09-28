@@ -59,11 +59,11 @@ void nvshmemi_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_o
                                   cudaStream_t cstrm) {
     int status = 0;
     if (sig_op == NVSHMEM_SIGNAL_SET && nvshmemi_state->peer_heap_base[pe] != NULL) {
-        const void *peer_addr;
+        void *peer_addr;
         NVSHMEMU_MAPPED_PTR_TRANSLATE(peer_addr, sig_addr, pe)
-        status = cuMemcpyHtoDAsync((CUdeviceptr)peer_addr, (const void *)&signal,
-                                   sizeof(uint64_t), cstrm);
-        NZ_EXIT(status, "cuMemcpyHtoDAsync() failed\n");
+        status = cudaMemcpyAsync(peer_addr, (const void *)&signal,
+                                 sizeof(uint64_t), cudaMemcpyHostToDevice, cstrm);
+        NZ_EXIT(status, "cudaMemcpyAsync() failed\n");
     } else {
         call_nvshmemi_signal_op_kernel(sig_addr, signal, sig_op, pe, cstrm);
     }
@@ -76,6 +76,6 @@ void nvshmemx_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_o
 
 uint64_t nvshmem_signal_fetch(uint64_t *sig_addr) {
     uint64_t signal;
-    CUDA_CHECK(cuMemcpyDtoH(&signal, (CUdeviceptr)sig_addr, sizeof(uint64_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&signal, sig_addr, sizeof(uint64_t), cudaMemcpyDeviceToHost));
     return signal;
 }

@@ -14,16 +14,9 @@
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                         \
         NVSHMEMI_CHECK_INIT_STATUS();                                                           \
         NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                      \
-        nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                      \
-        if (nvshmemi_use_nccl && NCCL_DT_##TYPENAME != -1) {                                    \
-            NCCL_CHECK(nccl_ftable.Broadcast(source, dest, nelems,                              \
-                                             (ncclDataType_t)NCCL_DT_##TYPENAME, PE_root,       \
-                                             teami->nccl_comm, nvshmemi_state->my_stream));     \
-        } else {                                                                                \
-            nvshmemi_call_broadcast_on_stream_kernel<TYPE>(team, dest, source, nelems, PE_root, \
+        nvshmemi_broadcast_on_stream<TYPE>(team, dest, source, nelems, PE_root,                 \
                                                            nvshmemi_state->my_stream);          \
-        }                                                                                       \
-        CUDA_CHECK(cuStreamSynchronize(nvshmemi_state->my_stream));                             \
+        CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));                   \
         return 0;                                                                               \
     }
 

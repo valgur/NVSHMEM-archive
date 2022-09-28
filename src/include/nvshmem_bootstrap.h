@@ -20,10 +20,17 @@ typedef struct bootstrap_handle {
     int  (*finalize)(struct bootstrap_handle *handle);
 } bootstrap_handle_t;
 
+static bool nvshmemi_is_bootstrap_compatible(int bootstrap_version, int nvshmem_version) {
+    if (bootstrap_version == nvshmem_version)
+        return true;
+    else
+        return false;
+}
+
 #if __cplusplus
 extern "C" {
 #endif
-int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle);
+int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle, const int nvshmem_version);
 #if __cplusplus
 }
 #endif

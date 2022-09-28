@@ -20,18 +20,12 @@
 #define MAX_MSG_SIZE 1 * 1024 * 1024
 #define UNROLL 8
 
-__global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int iter, int skip,
-                          int *hflag, double *lat_result) {
-    long long int start, stop;
-    double time;
-    int i, tid, peer;
+__global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int iter) {
+    int i, peer;
 
     peer = !pe;
-    tid = threadIdx.x;
 
-    for (i = 0; i < (iter + skip); i++) {
-        if (i == skip) start = clock64();
-
+    for (i = 0; i < iter; i++) {
         if (pe) {
             nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
 
@@ -50,14 +44,7 @@ __global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int it
             nvshmem_uint64_wait_until(flag_d, NVSHMEM_CMP_EQ, (i + 1));
         }
     }
-    stop = clock64();
     nvshmem_quiet();
-    *hflag = 1;
-
-    if ((pe == 0) && !tid) {
-        time = (stop - start) / iter;
-        *lat_result = time * 1000 / clockrate;
-    }
 }
 
 int main(int c, char *v[]) {
@@ -65,7 +52,6 @@ int main(int c, char *v[]) {
     uint64_t *flag_d = NULL;
     int *data_d = NULL;
     cudaStream_t stream;
-    double *cur_lat;
 
     int iter = 500;
     int skip = 50;
@@ -76,7 +62,14 @@ int main(int c, char *v[]) {
     uint64_t *h_size_arr;
     double *h_lat;
 
+    float milliseconds;
+    cudaEvent_t start, stop;
+
     init_wrapper(&c, &v);
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
@@ -96,11 +89,6 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
     CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
-    int *hflag, *hflag_d;
-    CUDA_CHECK(cudaHostAlloc((void **)&hflag, sizeof(uint64_t), 0));
-    *hflag = 0;
-    CUDA_CHECK(cudaHostGetDevicePointer(&hflag_d, hflag, 0));
-
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     nvshmem_barrier_all();
@@ -117,23 +105,33 @@ int main(int c, char *v[]) {
         int nelems, status = 0;
         h_size_arr[i] = size;
         nelems = size / sizeof(int);
-        cur_lat = &h_lat[i];
-        void *args[] = {&data_d, &flag_d, &nelems, &mype, &iter, &skip, &hflag_d, &cur_lat};
+        void *args_1[] = {&data_d, &flag_d, &nelems, &mype, &skip};
+        void *args_2[] = {&data_d, &flag_d, &nelems, &mype, &iter};
 
         CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
         CUDA_CHECK(cudaDeviceSynchronize());
         nvshmem_barrier_all();
 
-        *hflag = 0;
-        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, args, 0, stream);
+        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
         }
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
+        nvshmem_barrier_all();
 
-        while (*((volatile int *)hflag) != 1)
-            ;
+        cudaEventRecord(start, stream);
+        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, args_2, 0, stream);
+        if (status != NVSHMEMX_SUCCESS) {
+            fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+            exit(-1);
+        }
+        cudaEventRecord(stop, stream);
 
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        h_lat[i] = (milliseconds * 1000) / iter;
         nvshmem_barrier_all();
         i++;
     }

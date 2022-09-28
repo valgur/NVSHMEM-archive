@@ -1,8 +1,37 @@
 ===============================================================================
+				Changes in 2.7.0
+===============================================================================
+
+# Added experimental CMake build system that will replace the Makefile in a
+future release
+# Updated GPU Initiated Communication (GIC) transport provides significant
+performance improvements over NVSHMEM 2.6.0
+# Added NVSHMEM version checks to ensure that the dynamically linked NVSHMEM
+host library is compatible with the statically linked device library. Also
+added compatibility checks for the inbuilt bootstrap plugins.
+# Added support for CUDA minor version compatibility, which allows NVSHMEM
+application binaries built with CUDA M.X to run with M.Y, where M is the
+major version and X and Y are compatible minor versions
+# NVSHMEM library now statically links libcudart_static.a and dlopens libcuda.so
+# Improved timing in NVSHMEM performance tests to reduce noise in measurements
+# Added support for Hopper compute_90 and sm_90
+# Removed support for Pascal compute_60, sm_60, compute_61, and sm_61
+# Added version number suffix to libnvshmem_host.so and bootstrap plugins
+# Added support for dmabuf memory registration on buffers smaller than 4 GiB
+# Updated Hydra installation script to install Hydra 4.0.2
+# Added a pre-built Hydra launcher to NVSHMEM binary packages.
+# Catch user buffer registration error when requested buffer overlaps with an
+already registered memory region
+# An issue causing validation errors in collective operations when all GPUs
+in a job are connected via PCIe without a remote transport using the proxy
+thread was fixed.
+
+
+===============================================================================
 				Changes in 2.6.0
 ===============================================================================
 
-# Added new GPU initiated communication transport that allows kernel intiated
+# Added new GPU initiated communication transport that allows kernel initiated
 communication to be issued directly to the NIC and bypass the CPU proxy thread.
 The transport is currently provided in experimental mode. It is disabled by default.
 Please refer to installation guide for how to enable it.
@@ -11,8 +40,8 @@ Performance tuning for the libfabric transport is ongoing.
 # Added collective algorithms for bcast/fcollect/reduce that use low latency (LL)
 optimization by sending data and synchronization together, resulting in
 significant performance improvements.
-# Added warp- and block-scope implementation of recursice exchange algorithm for
-reduce collective 
+# Added warp- and block-scope implementation of recursive exchange algorithm for
+reduce collectives
 # Fixed bug in host/on-stream RMA API for very large data transfers
 # Fixed bug in implementation of nvshmem_fence and nvshmemx_quiet_on_stream API
 

@@ -19,9 +19,8 @@ void nvshmem_fence(void) {
         if (tbitmap & 1) {
             if (j == NVSHMEM_TRANSPORT_ID_P2P) {
                 for (int s = 0; s < MAX_PEER_STREAMS; s++) {
-                    CUstream custrm = nvshmemi_state->custreams[s];
-                    status = cuStreamSynchronize(custrm);
-                    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_fence() failed \n");
+                    cudaStream_t custrm = nvshmemi_state->custreams[s];
+                    CUDA_RUNTIME_CHECK_GOTO(cudaStreamSynchronize(custrm), status, out);
                 }
             } else if (nvshmemi_state->fence[j]) {
                 struct nvshmem_transport *tcurr =

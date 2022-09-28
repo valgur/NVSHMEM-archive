@@ -191,10 +191,10 @@ typedef struct proxy_state {
     proxy_progress_params_t progress_params;
     nvshmemi_state_t *nvshmemi_state;
     int *quiet_incoming_in_progress_pe;
-    CUstream stream;
-    CUstream queue_stream_out;
-    CUstream queue_stream_in;
-    CUevent cuev;
+    cudaStream_t stream;
+    cudaStream_t queue_stream_out;
+    cudaStream_t queue_stream_in;
+    cudaEvent_t cuev;
     int finalize_count;
     int issued_get;
     nvshmemi_timeout_t* nvshmemi_timeout;

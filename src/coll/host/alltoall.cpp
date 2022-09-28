@@ -13,9 +13,9 @@
         NVTX_FUNC_RANGE_IN_GROUP(COLL);                                                    \
         NVSHMEMI_CHECK_INIT_STATUS();                                                      \
         NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                 \
-        nvshmemi_call_alltoall_on_stream_kernel<TYPE>(team, dest, source, nelems,          \
-                                                      nvshmemi_state->my_stream);          \
-        CUDA_CHECK(cuStreamSynchronize(nvshmemi_state->my_stream));                        \
+        nvshmemi_alltoall_on_stream<TYPE>(team, dest, source, nelems,                      \
+                                          nvshmemi_state->my_stream);                      \
+        CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));              \
         return 0;                                                                          \
     }
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFN_NVSHMEM_TYPENAME_ALLTOALL)
@@ -25,8 +25,8 @@ int nvshmem_alltoallmem(nvshmem_team_t team, void *dest, const void *source, siz
         NVTX_FUNC_RANGE_IN_GROUP(COLL);
         NVSHMEMI_CHECK_INIT_STATUS();
         NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();
-        nvshmemi_call_alltoall_on_stream_kernel<char>(team, (char *)dest, (const char *)source,
-                                                      nelems, nvshmemi_state->my_stream);
-        CUDA_CHECK(cuStreamSynchronize(nvshmemi_state->my_stream));
+        nvshmemi_alltoall_on_stream<char>(team, (char *)dest, (const char *)source,
+                                          nelems, nvshmemi_state->my_stream);
+        CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));
         return 0;
 }
