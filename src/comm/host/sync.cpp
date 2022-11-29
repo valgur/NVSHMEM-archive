@@ -16,7 +16,7 @@
     void nvshmemx_##type##_wait_until_on_stream(TYPE *ivar, int cmp, TYPE cmp_value,       \
                                                 cudaStream_t cstream) {                    \
         NVTX_FUNC_RANGE_IN_GROUP(WAIT_ON_STREAM);                                          \
-        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                         \
+        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                 \
         call_nvshmemi_##type##_wait_until_on_stream_kernel(ivar, cmp, cmp_value, cstream); \
     }
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_TYPE_WAIT_UNTIL_ON_STREAM)
@@ -27,7 +27,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_TYPE_WAIT_UNTIL_ON_STREAM)
                                                     int cmp, TYPE cmp_value,                       \
                                                     cudaStream_t cstream) {                        \
         NVTX_FUNC_RANGE_IN_GROUP(WAIT_ON_STREAM);                                                  \
-        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                                 \
+        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                         \
         call_nvshmemi_##type##_wait_until_all_on_stream_kernel(ivars, nelems, status, cmp,         \
                                                                cmp_value, cstream);                \
     }
@@ -40,7 +40,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_TYPE_WAIT_UNTIL_ALL_ON_STREAM)
         TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_value,                  \
         cudaStream_t cstream) {                                                                   \
         NVTX_FUNC_RANGE_IN_GROUP(WAIT_ON_STREAM);                                                 \
-        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                                \
+        NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                        \
         call_nvshmemi_##type##_wait_until_all_vector_on_stream_kernel(ivars, nelems, status, cmp, \
                                                                       cmp_value, cstream);        \
     }
@@ -61,8 +61,8 @@ void nvshmemi_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_o
     if (sig_op == NVSHMEM_SIGNAL_SET && nvshmemi_state->peer_heap_base[pe] != NULL) {
         void *peer_addr;
         NVSHMEMU_MAPPED_PTR_TRANSLATE(peer_addr, sig_addr, pe)
-        status = cudaMemcpyAsync(peer_addr, (const void *)&signal,
-                                 sizeof(uint64_t), cudaMemcpyHostToDevice, cstrm);
+        status = cudaMemcpyAsync(peer_addr, (const void *)&signal, sizeof(uint64_t),
+                                 cudaMemcpyHostToDevice, cstrm);
         NZ_EXIT(status, "cudaMemcpyAsync() failed\n");
     } else {
         call_nvshmemi_signal_op_kernel(sig_addr, signal, sig_op, pe, cstrm);

@@ -10,7 +10,7 @@
  * See COPYRIGHT.txt for license information
  */
 
- #include "atomic_bw_common.h"
+#include "atomic_bw_common.h"
 
 DEFINE_ATOMIC_BW_FN_NO_ARG(inc);
 DEFINE_ATOMIC_BW_FN_NO_ARG(fetch_inc);
@@ -31,7 +31,6 @@ DEFINE_ATOMIC_BW_FN_ONE_ARG(swap, i + 1);
 DEFINE_ATOMIC_BW_FN_ONE_ARG(set, i + 1);
 
 DEFINE_ATOMIC_BW_FN_TWO_ARG(compare_swap, i, i + 1);
-
 
 int main(int argc, char *argv[]) {
     int mype, npes;
@@ -82,10 +81,10 @@ int main(int argc, char *argv[]) {
                 max_threads = strtol(optarg, NULL, 0);
                 break;
             default:
-                case 'h':
+            case 'h':
                 printf("-a [atomic op] -c [CTAs] -t [THREADS]   \n");
                 atomic_usage();
-            goto finalize;
+                goto finalize;
         }
     }
 
@@ -108,7 +107,7 @@ int main(int argc, char *argv[]) {
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    switch(atomic_op) {
+    switch (atomic_op) {
         case NVSHMEMI_AMO_INC: {
             strncpy(perf_table_name, "shmem_at_inc_bw", 30);
             break;
@@ -179,68 +178,83 @@ int main(int argc, char *argv[]) {
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
 
             /* Do warmup round for NIC cache. */
-            switch(atomic_op) {
+            switch (atomic_op) {
                 case NVSHMEMI_AMO_INC: {
-                    atomic_inc_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_inc_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_SET: {
-                    atomic_set_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_set_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_ADD: {
-                    atomic_add_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_add_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_AND: {
                     CUDA_CHECK(cudaMemset(data_d, 0xFF, size));
-                    atomic_and_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_and_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_OR: {
                     CUDA_CHECK(cudaMemset(data_d, 0xFF, size));
-                    atomic_or_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_or_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                      mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_XOR: {
                     set_value = 1;
-                    for(size_t j = 0; j < size / sizeof(uint64_t); j++) {
-                        cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t), cudaMemcpyHostToDevice);
+                    for (size_t j = 0; j < size / sizeof(uint64_t); j++) {
+                        cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t),
+                                   cudaMemcpyHostToDevice);
                     }
-                    atomic_xor_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_xor_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_INC: {
-                    atomic_fetch_inc_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_fetch_inc_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                             size / sizeof(uint64_t), mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_ADD: {
-                    atomic_fetch_add_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_fetch_add_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                             size / sizeof(uint64_t), mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_AND: {
                     CUDA_CHECK(cudaMemset(data_d, 0xFF, size));
-                    atomic_fetch_and_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_fetch_and_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                             size / sizeof(uint64_t), mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_OR: {
                     CUDA_CHECK(cudaMemset(data_d, 0xFF, size));
-                    atomic_fetch_or_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_fetch_or_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                            size / sizeof(uint64_t), mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_XOR: {
-                    for(size_t j = 0; j < size / sizeof(uint64_t); j++) {
-                        cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t), cudaMemcpyHostToDevice);
+                    for (size_t j = 0; j < size / sizeof(uint64_t); j++) {
+                        cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t),
+                                   cudaMemcpyHostToDevice);
                     }
-                    atomic_fetch_xor_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_fetch_xor_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                             size / sizeof(uint64_t), mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_SWAP: {
-                    atomic_swap_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_swap_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                        mype, skip);
                     break;
                 }
                 case NVSHMEMI_AMO_COMPARE_SWAP: {
-                    atomic_compare_swap_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, skip);
+                    atomic_compare_swap_bw<<<blocks, threads>>>(
+                        data_d, counter_d, size / sizeof(uint64_t), mype, skip);
                     break;
                 }
                 default: {
@@ -257,7 +271,7 @@ int main(int argc, char *argv[]) {
 
             /* reset values in code. */
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
-            switch(atomic_op) {
+            switch (atomic_op) {
                 case NVSHMEMI_AMO_AND: {
                     CUDA_CHECK(cudaMemset(data_d, 0xFF, size));
                     break;
@@ -268,8 +282,9 @@ int main(int argc, char *argv[]) {
                 }
                 case NVSHMEMI_AMO_XOR: {
                     set_value = 1;
-                    for(size_t j = 0; j < size / sizeof(uint64_t); j++) {
-                        cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t), cudaMemcpyHostToDevice);
+                    for (size_t j = 0; j < size / sizeof(uint64_t); j++) {
+                        cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t),
+                                   cudaMemcpyHostToDevice);
                     }
                     break;
                 }
@@ -282,71 +297,83 @@ int main(int argc, char *argv[]) {
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_XOR: {
-                    for(size_t j = 0; j < size / sizeof(uint64_t); j++) {
-                        cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t), cudaMemcpyHostToDevice);
+                    for (size_t j = 0; j < size / sizeof(uint64_t); j++) {
+                        cudaMemcpy((data_d + j), &set_value, sizeof(uint64_t),
+                                   cudaMemcpyHostToDevice);
                     }
                     break;
                 }
-                default: {
-                    break;
-                }
+                default: { break; }
             }
             CUDA_CHECK(cudaGetLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
             nvshmem_barrier_all();
 
             cudaEventRecord(start);
-            switch(atomic_op) {
+            switch (atomic_op) {
                 case NVSHMEMI_AMO_INC: {
-                    atomic_inc_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_inc_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_SET: {
-                    atomic_set_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_set_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_ADD: {
-                    atomic_add_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_add_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_AND: {
-                    atomic_and_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_and_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_OR: {
-                    atomic_or_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_or_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                      mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_XOR: {
-                    atomic_xor_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_xor_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                       mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_INC: {
-                    atomic_fetch_inc_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_fetch_inc_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                             size / sizeof(uint64_t), mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_ADD: {
-                    atomic_fetch_add_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_fetch_add_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                             size / sizeof(uint64_t), mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_AND: {
-                    atomic_fetch_and_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_fetch_and_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                             size / sizeof(uint64_t), mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_OR: {
-                    atomic_fetch_or_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_fetch_or_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                            size / sizeof(uint64_t), mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_FETCH_XOR: {
-                    atomic_fetch_xor_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_fetch_xor_bw<<<blocks, threads>>>(data_d, counter_d,
+                                                             size / sizeof(uint64_t), mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_SWAP: {
-                    atomic_swap_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_swap_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t),
+                                                        mype, iter);
                     break;
                 }
                 case NVSHMEMI_AMO_COMPARE_SWAP: {
-                    atomic_compare_swap_bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(uint64_t), mype, iter);
+                    atomic_compare_swap_bw<<<blocks, threads>>>(
+                        data_d, counter_d, size / sizeof(uint64_t), mype, iter);
                     break;
                 }
                 default: {
@@ -367,7 +394,7 @@ int main(int argc, char *argv[]) {
             i++;
         }
     } else {
-    for (size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
+        for (size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
             nvshmem_barrier_all();
             nvshmem_barrier_all();
             nvshmem_barrier_all();
@@ -375,10 +402,11 @@ int main(int argc, char *argv[]) {
     }
 
     if (mype == 0) {
-        print_table(perf_table_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw, i);
+        print_table(perf_table_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
+                    i);
     }
 
-    finalize:
+finalize:
 
     if (data_d) nvshmem_free(data_d);
     free_tables(h_tables, 2);

@@ -684,7 +684,7 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 #ifdef linux
 #define HAVE_MREMAP 1
 //#define _GNU_SOURCE /* Turns on mremap() definition */ /*clang++-7.0.0 <built-in>:383:9: note:
-//previous definition is here*/
+// previous definition is here*/
 #else /* linux */
 #define HAVE_MREMAP 0
 #endif /* linux */
@@ -2258,7 +2258,8 @@ mchunkptr mem2chunk(void* mem) {
     CUdeviceptr p_d;
 
     p_d = (CUdeviceptr)(((char*)mem) - sizeof(uintptr_t));
-    CUDA_RUNTIME_CHECK(cudaMemcpyAsync((void*)&p, p_d, sizeof(uintptr_t), cudaMemcpyDeviceToHost, nvshmemi_state->my_stream));
+    CUDA_RUNTIME_CHECK(cudaMemcpyAsync((void*)&p, p_d, sizeof(uintptr_t), cudaMemcpyDeviceToHost,
+                                       nvshmemi_state->my_stream));
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));
 
     return (mchunkptr)p;
@@ -2485,11 +2486,13 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
 #define leftmost_child(t) ((t)->child[0] != 0 ? (t)->child[0] : (t)->child[1])
 
 #if NVSHMEM_SINGLE_HEAP
-#define nvshmem_allocate_chunk(r)                                                       \
-    do {                                                                                \
+#define nvshmem_allocate_chunk(r)                                                                 \
+    do {                                                                                          \
         int ret = posix_memalign((void**)&r, MALLOC_ALIGNMENT, sizeof(struct malloc_tree_chunk)); \
-        if (ret) ERROR_EXIT("Out of memory in nvshmem_allocate_chunk\n");               \
-        else memset(r, 0, sizeof(struct malloc_tree_chunk));                            \
+        if (ret)                                                                                  \
+            ERROR_EXIT("Out of memory in nvshmem_allocate_chunk\n");                              \
+        else                                                                                      \
+            memset(r, 0, sizeof(struct malloc_tree_chunk));                                       \
     } while (0)
 
 #define nvshmem_free_chunk(r)                                                            \
@@ -2501,16 +2504,16 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
         free(r);                                                                         \
     } while (0)
 
-#define nvshmem_adjust_mchunk(p, adjust_bytes)                                                  \
-    do {                                                                                        \
-        CUdeviceptr ptr = (CUdeviceptr)(p->nvshmem_info.ptr +                                   \
-                                        align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t))); \
-        INFO(NVSHMEM_MEM, "nvshmem_adjust_mchunk %p %x %x", p->nvshmem_info.ptr,                \
-             align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)), adjust_bytes);              \
-        CUDA_RUNTIME_CHECK(                                                                        \
-            cudaMemcpyAsync(ptr + adjust_bytes, ptr, sizeof(uintptr_t), cudaMemcpyDeviceToDevice, nvshmemi_state->my_stream));  \
-        CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));                        \
-        p->nvshmem_info.offset = (uintptr_t)adjust_bytes;                                       \
+#define nvshmem_adjust_mchunk(p, adjust_bytes)                                                    \
+    do {                                                                                          \
+        CUdeviceptr ptr = (CUdeviceptr)(p->nvshmem_info.ptr +                                     \
+                                        align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)));   \
+        INFO(NVSHMEM_MEM, "nvshmem_adjust_mchunk %p %x %x", p->nvshmem_info.ptr,                  \
+             align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)), adjust_bytes);                \
+        CUDA_RUNTIME_CHECK(cudaMemcpyAsync(ptr + adjust_bytes, ptr, sizeof(uintptr_t),            \
+                                           cudaMemcpyDeviceToDevice, nvshmemi_state->my_stream)); \
+        CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));                     \
+        p->nvshmem_info.offset = (uintptr_t)adjust_bytes;                                         \
     } while (0)
 
 #define nvshmem_revert_adjusted_mchunk(p) \
@@ -2522,8 +2525,8 @@ char* tbase_global = 0;
     do {                                                                                           \
         nvshmem_allocate_chunk(r);                                                                 \
         /*XXX:this can advance the ptr by upto 511 bytes*/                                         \
-        r->nvshmem_info.ptr = p->nvshmem_info.ptr + psize +                                        \
-                              align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t));               \
+        r->nvshmem_info.ptr =                                                                      \
+            p->nvshmem_info.ptr + psize + align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t));   \
         r->nvshmem_info.prev = (void*)p;                                                           \
         r->nvshmem_info.next = p->nvshmem_info.next;                                               \
         r->prev_foot = psize;                                                                      \
@@ -2531,12 +2534,10 @@ char* tbase_global = 0;
         if (r->nvshmem_info.next) ((mchunkptr)r->nvshmem_info.next)->nvshmem_info.prev = (void*)r; \
         void* dest =                                                                               \
             (void*)(p->nvshmem_info.ptr + align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)));  \
-        INFO(NVSHMEM_MEM, "nvshmem_suballocate_mchunk %p %lld", dest,                              \
-             (char*)dest - tbase_global);                                                          \
+        INFO(NVSHMEM_MEM, "nvshmem_suballocate_mchunk %p %lld", dest, (char*)dest - tbase_global); \
         /*XXX:this can advance the ptr by another 511 bytes*/                                      \
         CUDA_RUNTIME_CHECK(cudaMemcpyAsync(                                                        \
-                           p->nvshmem_info.ptr +                                                   \
-                          align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)),                   \
+            p->nvshmem_info.ptr + align_offset(p->nvshmem_info.ptr + sizeof(uintptr_t)),           \
             (void*)&p, sizeof(uintptr_t), cudaMemcpyHostToDevice, nvshmemi_state->my_stream));     \
         CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));                      \
     } while (0)
@@ -2747,11 +2748,13 @@ struct malloc_state {
 typedef struct malloc_state* mstate;
 
 #if NVSHMEM_SINGLE_HEAP
-#define nvshmem_allocate_mstate(r)                                                 \
-    do {                                                                           \
+#define nvshmem_allocate_mstate(r)                                                           \
+    do {                                                                                     \
         int ret = posix_memalign((void**)&r, MALLOC_ALIGNMENT, sizeof(struct malloc_state)); \
-        if (ret) ERROR_EXIT("Out of memory in nvshmem_allocate_mstate\n");         \
-        else memset(r, 0, sizeof(struct malloc_state));                            \
+        if (ret)                                                                             \
+            ERROR_EXIT("Out of memory in nvshmem_allocate_mstate\n");                        \
+        else                                                                                 \
+            memset(r, 0, sizeof(struct malloc_state));                                       \
     } while (0)
 #define nvshmem_free_mstate(r) free(r)
 #endif
@@ -2973,17 +2976,18 @@ static size_t traverse_and_check(mstate m);
 
 /* assign tree index for size S to variable I. Use x86 asm if possible  */
 #if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
-#define compute_tree_index(S, I)                                                                  \
-    {                                                                                             \
-        size_t X = S >> TREEBIN_SHIFT;                                                            \
-        if (X == 0)                                                                               \
-            I = 0;                                                                                \
-        else if (X > 0xFFFF)                                                                      \
-            I = NTREEBINS - 1;                                                                    \
-        else {                                                                                    \
-            unsigned int K = (unsigned)sizeof(X) * __CHAR_BIT__ - 1 - (unsigned)__builtin_clzll(X); \
-            I = (bindex_t)((K << 1) + ((S >> (K + (TREEBIN_SHIFT - 1)) & 1)));                    \
-        }                                                                                         \
+#define compute_tree_index(S, I)                                                       \
+    {                                                                                  \
+        size_t X = S >> TREEBIN_SHIFT;                                                 \
+        if (X == 0)                                                                    \
+            I = 0;                                                                     \
+        else if (X > 0xFFFF)                                                           \
+            I = NTREEBINS - 1;                                                         \
+        else {                                                                         \
+            unsigned int K =                                                           \
+                (unsigned)sizeof(X) * __CHAR_BIT__ - 1 - (unsigned)__builtin_clzll(X); \
+            I = (bindex_t)((K << 1) + ((S >> (K + (TREEBIN_SHIFT - 1)) & 1)));         \
+        }                                                                              \
     }
 
 #elif defined(__INTEL_COMPILER)
@@ -4574,12 +4578,12 @@ static void* tmalloc_large(mstate m, size_t nb) {
             assert(chunksize(v) == rsize + nb);
             if (RTCHECK(ok_next(v, r))) {
                 unlink_large_chunk(m, v);
-                if (rsize < MIN_CHUNK_SIZE) { 
+                if (rsize < MIN_CHUNK_SIZE) {
                     set_inuse_and_pinuse(m, v, (rsize + nb));
 #if NVSHMEM_SINGLE_HEAP
-		    nvshmem_free_chunk(r);
+                    nvshmem_free_chunk(r);
 #endif
-		} else {
+                } else {
                     set_size_and_pinuse_of_inuse_chunk(m, v, nb);
                     set_size_and_pinuse_of_free_chunk(r, rsize);
                     insert_chunk(m, r, rsize);
@@ -5447,8 +5451,8 @@ static void init_top_nvshmem(mstate m, mchunkptr p, char* d, size_t dsize) {
     p->head = dsize | PINUSE_BIT;
 
     d = d + offset;
-    CUDA_RUNTIME_CHECK(
-        cudaMemcpyAsync((CUdeviceptr)d, (void*)&p, sizeof(uintptr_t), cudaMemcpyHostToDevice, nvshmemi_state->my_stream));
+    CUDA_RUNTIME_CHECK(cudaMemcpyAsync((CUdeviceptr)d, (void*)&p, sizeof(uintptr_t),
+                                       cudaMemcpyHostToDevice, nvshmemi_state->my_stream));
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));
 
     m->trim_check = mparams.trim_threshold; /* reset on each update */

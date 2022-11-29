@@ -34,10 +34,11 @@ int main(int argc, char *argv[]) {
     CU_CHECK(cuInit(0));
     CUdevice device;
     CU_CHECK(cuDeviceGet(&device, 0));
-    CU_CHECK(cuDeviceTotalMem(&max_alloc_size, device)); /* The test assumes that all devices have same total memory */
-    max_alloc_size *= 0.4; /* For allocacting more than half,
-                              we need the fix in CUDA driver,
-                              available only in r460 and later */
+    CU_CHECK(cuDeviceTotalMem(
+        &max_alloc_size, device)); /* The test assumes that all devices have same total memory */
+    max_alloc_size *= 0.4;         /* For allocacting more than half,
+                                      we need the fix in CUDA driver,
+                                      available only in r460 and later */
     DEBUG_PRINT("symmetric size requested %lu\n", max_alloc_size);
     sprintf(size_string, "%lu", max_alloc_size);
     status = setenv("NVSHMEM_SYMMETRIC_SIZE", size_string, 1);
@@ -46,21 +47,20 @@ int main(int argc, char *argv[]) {
         status = -1;
         goto out;
     }
-    
+
     init_wrapper(&argc, &argv);
     mype = nvshmem_my_pe();
 
     malloc_size = min_malloc_size;
     total_alloc_size = 0;
-    while (true){
+    while (true) {
         total_alloc_size += malloc_size;
-        if (total_alloc_size > max_alloc_size)
-            break;
+        if (total_alloc_size > max_alloc_size) break;
         malloc_size *= 2;
         loop_size++;
     }
 
-    h_size_arr = (uint64_t *) malloc(sizeof(uint64_t) * loop_size);
+    h_size_arr = (uint64_t *)malloc(sizeof(uint64_t) * loop_size);
     h_time = (double *)malloc(sizeof(double) * loop_size);
 
     malloc_size = min_malloc_size;
@@ -69,11 +69,13 @@ int main(int argc, char *argv[]) {
         nvshmem_malloc(malloc_size);
         gettimeofday(&t_stop, NULL);
         h_size_arr[i] = malloc_size;
-        h_time[i] = ((t_stop.tv_usec - t_start.tv_usec) + (1e+6 * (t_stop.tv_sec - t_start.tv_sec)));
+        h_time[i] =
+            ((t_stop.tv_usec - t_start.tv_usec) + (1e+6 * (t_stop.tv_sec - t_start.tv_sec)));
         malloc_size *= 2;
     }
     if (!mype) {
-        print_table("malloc", "None", "size (Bytes)", "time", "us", '-', h_size_arr, h_time, loop_size);
+        print_table("malloc", "None", "size (Bytes)", "time", "us", '-', h_size_arr, h_time,
+                    loop_size);
     }
 
     finalize_wrapper();

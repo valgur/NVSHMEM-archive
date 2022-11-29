@@ -8,24 +8,22 @@
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
-#include "nvshmemi_gic.h"
+#include "nvshmemi_ibgda.h"
 #include "nvshmemx_error.h"
 #include "util.h"
 
-__constant__ 
-nvshmemi_gic_device_state_t nvshmemi_gic_device_state_d;
+__constant__ nvshmemi_gic_device_state_t nvshmemi_gic_device_state_d;
 
 int nvshmemi_gic_set_device_state(nvshmemi_gic_device_state_t *gic_device_state) {
-    int status = cudaMemcpyToSymbol(nvshmemi_gic_device_state_d,
-                                    (void *)gic_device_state,
+    int status = cudaMemcpyToSymbol(nvshmemi_gic_device_state_d, (void *)gic_device_state,
                                     sizeof(nvshmemi_gic_device_state_t), 0, cudaMemcpyHostToDevice);
     return status;
 }
 
 /**
  * Variables in constant memory may be updated after nvshmem_init has already been called.
- * The same variable in constant memory has different addresses in libnvshmem_host.so and libnvshmem_device.a.
- * Thus, host API that causes GIC states to change must also call this API.
+ * The same variable in constant memory has different addresses in libnvshmem_host.so and
+ * libnvshmem_device.a. Thus, host API that causes GIC states to change must also call this API.
  */
 int nvshmemi_gic_update_device_state() {
     int status = 0;

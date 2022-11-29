@@ -9,11 +9,11 @@
 #include <cuda.h>
 #include <nvshmem_internal.h>
 
-int opt_env        = 0;
+int opt_env = 0;
 int opt_env_hidden = 0;
-int opt_env_rst    = 0;
-int opt_version    = 0;
-int opt_build      = 0;
+int opt_env_rst = 0;
+int opt_version = 0;
+int opt_build = 0;
 
 int main(int argc, char **argv) {
     int opt, ret = 0;
@@ -34,10 +34,10 @@ int main(int argc, char **argv) {
                 exit(0);
                 break;
             case 'a':
-                opt_env        = 1;
+                opt_env = 1;
                 opt_env_hidden = 1;
-                opt_version    = 1;
-                opt_build      = 1;
+                opt_version = 1;
+                opt_build = 1;
                 break;
             case 'n':
                 opt_version = 1;
@@ -59,7 +59,6 @@ int main(int argc, char **argv) {
                 break;
         }
     }
-
 
     if (opt_version) {
         printf("%s\n", NVSHMEM_VENDOR_STRING);
@@ -85,7 +84,8 @@ int main(int argc, char **argv) {
 
         build_vars = nvshmemu_wrap(NVSHMEM_BUILD_VARS, NVSHMEMI_WRAPLEN, "\t", 0);
 
-        printf("  %-28s\n\t%s\n", "Build Variables", build_vars ? build_vars : "Error wrapping build vars");
+        printf("  %-28s\n\t%s\n", "Build Variables",
+               build_vars ? build_vars : "Error wrapping build vars");
         printf("\n");
 
         free(build_vars);

@@ -17,7 +17,7 @@
 #define DEVX_TRANSPORT_STRING "ibdevx"
 #define LIBFABRIC_TRANSPORT_STRING "libfabric"
 
-#ifdef NVSHMEM_GPUINITIATED_SUPPORT
+#ifdef NVSHMEM_IBGDA_SUPPORT
 #define GIC_TRANSPORT_STRING "gic"
 #endif
 
@@ -32,9 +32,9 @@ enum {
     NVSHMEM_TRANSPORT_ID_UCX,
     NVSHMEM_TRANSPORT_ID_IBDEVX,
     NVSHMEM_TRANSPORT_ID_FABRIC,
-    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+#ifdef NVSHMEM_IBGDA_SUPPORT
     NVSHMEM_TRANSPORT_ID_GIC,
-    #endif
+#endif
     NVSHMEM_TRANSPORT_COUNT,
 };
 
@@ -44,9 +44,9 @@ enum {
     NVSHMEM_TRANSPORT_MASK_UCX = 1 << NVSHMEM_TRANSPORT_ID_UCX,
     NVSHMEM_TRANSPORT_MASK_IBDEVX = 1 << NVSHMEM_TRANSPORT_ID_IBDEVX,
     NVSHMEM_TRANSPORT_MASK_FABRIC = 1 << NVSHMEM_TRANSPORT_ID_FABRIC,
-    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+#ifdef NVSHMEM_IBGDA_SUPPORT
     NVSHMEM_TRANSPORT_MASK_GIC = 1 << NVSHMEM_TRANSPORT_ID_GIC,
-    #endif
+#endif
 };
 
 enum {
@@ -57,11 +57,11 @@ enum {
     NVSHMEM_TRANSPORT_CAP_CPU_WRITE = 1 << 4,
     NVSHMEM_TRANSPORT_CAP_CPU_READ = 1 << 5,
     NVSHMEM_TRANSPORT_CAP_CPU_ATOMICS = 1 << 6,
-    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+#ifdef NVSHMEM_IBGDA_SUPPORT
     NVSHMEM_TRANSPORT_CAP_GPU_WRITE = 1 << 7,
     NVSHMEM_TRANSPORT_CAP_GPU_READ = 1 << 8,
     NVSHMEM_TRANSPORT_CAP_GPU_ATOMICS = 1 << 9,
-    #endif
+#endif
 };
 
 enum {
@@ -116,28 +116,27 @@ typedef struct nvshmem_transport_pe_info {
 #define TRANSPORT_TYPE_CSWAP(type, TYPE, opname) \
     TYPE (*atomic_##type##_##opname)(volatile TYPE *, nvshmem_mem_handle_t *, TYPE, TYPE, int);
 
-#define TRANSPORT_TYPE_COMMON_OPGROUP(OPNAME, opname)                   \
-    TRANSPORT_TYPE_##OPNAME(uint, unsigned int, opname)                 \
-    TRANSPORT_TYPE_##OPNAME(ulong, unsigned long, opname)               \
-    TRANSPORT_TYPE_##OPNAME(ulonglong, unsigned long long, opname)      \
-    TRANSPORT_TYPE_##OPNAME(int32, int32_t, opname)                     \
-    TRANSPORT_TYPE_##OPNAME(int64, int64_t, opname)                     \
-    TRANSPORT_TYPE_##OPNAME(uint32, uint32_t, opname)                   \
-    TRANSPORT_TYPE_##OPNAME(uint64, uint64_t, opname)
+#define TRANSPORT_TYPE_COMMON_OPGROUP(OPNAME, opname)                      \
+    TRANSPORT_TYPE_##OPNAME(uint, unsigned int, opname)                    \
+        TRANSPORT_TYPE_##OPNAME(ulong, unsigned long, opname)              \
+            TRANSPORT_TYPE_##OPNAME(ulonglong, unsigned long long, opname) \
+                TRANSPORT_TYPE_##OPNAME(int32, int32_t, opname)            \
+                    TRANSPORT_TYPE_##OPNAME(int64, int64_t, opname)        \
+                        TRANSPORT_TYPE_##OPNAME(uint32, uint32_t, opname)  \
+                            TRANSPORT_TYPE_##OPNAME(uint64, uint64_t, opname)
 
-#define TRANSPORT_TYPE_STANDARD_OPGROUP(OPNAME, opname)                 \
-    TRANSPORT_TYPE_##OPNAME(int, int, opname)                           \
-    TRANSPORT_TYPE_##OPNAME(long, long, opname)                         \
-    TRANSPORT_TYPE_##OPNAME(longlong, long long, opname)                \
-    TRANSPORT_TYPE_##OPNAME(size, size_t, opname)                       \
-    TRANSPORT_TYPE_##OPNAME(ptrdiff, ptrdiff_t, opname)
+#define TRANSPORT_TYPE_STANDARD_OPGROUP(OPNAME, opname)                                   \
+    TRANSPORT_TYPE_##OPNAME(int, int, opname) TRANSPORT_TYPE_##OPNAME(long, long, opname) \
+        TRANSPORT_TYPE_##OPNAME(longlong, long long, opname)                              \
+            TRANSPORT_TYPE_##OPNAME(size, size_t, opname)                                 \
+                TRANSPORT_TYPE_##OPNAME(ptrdiff, ptrdiff_t, opname)
 
-#define TRANSPORT_TYPE_EXTENDED_OPGROUP(OPNAME, opname)                 \
-    TRANSPORT_TYPE_##OPNAME(float, float, opname)                       \
-    TRANSPORT_TYPE_##OPNAME(double, double, opname)
+#define TRANSPORT_TYPE_EXTENDED_OPGROUP(OPNAME, opname) \
+    TRANSPORT_TYPE_##OPNAME(float, float, opname) TRANSPORT_TYPE_##OPNAME(double, double, opname)
 
-typedef int (*rma_handle)(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, rma_memdesc_t *remote,
-                          rma_memdesc_t *local, rma_bytesdesc_t bytesdesc, int is_proxy);
+typedef int (*rma_handle)(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
+                          rma_memdesc_t *remote, rma_memdesc_t *local, rma_bytesdesc_t bytesdesc,
+                          int is_proxy);
 typedef int (*amo_handle)(struct nvshmem_transport *tcurr, int pe, void *curetptr, amo_verb_t verb,
                           amo_memdesc_t *target, amo_bytesdesc_t bytesdesc, int is_proxy);
 typedef int (*fence_handle)(struct nvshmem_transport *tcurr, int pe, int is_proxy);
@@ -150,8 +149,10 @@ struct nvshmem_transport_host_ops {
                           struct nvshmem_transport *transport);
     int (*connect_endpoints)(struct nvshmem_transport *t);
     int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t *mem_handle_in,
-                          void *buf, size_t size, struct nvshmem_transport *transport, bool local_only);
-    int (*release_mem_handle)(nvshmem_mem_handle_t *mem_handle, struct nvshmem_transport *transport);
+                          void *buf, size_t size, struct nvshmem_transport *transport,
+                          bool local_only);
+    int (*release_mem_handle)(nvshmem_mem_handle_t *mem_handle,
+                              struct nvshmem_transport *transport);
     int (*map)(void **buf, size_t size, nvshmem_mem_handle_t *mem_handle);
     int (*unmap)(void *buf, size_t size);
     int (*finalize)(struct nvshmem_transport *transport);
@@ -165,9 +166,11 @@ struct nvshmem_transport_host_ops {
     quiet_handle quiet;
     int (*enforce_cst)(struct nvshmem_transport *transport);
     int (*enforce_cst_at_target)(struct nvshmem_transport *transport);
-    #ifdef NVSHMEM_GPUINITIATED_SUPPORT
-    int (*add_device_remote_mem_handles)(struct nvshmem_transport *transport, int transport_id, nvshmem_mem_handle_t *mem_handles, uint64_t heap_offset, size_t size);
-    #endif
+#ifdef NVSHMEM_IBGDA_SUPPORT
+    int (*add_device_remote_mem_handles)(struct nvshmem_transport *transport, int transport_id,
+                                         nvshmem_mem_handle_t *mem_handles, uint64_t heap_offset,
+                                         size_t size);
+#endif
 };
 
 struct nvshmem_transport {
@@ -209,7 +212,7 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *transport);
 
 int nvshmemt_libfabric_init(nvshmem_transport_t *transport);
 
-#ifdef NVSHMEM_GPUINITIATED_SUPPORT
+#ifdef NVSHMEM_IBGDA_SUPPORT
 int nvshmemt_gic_init(nvshmem_transport_t *transport);
 #endif
 

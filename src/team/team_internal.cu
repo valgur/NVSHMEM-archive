@@ -1,8 +1,8 @@
 /*
-* Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
-*
-* See COPYRIGHT for license information
-*/
+ * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
 
 #include "nvshmem.h"
 #include "nvshmemx.h"
@@ -66,14 +66,13 @@ static inline int check_for_linear_stride(int pe, int *start, int *stride, int *
 
 size_t nvshmemi_get_teams_mem_requirement() {
     return sizeof(long) * nvshmemi_max_teams * get_psync_len_per_team() + /* psync's */
-           2 * N_PSYNC_BYTES +                                       /* psync_pool_avail */
-           2 * sizeof(int) +                                         /* team_ret_val */
-           2 * sizeof(long) * nvshmemi_max_teams                     /* storing counters */
+           2 * N_PSYNC_BYTES +                                            /* psync_pool_avail */
+           2 * sizeof(int) +                                              /* team_ret_val */
+           2 * sizeof(long) * nvshmemi_max_teams                          /* storing counters */
 #ifdef NVSHMEM_USE_NCCL
            + sizeof(ncclUniqueId)
 #endif
         ;
-            
 }
 
 #ifdef NVSHMEM_USE_NCCL
@@ -88,21 +87,23 @@ void nvshmemi_team_init_nccl_comm(nvshmemi_team_t *teami) {
         CUDA_RUNTIME_CHECK(cudaMemcpy(pWrk, &Id, sizeof(ncclUniqueId), cudaMemcpyHostToDevice));
         CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
         for (int i = 0; i < size; i++) {
-            nvshmem_char_put_nbi((char *)pWrk, (const char *)pWrk,
-                                 sizeof(ncclUniqueId), start + i * stride);
+            nvshmem_char_put_nbi((char *)pWrk, (const char *)pWrk, sizeof(ncclUniqueId),
+                                 start + i * stride);
         }
         nvshmemi_barrier(teami->team_idx);
     } else {
         nvshmemi_barrier(teami->team_idx);
         CUDA_RUNTIME_CHECK(cudaMemcpy(&Id, pWrk, sizeof(ncclUniqueId), cudaMemcpyDeviceToHost));
     }
-    INFO(NVSHMEM_TEAM, "Calling ncclCommInitRank, teami->size = %d, teami->my_pe = %d", teami->size, teami->my_pe);
+    INFO(NVSHMEM_TEAM, "Calling ncclCommInitRank, teami->size = %d, teami->my_pe = %d", teami->size,
+         teami->my_pe);
     NCCL_CHECK(nccl_ftable.CommInitRank(&teami->nccl_comm, teami->size, Id, teami->my_pe));
 }
-#endif  /* NVSHMEM_USE_NCCL */
-void nvshmemi_team_set_p2p_connectivity(nvshmemi_team_t * teami) {
+#endif /* NVSHMEM_USE_NCCL */
+void nvshmemi_team_set_p2p_connectivity(nvshmemi_team_t *teami) {
     teami->are_gpus_p2p_connected = 1;
-    for (int pe = teami->start; pe < teami->start + teami->stride * teami->size; pe += teami->stride) {
+    for (int pe = teami->start; pe < teami->start + teami->stride * teami->size;
+         pe += teami->stride) {
         if (nvshmemi_state->peer_heap_base[pe] == NULL) {
             teami->are_gpus_p2p_connected = 0;
             break;
@@ -165,18 +166,20 @@ int nvshmemi_team_init(void) {
 
     uint64_t myHostHash = getHostHash();
     uint64_t *hostHash = (uint64_t *)malloc(sizeof(uint64_t) * nvshmemi_state->npes);
-    NULL_ERROR_JMP(hostHash, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "hostHash allocation failed \n");
+    NULL_ERROR_JMP(hostHash, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup,
+                   "hostHash allocation failed \n");
     status = nvshmemi_boot_handle.allgather((void *)&myHostHash, (void *)hostHash, sizeof(uint64_t),
-                                          &nvshmemi_boot_handle);
+                                            &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup, "allgather of host hashes failed\n");
 
     /* Search for on-node peer PEs while checking for a consistent stride */
-    start = -1; stride = -1; size = 0;
+    start = -1;
+    stride = -1;
+    size = 0;
 
     for (int pe = 0; pe < nvshmemi_state->npes; pe++) {
-        if (hostHash[pe] != myHostHash)
-            continue;
-        
+        if (hostHash[pe] != myHostHash) continue;
+
         int ret = check_for_linear_stride(pe, &start, &stride, &size);
         if (ret < 0) {
             start = nvshmemi_state->mype;
@@ -192,8 +195,8 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_node);
     nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_node);
 
-    INFO(NVSHMEM_INIT, "NVSHMEMX_TEAM_NODE: start=%d, stride=%d, size=%d",
-         nvshmemi_team_node.start, nvshmemi_team_node.stride, nvshmemi_team_node.size);
+    INFO(NVSHMEM_INIT, "NVSHMEMX_TEAM_NODE: start=%d, stride=%d, size=%d", nvshmemi_team_node.start,
+         nvshmemi_team_node.stride, nvshmemi_team_node.size);
 
     /* Initialize NVSHMEMX_TEAM_SAME_MYPE_NODE */
     nvshmemi_team_same_mype_node.team_idx = NVSHMEM_TEAM_SAME_MYPE_NODE_INDEX;
@@ -212,8 +215,8 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_same_mype_node);
     nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_same_mype_node);
     INFO(NVSHMEM_INIT, "NVSHMEM_TEAM_SHARED: start=%d, stride=%d, size=%d",
-         nvshmemi_team_same_mype_node.start, nvshmemi_team_same_mype_node.stride, nvshmemi_team_same_mype_node.size);
-
+         nvshmemi_team_same_mype_node.start, nvshmemi_team_same_mype_node.stride,
+         nvshmemi_team_same_mype_node.size);
 
     /* Initialize team NVSHMEMI_TEAM_SAME_GPU */
     nvshmemi_team_same_gpu.team_idx = NVSHMEM_TEAM_SAME_GPU_INDEX;
@@ -224,12 +227,15 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_same_gpu.config_mask = 0;
     memset(&nvshmemi_team_same_gpu.config, 0, sizeof(nvshmem_team_config_t));
     pe_info = nvshmemi_state->pe_info;
-    start = -1; stride = -1; size = 0;
+    start = -1;
+    stride = -1;
+    size = 0;
     for (int pe = 0; pe < nvshmemi_state->npes; pe++) {
-        if (pe_info[pe].hostHash != pe_info[nvshmemi_state->mype].hostHash
-            || memcmp(&pe_info[pe].gpu_uuid, &pe_info[nvshmemi_state->mype].gpu_uuid, sizeof(cudaUUID_t)) != 0)
+        if (pe_info[pe].hostHash != pe_info[nvshmemi_state->mype].hostHash ||
+            memcmp(&pe_info[pe].gpu_uuid, &pe_info[nvshmemi_state->mype].gpu_uuid,
+                   sizeof(cudaUUID_t)) != 0)
             continue;
-        
+
         int ret = check_for_linear_stride(pe, &start, &stride, &size);
         if (ret < 0) {
             ERROR_EXIT("Could not form NVSHMEMI_TEAM_SAME_GPU\n");
@@ -249,43 +255,50 @@ int nvshmemi_team_init(void) {
     /* All GPUs must have same number of processes (requires for us to form teams) */
 
     /* Initialize team NVSHMEMI_TEAM_GPU_LEADERS */
-    scratch = (int *) malloc(sizeof(int) * nvshmemi_state->npes);
-    if (nvshmemi_team_same_gpu.start == nvshmemi_state->mype) { /* Only GPU leaders are part of this team */
+    scratch = (int *)malloc(sizeof(int) * nvshmemi_state->npes);
+    if (nvshmemi_team_same_gpu.start ==
+        nvshmemi_state->mype) { /* Only GPU leaders are part of this team */
         nvshmemi_team_gpu_leaders.team_idx = NVSHMEM_TEAM_GPU_LEADERS_INDEX;
         nvshmemi_team_gpu_leaders.config_mask = 0;
         memset(&nvshmemi_team_gpu_leaders.config, 0, sizeof(nvshmem_team_config_t));
-        
+
         nvshmemi_team_gpu_leaders.start = 0;
-        nvshmemi_team_gpu_leaders.stride = (nvshmemi_team_same_gpu.stride == 1) ? nvshmemi_team_same_gpu.size : 1;
+        nvshmemi_team_gpu_leaders.stride =
+            (nvshmemi_team_same_gpu.stride == 1) ? nvshmemi_team_same_gpu.size : 1;
         nvshmemi_team_gpu_leaders.size = nvshmemi_state->npes / nvshmemi_team_same_gpu.size;
-        nvshmemi_team_gpu_leaders.my_pe = (nvshmemi_state->mype - nvshmemi_team_gpu_leaders.start) / nvshmemi_team_gpu_leaders.stride;
+        nvshmemi_team_gpu_leaders.my_pe = (nvshmemi_state->mype - nvshmemi_team_gpu_leaders.start) /
+                                          nvshmemi_team_gpu_leaders.stride;
         nvshmemi_team_gpu_leaders.rdxn_count = 0;
         nvshmemi_team_gpu_leaders.ll_flag = 1;
         nvshmemi_team_gpu_leaders.bcast_count = 0;
         nvshmemi_team_gpu_leaders.fcollect_count = 0;
         nvshmemi_team_set_p2p_connectivity(&nvshmemi_team_gpu_leaders);
         nvshmemi_recexchalgo_get_neighbors(&nvshmemi_team_gpu_leaders);
-        status = nvshmemi_boot_handle.allgather((void *)&nvshmemi_team_gpu_leaders.my_pe, (void *)scratch,
-							sizeof(int), &nvshmemi_boot_handle);
+        status =
+            nvshmemi_boot_handle.allgather((void *)&nvshmemi_team_gpu_leaders.my_pe,
+                                           (void *)scratch, sizeof(int), &nvshmemi_boot_handle);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup, "allgather of gpu leaders failed\n");
         /* Check whether a valid TEAM_GPU_LEADERS was formed */
         int last_mype = -1;
-        for(int i = 0; i < nvshmemi_state->npes; i++) {
+        for (int i = 0; i < nvshmemi_state->npes; i++) {
             if (scratch[i] != -1) {
                 if (scratch[i] != last_mype + 1) {
-                   WARN("NVSHMEMI_TEAM_GPU_LEADERS could not be formed, Limited MPG support will not be available\n");
-                   break;
+                    WARN(
+                        "NVSHMEMI_TEAM_GPU_LEADERS could not be formed, Limited MPG support will "
+                        "not be available\n");
+                    break;
                 } else {
-                   last_mype++;
+                    last_mype++;
                 }
             }
-	}
+        }
         INFO(NVSHMEM_INIT, "NVSHMEMI_TEAM_GPU_LEADERS: start=%d, stride=%d, size=%d",
-             nvshmemi_team_gpu_leaders.start, nvshmemi_team_gpu_leaders.stride, nvshmemi_team_gpu_leaders.size);
+             nvshmemi_team_gpu_leaders.start, nvshmemi_team_gpu_leaders.stride,
+             nvshmemi_team_gpu_leaders.size);
     } else {
-	int my_pe = -1;
-        status = nvshmemi_boot_handle.allgather((void *)&my_pe, (void *)scratch,
-							sizeof(int), &nvshmemi_boot_handle);
+        int my_pe = -1;
+        status = nvshmemi_boot_handle.allgather((void *)&my_pe, (void *)scratch, sizeof(int),
+                                                &nvshmemi_boot_handle);
         NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup, "allgather of gpu leaders failed\n");
     }
     free(scratch);
@@ -298,7 +311,8 @@ int nvshmemi_team_init(void) {
     }
 
     nvshmemi_team_pool = (nvshmemi_team_t **)malloc(nvshmemi_max_teams * sizeof(nvshmemi_team_t *));
-    NULL_ERROR_JMP(nvshmemi_team_pool, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "nvshmemi_team_pool allocation failed \n");
+    NULL_ERROR_JMP(nvshmemi_team_pool, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup,
+                   "nvshmemi_team_pool allocation failed \n");
     CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_pool,
                                   nvshmemi_max_teams * sizeof(nvshmemi_team_t *)));
     nvshmemi_device_state.team_pool = nvshmemi_device_team_pool;
@@ -318,7 +332,7 @@ int nvshmemi_team_init(void) {
     nvshmemi_team_pool[NVSHMEM_TEAM_SAME_GPU_INDEX] = &nvshmemi_team_same_gpu;
     if (nvshmemi_team_same_gpu.start == nvshmemi_state->mype)
         nvshmemi_team_pool[NVSHMEM_TEAM_GPU_LEADERS_INDEX] = &nvshmemi_team_gpu_leaders;
-    
+
     /* Allocate pSync pool, each with the maximum possible size requirement */
     /* Create two pSyncs per team for back-to-back collectives and one for barriers.
      * Array organization:
@@ -329,7 +343,8 @@ int nvshmemi_team_init(void) {
      * */
     psync_len = nvshmemi_max_teams * get_psync_len_per_team();
     nvshmemi_psync_pool = (long *)nvshmemi_malloc(sizeof(long) * psync_len);
-    NULL_ERROR_JMP(nvshmemi_psync_pool, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "nvshmemi_psync_pool allocation failed \n");
+    NULL_ERROR_JMP(nvshmemi_psync_pool, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup,
+                   "nvshmemi_psync_pool allocation failed \n");
 
     nvshmemi_device_state.psync_pool = nvshmemi_psync_pool;
 
@@ -337,7 +352,8 @@ int nvshmemi_team_init(void) {
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
     nvshmemi_sync_counter = (long *)nvshmemi_malloc(2 * nvshmemi_max_teams * sizeof(long));
-    NULL_ERROR_JMP(nvshmemi_sync_counter, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "nvshmemi_sync_counter allocation failed \n");
+    NULL_ERROR_JMP(nvshmemi_sync_counter, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup,
+                   "nvshmemi_sync_counter allocation failed \n");
 
     nvshmemi_device_state.sync_counter = nvshmemi_sync_counter;
     nvshmemi_set_device_state(&nvshmemi_device_state);
@@ -347,11 +363,13 @@ int nvshmemi_team_init(void) {
 
     /* Convenience pointer to the group-3 pSync array (for barriers and syncs): */
     psync_pool_avail = (unsigned char *)malloc(2 * N_PSYNC_BYTES);
-    NULL_ERROR_JMP(psync_pool_avail, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "psync_pool_avail allocation failed \n");
+    NULL_ERROR_JMP(psync_pool_avail, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup,
+                   "psync_pool_avail allocation failed \n");
     psync_pool_avail_reduced = &psync_pool_avail[N_PSYNC_BYTES];
 
     device_psync_pool_avail = (unsigned char *)nvshmemi_malloc(2 * N_PSYNC_BYTES);
-    NULL_ERROR_JMP(device_psync_pool_avail, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "device_psync_pool_avail allocation failed \n");
+    NULL_ERROR_JMP(device_psync_pool_avail, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup,
+                   "device_psync_pool_avail allocation failed \n");
     device_psync_pool_avail_reduced = &device_psync_pool_avail[N_PSYNC_BYTES];
     /* Initialize the psync bits to 1, making all slots available: */
     memset(psync_pool_avail, 0, 2 * N_PSYNC_BYTES);
@@ -369,44 +387,66 @@ int nvshmemi_team_init(void) {
 
     /* Initialize an integer used to agree on an equal return value across PEs in team creation: */
     team_ret_val = (int *)malloc(sizeof(int) * 2);
-    NULL_ERROR_JMP(team_ret_val, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "team_ret_val allocation failed \n");
+    NULL_ERROR_JMP(team_ret_val, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup,
+                   "team_ret_val allocation failed \n");
     team_ret_val_reduced = &team_ret_val[1];
 
     device_team_ret_val = (int *)nvshmemi_malloc(sizeof(int) * 2);
-    NULL_ERROR_JMP(team_ret_val, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup, "device_team_ret_val allocation failed \n");
+    NULL_ERROR_JMP(team_ret_val, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, cleanup,
+                   "device_team_ret_val allocation failed \n");
     device_team_ret_val_reduced = &device_team_ret_val[1];
 
-    nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle); /* To ensure neccessary setup has been done all PEs */
+    nvshmemi_boot_handle.barrier(
+        &nvshmemi_boot_handle); /* To ensure neccessary setup has been done all PEs */
 
-    nvshmemi_team_t *nvshmemi_device_team_world,
-                    *nvshmemi_device_team_shared,
-                    *nvshmemi_device_team_node,
-                    *nvshmemi_device_team_same_mype_node,
-                    *nvshmemi_device_team_same_gpu,
-                    *nvshmemi_device_team_gpu_leaders;
+    nvshmemi_team_t *nvshmemi_device_team_world, *nvshmemi_device_team_shared,
+        *nvshmemi_device_team_node, *nvshmemi_device_team_same_mype_node,
+        *nvshmemi_device_team_same_gpu, *nvshmemi_device_team_gpu_leaders;
     CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_world, sizeof(nvshmemi_team_t)));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_world, &nvshmemi_team_world, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_WORLD_INDEX], &nvshmemi_device_team_world, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_world, &nvshmemi_team_world,
+                                  sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_WORLD_INDEX],
+                                  &nvshmemi_device_team_world, sizeof(nvshmemi_team_t *),
+                                  cudaMemcpyHostToDevice));
 
     CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_shared, sizeof(nvshmemi_team_t)));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_shared, &nvshmemi_team_shared, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SHARED_INDEX], &nvshmemi_device_team_shared, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_shared, &nvshmemi_team_shared,
+                                  sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SHARED_INDEX],
+                                  &nvshmemi_device_team_shared, sizeof(nvshmemi_team_t *),
+                                  cudaMemcpyHostToDevice));
 
     CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_node, sizeof(nvshmemi_team_t)));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_node, &nvshmemi_team_node, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_NODE_INDEX], &nvshmemi_device_team_node, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_node, &nvshmemi_team_node,
+                                  sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_NODE_INDEX],
+                                  &nvshmemi_device_team_node, sizeof(nvshmemi_team_t *),
+                                  cudaMemcpyHostToDevice));
 
-    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_same_mype_node, sizeof(nvshmemi_team_t)));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_same_mype_node, &nvshmemi_team_same_mype_node, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SAME_MYPE_NODE_INDEX], &nvshmemi_device_team_same_mype_node, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(
+        cudaMalloc((void **)&nvshmemi_device_team_same_mype_node, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_same_mype_node,
+                                  &nvshmemi_team_same_mype_node, sizeof(nvshmemi_team_t),
+                                  cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SAME_MYPE_NODE_INDEX],
+                                  &nvshmemi_device_team_same_mype_node, sizeof(nvshmemi_team_t *),
+                                  cudaMemcpyHostToDevice));
 
-    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_same_gpu, sizeof(nvshmemi_team_t)));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_same_gpu, &nvshmemi_team_same_gpu, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SAME_GPU_INDEX], &nvshmemi_device_team_same_gpu, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(
+        cudaMalloc((void **)&nvshmemi_device_team_same_gpu, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_same_gpu, &nvshmemi_team_same_gpu,
+                                  sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_SAME_GPU_INDEX],
+                                  &nvshmemi_device_team_same_gpu, sizeof(nvshmemi_team_t *),
+                                  cudaMemcpyHostToDevice));
 
-    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_gpu_leaders, sizeof(nvshmemi_team_t)));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_gpu_leaders, &nvshmemi_team_gpu_leaders, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_GPU_LEADERS_INDEX], &nvshmemi_device_team_gpu_leaders, sizeof(nvshmemi_team_t *), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(
+        cudaMalloc((void **)&nvshmemi_device_team_gpu_leaders, sizeof(nvshmemi_team_t)));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_gpu_leaders, &nvshmemi_team_gpu_leaders,
+                                  sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[NVSHMEM_TEAM_GPU_LEADERS_INDEX],
+                                  &nvshmemi_device_team_gpu_leaders, sizeof(nvshmemi_team_t *),
+                                  cudaMemcpyHostToDevice));
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
 #ifdef NVSHMEM_USE_NCCL
@@ -417,10 +457,9 @@ int nvshmemi_team_init(void) {
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_node);
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_same_mype_node);
         nvshmemi_team_init_nccl_comm(&nvshmemi_team_same_gpu);
-        if (nvshmemi_pe_in_active_set(nvshmemi_state->mype,
-                                      nvshmemi_team_gpu_leaders.start,
+        if (nvshmemi_pe_in_active_set(nvshmemi_state->mype, nvshmemi_team_gpu_leaders.start,
                                       nvshmemi_team_gpu_leaders.stride,
-                                      nvshmemi_team_gpu_leaders.size ) >= 0) {
+                                      nvshmemi_team_gpu_leaders.size) >= 0) {
             nvshmemi_team_init_nccl_comm(&nvshmemi_team_gpu_leaders);
         }
     }
@@ -433,16 +472,18 @@ int nvshmemi_team_init(void) {
            This value is being set to prevent any memory config during application run
            as that can lead to potential deadlock */
         if (nvshmemi_options.CUDA_LIMIT_STACK_SIZE_provided) {
-            CUDA_RUNTIME_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, nvshmemi_options.CUDA_LIMIT_STACK_SIZE));
+            CUDA_RUNTIME_CHECK(
+                cudaDeviceSetLimit(cudaLimitStackSize, nvshmemi_options.CUDA_LIMIT_STACK_SIZE));
             if (nvshmemi_options.CUDA_LIMIT_STACK_SIZE < 1256)
-                WARN_PRINT("CUDA stack size limit has been set to less than 1256.\n"
-                           "This can lead to hangs because a NCCL kernel can need up\n"
-                           "to 1256 bytes");
-        }
-        else
+                WARN_PRINT(
+                    "CUDA stack size limit has been set to less than 1256.\n"
+                    "This can lead to hangs because a NCCL kernel can need up\n"
+                    "to 1256 bytes");
+        } else
             CUDA_RUNTIME_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, 1256));
     } else if (nvshmemi_options.CUDA_LIMIT_STACK_SIZE_provided) {
-        CUDA_RUNTIME_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, nvshmemi_options.CUDA_LIMIT_STACK_SIZE));
+        CUDA_RUNTIME_CHECK(
+            cudaDeviceSetLimit(cudaLimitStackSize, nvshmemi_options.CUDA_LIMIT_STACK_SIZE));
     }
 #endif
 
@@ -491,7 +532,7 @@ int nvshmemi_team_finalize(void) {
 
     free(nvshmemi_team_pool);
     CUDA_RUNTIME_CHECK(cudaFree(nvshmemi_device_team_pool));
-    
+
     nvshmemi_free(nvshmemi_psync_pool);
     nvshmemi_free(nvshmemi_sync_counter);
 
@@ -531,19 +572,20 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
     if (PE_start < 0 || PE_start >= parent_team->size || PE_size <= 0 ||
         PE_size > parent_team->size || PE_stride < 1) {
         WARN_PRINT("Invalid <start, stride, size>: child <%d, %d, %d>, parent <%d, %d, %d>\n",
-                       PE_start, PE_stride, PE_size, parent_team->start, parent_team->stride,
-                       parent_team->size);
+                   PE_start, PE_stride, PE_size, parent_team->start, parent_team->stride,
+                   parent_team->size);
         return -1;
     }
 
     if (global_PE_start >= nvshmemi_state->npes || global_PE_end >= nvshmemi_state->npes) {
         WARN_PRINT("Starting PE (%d) or ending PE (%d) is invalid\n", global_PE_start,
-                       global_PE_end);
+                   global_PE_end);
         return -1;
     }
 
-    int my_pe = nvshmemi_pe_in_active_set(nvshmemi_state->mype, global_PE_start, PE_stride, PE_size);
-    
+    int my_pe =
+        nvshmemi_pe_in_active_set(nvshmemi_state->mype, global_PE_start, PE_stride, PE_size);
+
     long *psync_reduce = nvshmemi_team_get_psync(parent_team, REDUCE);
     long *psync = &nvshmemi_team_get_psync(parent_team, SYNC)[NVSHMEMI_SYNC_SIZE];
     long *sync_counter = &nvshmemi_team_get_sync_counter(parent_team)[1];
@@ -569,10 +611,10 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
             myteam->config_mask = config_mask;
         }
         myteam->team_idx = -1;
-        nvshmemi_bit_to_string(bit_str, NVSHMEMI_DIAG_STRLEN, psync_pool_avail,
-                               N_PSYNC_BYTES);
-        
-        CUDA_RUNTIME_CHECK(cudaMemcpy(device_psync_pool_avail, psync_pool_avail, N_PSYNC_BYTES, cudaMemcpyHostToDevice));
+        nvshmemi_bit_to_string(bit_str, NVSHMEMI_DIAG_STRLEN, psync_pool_avail, N_PSYNC_BYTES);
+
+        CUDA_RUNTIME_CHECK(cudaMemcpy(device_psync_pool_avail, psync_pool_avail, N_PSYNC_BYTES,
+                                      cudaMemcpyHostToDevice));
         CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
         nvshmemi_reduce_kernel<unsigned char, RDXN_OPS_AND>
             <<<1, 1>>>(myteam->start, myteam->stride, myteam->size,
@@ -583,9 +625,9 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
         nvshmemi_init_array_kernel<long><<<1, 1>>>(sync_counter, 1, 1);
         nvshmemi_init_array_kernel<long><<<1, 1>>>(psync, NVSHMEMI_SYNC_SIZE, NVSHMEMI_SYNC_VALUE);
         CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
-        
+
         CUDA_RUNTIME_CHECK(cudaMemcpy(psync_pool_avail_reduced, device_psync_pool_avail_reduced,
-                           N_PSYNC_BYTES, cudaMemcpyDeviceToHost));
+                                      N_PSYNC_BYTES, cudaMemcpyDeviceToHost));
 
         /* We cannot release the psync here, because this reduction may not
          * have been performed on the entire parent team. */
@@ -616,14 +658,14 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
             CUDA_RUNTIME_CHECK(cudaMalloc((void **)&device_team_addr, sizeof(nvshmemi_team_t)));
             nvshmemi_team_set_p2p_connectivity(myteam);
             nvshmemi_recexchalgo_get_neighbors(myteam);
-            CUDA_RUNTIME_CHECK(cudaMemcpy(device_team_addr, myteam, sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
+            CUDA_RUNTIME_CHECK(cudaMemcpy(device_team_addr, myteam, sizeof(nvshmemi_team_t),
+                                          cudaMemcpyHostToDevice));
             CUDA_RUNTIME_CHECK(cudaMemcpy(&nvshmemi_device_team_pool[myteam->team_idx],
                                           &device_team_addr, sizeof(nvshmemi_team_t *),
                                           cudaMemcpyHostToDevice));
             CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 #ifdef NVSHMEM_USE_NCCL
-            if (nvshmemi_use_nccl)
-                nvshmemi_team_init_nccl_comm(myteam);
+            if (nvshmemi_use_nccl) nvshmemi_team_init_nccl_comm(myteam);
 #endif
         }
     }
@@ -631,22 +673,26 @@ int nvshmemi_team_split_strided(nvshmemi_team_t *parent_team, int PE_start, int 
     /* This barrier on the parent team eliminates problematic race conditions
      * during psync allocation between back-to-back team creations. */
     nvshmem_quiet();
-    //nvshmem_barrier(parent_team->start, parent_team->stride, parent_team->size, psync);
+    // nvshmem_barrier(parent_team->start, parent_team->stride, parent_team->size, psync);
     nvshmem_team_sync(parent_team->team_idx);
     /* This OR reduction assures all PEs return the same value.  */
-    CUDA_RUNTIME_CHECK(cudaMemcpy(device_team_ret_val, team_ret_val, sizeof(int), cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(
+        cudaMemcpy(device_team_ret_val, team_ret_val, sizeof(int), cudaMemcpyHostToDevice));
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
-    nvshmemi_call_rdxn_on_stream_kernel<int, RDXN_OPS_MAX>(parent_team->team_idx, device_team_ret_val_reduced, device_team_ret_val,
-                            1, nvshmemi_state->my_stream);
+    nvshmemi_call_rdxn_on_stream_kernel<int, RDXN_OPS_MAX>(
+        parent_team->team_idx, device_team_ret_val_reduced, device_team_ret_val, 1,
+        nvshmemi_state->my_stream);
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));
-    CUDA_RUNTIME_CHECK(cudaMemcpy(team_ret_val_reduced, device_team_ret_val_reduced, sizeof(int), cudaMemcpyDeviceToHost));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(team_ret_val_reduced, device_team_ret_val_reduced, sizeof(int),
+                                  cudaMemcpyDeviceToHost));
 
     /* If no team was available, print some team triplet info and return nonzero. */
     if (myteam != NULL && myteam->team_idx == -1) {
         WARN_PRINT("Team split strided failed: child <%d, %d, %d>, parent <%d, %d, %d>\n",
-                       global_PE_start, PE_stride, PE_size, parent_team->start, parent_team->stride,
-                       parent_team->size);
-        /* TODO: In the event one of the PEs fails to create the team, do we need to revert the team on all of the other ones? */
+                   global_PE_start, PE_stride, PE_size, parent_team->start, parent_team->stride,
+                   parent_team->size);
+        /* TODO: In the event one of the PEs fails to create the team, do we need to revert the team
+         * on all of the other ones? */
         free(myteam);
     }
     return *team_ret_val_reduced;
@@ -720,9 +766,9 @@ void nvshmemi_team_destroy(nvshmemi_team_t *team) {
     if (nvshmemi_bit_fetch(psync_pool_avail, idx)) {
         ERROR_PRINT("Destroying a team without an active pSync\n");
     }
-    
+
     /* Since it is a collective routine, perform a barrier */
-    //nvshmem_barrier(idx);
+    // nvshmem_barrier(idx);
 
     nvshmemi_bit_set(psync_pool_avail, N_PSYNC_BYTES, idx);
 
@@ -730,37 +776,42 @@ void nvshmemi_team_destroy(nvshmemi_team_t *team) {
     CUDA_RUNTIME_CHECK(cudaMemset(&nvshmemi_device_team_pool[idx], 0, sizeof(nvshmemi_team_t *)));
 
     nvshmemi_init_array_kernel<long><<<1, 1>>>(&nvshmemi_sync_counter[2 * idx], 2, 1);
-    nvshmemi_init_array_kernel<long><<<1, 1>>>(&nvshmemi_psync_pool[idx * get_psync_len_per_team()], 
-                                      get_psync_len_per_team(), NVSHMEMI_SYNC_VALUE);
+    nvshmemi_init_array_kernel<long><<<1, 1>>>(&nvshmemi_psync_pool[idx * get_psync_len_per_team()],
+                                               get_psync_len_per_team(), NVSHMEMI_SYNC_VALUE);
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
-    if (team != &nvshmemi_team_world &&
-        team != &nvshmemi_team_shared &&
-        team != &nvshmemi_team_node &&
-        team != &nvshmemi_team_same_mype_node &&
-        team != &nvshmemi_team_same_gpu &&
-        team != &nvshmemi_team_gpu_leaders) {
+    if (team != &nvshmemi_team_world && team != &nvshmemi_team_shared &&
+        team != &nvshmemi_team_node && team != &nvshmemi_team_same_mype_node &&
+        team != &nvshmemi_team_same_gpu && team != &nvshmemi_team_gpu_leaders) {
         free(team);
         nvshmemi_team_t *device_team_addr;
-        CUDA_RUNTIME_CHECK(cudaMemcpy((void **)&device_team_addr, &nvshmemi_device_team_pool[idx], 
-                           sizeof(nvshmemi_team_t *), cudaMemcpyDeviceToHost));
+        CUDA_RUNTIME_CHECK(cudaMemcpy((void **)&device_team_addr, &nvshmemi_device_team_pool[idx],
+                                      sizeof(nvshmemi_team_t *), cudaMemcpyDeviceToHost));
         CUDA_RUNTIME_CHECK(cudaFree(device_team_addr));
-   }
+    }
 }
 
 #ifndef __CUDA_ARCH__
 long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_team_op_t op) {
     long *team_psync;
+    size_t psync_fcollect_len;
+    psync_fcollect_len = get_fcollect_psync_len_per_team();
     team_psync = &nvshmemi_psync_pool[team->team_idx * get_psync_len_per_team()];
-    switch(op) {
+    switch (op) {
         case SYNC:
             return team_psync;
         case REDUCE:
-            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + (NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * (team->rdxn_count % 2))];
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE +
+                               (NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * (team->rdxn_count % 2))];
         case BCAST:
             return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE];
         case FCOLLECT:
-            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE + NVSHMEMI_BCAST_SYNC_SIZE];
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE +
+                               NVSHMEMI_BCAST_SYNC_SIZE];
+        case ALLTOALL:
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE +
+                               NVSHMEMI_BCAST_SYNC_SIZE + psync_fcollect_len +
+                               (NVSHMEMI_ALLTOALL_SYNC_SIZE * (team->alltoall_count % 2))];
         default:
             printf("Incorrect argument to nvshmemi_team_get_psync\n");
             return NULL;

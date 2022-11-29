@@ -42,21 +42,18 @@ typedef struct {
 
 void nvshmemx_get_device_state(nvshmemi_device_state_t **);
 int nvshmemx_internal_common_init();
-int nvshmemx_internal_init_thread(int requested_thread_support,
-								   int *provided_thread_support,
-						           unsigned int bootstrap_flags,
-								   nvshmemx_init_attr_t *bootstrap_attr,
-                                   nvshmemi_version_t nvshmem_device_lib_version);
+int nvshmemx_internal_init_thread(int requested_thread_support, int *provided_thread_support,
+                                  unsigned int bootstrap_flags,
+                                  nvshmemx_init_attr_t *bootstrap_attr,
+                                  nvshmemi_version_t nvshmem_device_lib_version);
 
 extern void (*nvshmemi_check_state_and_init_fn_ptr)();
 // Library initialization
-int nvshmemi_init_thread(int requested_thread_support,
-						 int *provided_thread_support,
-						 unsigned int bootstrap_flags,
-						 nvshmemx_init_attr_t *bootstrap_attr,
+int nvshmemi_init_thread(int requested_thread_support, int *provided_thread_support,
+                         unsigned int bootstrap_flags, nvshmemx_init_attr_t *bootstrap_attr,
                          nvshmemi_version_t);
 
-#define NONZERO_EXIT(status, ...)                                                                   \
+#define NONZERO_EXIT(status, ...)                                                              \
     do {                                                                                       \
         if (status != 0) {                                                                     \
             fprintf(stderr, "%s:%d: non-zero status: %d: %s, exiting... ", __FILE__, __LINE__, \
@@ -81,21 +78,19 @@ static inline int nvshmemx_init_status() {
 
 static inline void nvshmem_init() {
     int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
-    nvshmemi_version_t app_nvshmem_version = {NVSHMEM_VENDOR_MAJOR_VERSION,
-                                              NVSHMEM_VENDOR_MINOR_VERSION,
-                                              NVSHMEM_VENDOR_PATCH_VERSION};
+    nvshmemi_version_t app_nvshmem_version = {
+        NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
     status = nvshmemi_init_thread(requested, &provided, 0, NULL, app_nvshmem_version);
     NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
 }
 
 static inline int nvshmem_init_thread(int requested, int *provided) {
-	int status = 0;
-    nvshmemi_version_t app_nvshmem_version = {NVSHMEM_VENDOR_MAJOR_VERSION,
-                                              NVSHMEM_VENDOR_MINOR_VERSION,
-                                              NVSHMEM_VENDOR_PATCH_VERSION};
+    int status = 0;
+    nvshmemi_version_t app_nvshmem_version = {
+        NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
     status = nvshmemi_init_thread(requested, provided, 0, NULL, app_nvshmem_version);
     NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
-	return status;
+    return status;
 }
 
 void nvshmem_query_thread(int *provided);
@@ -105,7 +100,6 @@ static inline void nvshmem_finalize() {
     nvshmemi_finalize();
     nvshmemi_is_device_state_set = 0;
 }
-
 
 // PE info query
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_my_pe();
@@ -137,17 +131,19 @@ NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmem_ptr(const void *ptr, int pe);
     NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_##opname(const TYPE *dest, int pe);
 
 /* add, set */
-#define NVSHMEMI_DECL_TYPE_ADD_SET(type, TYPE, opname) \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##type##_atomic_##opname(TYPE *dest, TYPE value, int pe);
+#define NVSHMEMI_DECL_TYPE_ADD_SET(type, TYPE, opname)                                       \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##type##_atomic_##opname(TYPE *dest, TYPE value, \
+                                                                     int pe);
 
 /* fadd, swap */
-#define NVSHMEMI_DECL_TYPE_FADD_SWAP(type, TYPE, opname) \
-    NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_##opname(TYPE *dest, TYPE value, int pe);
+#define NVSHMEMI_DECL_TYPE_FADD_SWAP(type, TYPE, opname)                                     \
+    NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_##opname(TYPE *dest, TYPE value, \
+                                                                     int pe);
 
 /* cswap */
-#define NVSHMEMI_DECL_TYPE_CSWAP(type, TYPE, opname)                                             \
-    NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_##opname(TYPE *dest, TYPE cond, TYPE value, \
-                                                              int pe);
+#define NVSHMEMI_DECL_TYPE_CSWAP(type, TYPE, opname)                                        \
+    NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_##opname(TYPE *dest, TYPE cond, \
+                                                                     TYPE value, int pe);
 
 NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(INC, inc)
 NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(INC, inc)
@@ -186,14 +182,14 @@ NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(CSWAP, compare_swap)
 //////////////////// OpenSHMEM 1.4 Atomics ////////////////////
 
 /* and, or, xor */
-#define NVSHMEMI_DECL_TYPE_AND_OR_XOR(type, TYPE, opname)               \
-    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##type##_atomic_##opname(   \
-            TYPE *dest, TYPE value, int pe);
+#define NVSHMEMI_DECL_TYPE_AND_OR_XOR(type, TYPE, opname)                                    \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##type##_atomic_##opname(TYPE *dest, TYPE value, \
+                                                                     int pe);
 
 /* fand, for, fxor */
-#define NVSHMEMI_DECL_TYPE_FAND_FOR_FXOR(type, TYPE, opname)                    \
-    NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_fetch_##opname(     \
-            TYPE *dest, TYPE value, int pe);
+#define NVSHMEMI_DECL_TYPE_FAND_FOR_FXOR(type, TYPE, opname)                                       \
+    NVSHMEMI_HOSTDEVICE_PREFIX TYPE nvshmem_##type##_atomic_fetch_##opname(TYPE *dest, TYPE value, \
+                                                                           int pe);
 
 NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(AND_OR_XOR, and)
 NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(AND_OR_XOR, or)
@@ -320,16 +316,16 @@ NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_getmem_nbi(void *dest, const void *sourc
 
 #ifdef __CUDACC__
 /* Signal API */
-#define NVSHMEMI_DECL_PUT_SIGNAL(TYPENAME, TYPE)                                          \
-    __device__ void nvshmem_##TYPENAME##_put_signal(TYPE *dest, const TYPE *source,       \
-                                                    size_t nelems, uint64_t *sig_addr,    \
-                                                    uint64_t signal, int sig_op, int pe);
+#define NVSHMEMI_DECL_PUT_SIGNAL(TYPENAME, TYPE)                                                   \
+    __device__ void nvshmem_##TYPENAME##_put_signal(TYPE *dest, const TYPE *source, size_t nelems, \
+                                                    uint64_t *sig_addr, uint64_t signal,           \
+                                                    int sig_op, int pe);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL)
 #undef NVSHMEMI_DECL_PUT_SIGNAL
 
-#define NVSHMEMI_DECL_PUT_SIGNAL_NBI(TYPENAME, TYPE)                                          \
-    __device__ void nvshmem_##TYPENAME##_put_signal_nbi(TYPE *dest, const TYPE *source,       \
-                                                        size_t nelems, uint64_t *sig_addr,    \
+#define NVSHMEMI_DECL_PUT_SIGNAL_NBI(TYPENAME, TYPE)                                       \
+    __device__ void nvshmem_##TYPENAME##_put_signal_nbi(TYPE *dest, const TYPE *source,    \
+                                                        size_t nelems, uint64_t *sig_addr, \
                                                         uint64_t signal, int sig_op, int pe);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL_NBI)
 #undef NVSHMEMI_DECL_PUT_SIGNAL_NBI
@@ -343,24 +339,21 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_PUT_SIGNAL_NBI)
 NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_DECL_SIZE_PUT_SIGNAL)
 #undef NVSHMEMI_DECL_SIZE_PUT_SIGNAL
 
-#define NVSHMEMI_DECL_SIZE_PUT_SIGNAL_NBI(BITS)                                                 \
-    __device__ void nvshmem_put##BITS##_signal_nbi(void *dest, const void *source, size_t nelems,   \
-                                                   uint64_t *sig_addr, uint64_t signal, int sig_op, \
-                                                   int pe);
+#define NVSHMEMI_DECL_SIZE_PUT_SIGNAL_NBI(BITS)                                                   \
+    __device__ void nvshmem_put##BITS##_signal_nbi(void *dest, const void *source, size_t nelems, \
+                                                   uint64_t *sig_addr, uint64_t signal,           \
+                                                   int sig_op, int pe);
 NVSHMEMI_REPT_FOR_SIZES(NVSHMEMI_DECL_SIZE_PUT_SIGNAL_NBI)
 #undef NVSHMEMI_DECL_SIZE_PUT_SIGNAL_NBI
 
 __device__ void nvshmem_putmem_signal(void *dest, const void *source, size_t bytes,
-                                      uint64_t *sig_addr, uint64_t signal, int sig_op,
-                                      int pe);
+                                      uint64_t *sig_addr, uint64_t signal, int sig_op, int pe);
 
 __device__ void nvshmem_putmem_signal_nbi(void *dest, const void *source, size_t bytes,
-                                          uint64_t *sig_addr, uint64_t signal, int sig_op,
-                                          int pe);
+                                          uint64_t *sig_addr, uint64_t signal, int sig_op, int pe);
 #endif
 
 NVSHMEMI_HOSTDEVICE_PREFIX uint64_t nvshmem_signal_fetch(uint64_t *sig_addr);
-
 
 //////////////////// Point-to-Point Synchronization ////////////////////
 
@@ -369,51 +362,51 @@ NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_fence();
 #ifdef __CUDACC__
 __device__ uint64_t nvshmem_signal_wait_until(uint64_t *sig_addr, int cmp, uint64_t cmp_val);
 
-#define NVSHMEMI_DECL_WAIT_UNTIL(NAME, TYPE)                                         \
-    __device__ void nvshmem_##NAME##_wait_until(TYPE *ivar, int cmp,                 \
-                                                                TYPE cmp_value);
+#define NVSHMEMI_DECL_WAIT_UNTIL(NAME, TYPE) \
+    __device__ void nvshmem_##NAME##_wait_until(TYPE *ivar, int cmp, TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL)
 #undef NVSHMEMI_DECL_WAIT_UNTIL
 
-#define NVSHMEMI_DECL_WAIT_UNTIL_ALL(NAME, TYPE)                     \
-    __device__ void nvshmem_##NAME##_wait_until_all(                 \
-        TYPE *ivar, size_t nelems, const int *status, int cmp, TYPE cmp_value);
+#define NVSHMEMI_DECL_WAIT_UNTIL_ALL(NAME, TYPE)                                                  \
+    __device__ void nvshmem_##NAME##_wait_until_all(TYPE *ivar, size_t nelems, const int *status, \
+                                                    int cmp, TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_ALL)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_ALL
 
-#define NVSHMEMI_DECL_WAIT_UNTIL_ANY(NAME, TYPE)                       \
-    __device__ size_t nvshmem_##NAME##_wait_until_any(                 \
-        TYPE *ivar, size_t nelems, const int *status, int cmp, TYPE cmp_value);
+#define NVSHMEMI_DECL_WAIT_UNTIL_ANY(NAME, TYPE)                                 \
+    __device__ size_t nvshmem_##NAME##_wait_until_any(TYPE *ivar, size_t nelems, \
+                                                      const int *status, int cmp, TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_ANY)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_ANY
 
-#define NVSHMEMI_DECL_WAIT_UNTIL_SOME(NAME, TYPE)                       \
-    __device__ size_t nvshmem_##NAME##_wait_until_some(                 \
+#define NVSHMEMI_DECL_WAIT_UNTIL_SOME(NAME, TYPE)       \
+    __device__ size_t nvshmem_##NAME##_wait_until_some( \
         TYPE *ivar, size_t nelems, size_t *indices, const int *status, int cmp, TYPE cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_SOME)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_SOME
 
-#define NVSHMEMI_DECL_WAIT_UNTIL_ALL_VECTOR(NAME, TYPE)                     \
-    __device__ void nvshmem_##NAME##_wait_until_all_vector(                 \
+#define NVSHMEMI_DECL_WAIT_UNTIL_ALL_VECTOR(NAME, TYPE)     \
+    __device__ void nvshmem_##NAME##_wait_until_all_vector( \
         TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_ALL_VECTOR)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_ALL_VECTOR
 
-#define NVSHMEMI_DECL_WAIT_UNTIL_ANY_VECTOR(NAME, TYPE)                         \
-    __device__ size_t nvshmem_##NAME##_wait_until_any_vector(                   \
+#define NVSHMEMI_DECL_WAIT_UNTIL_ANY_VECTOR(NAME, TYPE)       \
+    __device__ size_t nvshmem_##NAME##_wait_until_any_vector( \
         TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_ANY_VECTOR)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_ANY_VECTOR
 
-#define NVSHMEMI_DECL_WAIT_UNTIL_SOME_VECTOR(NAME, TYPE)                         \
-    __device__ size_t nvshmem_##NAME##_wait_until_some_vector(                   \
-        TYPE *ivars, size_t nelems, size_t *indices, const int *status, int cmp, TYPE *cmp_values);
+#define NVSHMEMI_DECL_WAIT_UNTIL_SOME_VECTOR(NAME, TYPE)                                          \
+    __device__ size_t nvshmem_##NAME##_wait_until_some_vector(TYPE *ivars, size_t nelems,         \
+                                                              size_t *indices, const int *status, \
+                                                              int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_SOME_VECTOR)
 #undef NVSHMEMI_DECL_WAIT_UNTIL_SOME_VECTOR
@@ -424,44 +417,45 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_WAIT_UNTIL_SOME_VECTOR)
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST)
 #undef NVSHMEMI_DECL_TEST
 
-#define NVSHMEMI_DECL_TEST_ALL(Name, Type)                    \
-    __device__ int nvshmem_##Name##_test_all(                 \
-        Type *ivars, size_t nelems, const int *status, int cmp, Type cmp_value);
+#define NVSHMEMI_DECL_TEST_ALL(Name, Type)                                                  \
+    __device__ int nvshmem_##Name##_test_all(Type *ivars, size_t nelems, const int *status, \
+                                             int cmp, Type cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_ALL)
 #undef NVSHMEMI_DECL_TEST_ALL
 
-#define NVSHMEMI_DECL_TEST_ANY(Name, Type)                       \
-    __device__ size_t nvshmem_##Name##_test_any(                  \
-        Type *ivars, size_t nelems, const int *status, int cmp, Type cmp_value);
+#define NVSHMEMI_DECL_TEST_ANY(Name, Type)                                                     \
+    __device__ size_t nvshmem_##Name##_test_any(Type *ivars, size_t nelems, const int *status, \
+                                                int cmp, Type cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_ANY)
 #undef NVSHMEMI_DECL_TEST_ANY
 
-#define NVSHMEMI_DECL_TEST_SOME(Name, Type)                         \
-    __device__ size_t nvshmem_##Name##_test_some(                   \
-        Type *ivars, size_t nelems, size_t *indices, const int *status, int cmp, Type cmp_value);
+#define NVSHMEMI_DECL_TEST_SOME(Name, Type)                                                   \
+    __device__ size_t nvshmem_##Name##_test_some(Type *ivars, size_t nelems, size_t *indices, \
+                                                 const int *status, int cmp, Type cmp_value);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_SOME)
 #undef NVSHMEMI_DECL_TEST_SOME
 
-#define NVSHMEMI_DECL_TEST_ALL_VECTOR(NAME, TYPE)                     \
-    __device__ int nvshmem_##NAME##_test_all_vector(                  \
-        TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_values);
+#define NVSHMEMI_DECL_TEST_ALL_VECTOR(NAME, TYPE)                                                  \
+    __device__ int nvshmem_##NAME##_test_all_vector(TYPE *ivars, size_t nelems, const int *status, \
+                                                    int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_ALL_VECTOR)
 #undef NVSHMEMI_DECL_TEST_ALL_VECTOR
 
-#define NVSHMEMI_DECL_TEST_ANY_VECTOR(NAME, TYPE)                         \
-    __device__ size_t nvshmem_##NAME##_test_any_vector(                    \
+#define NVSHMEMI_DECL_TEST_ANY_VECTOR(NAME, TYPE)       \
+    __device__ size_t nvshmem_##NAME##_test_any_vector( \
         TYPE *ivars, size_t nelems, const int *status, int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_ANY_VECTOR)
 #undef NVSHMEMI_DECL_TEST_ANY_VECTOR
 
-#define NVSHMEMI_DECL_TEST_SOME_VECTOR(NAME, TYPE)                         \
-    __device__ size_t nvshmem_##NAME##_test_some_vector(                    \
-        TYPE *ivars, size_t nelems, size_t *indices, const int *status, int cmp, TYPE *cmp_values);
+#define NVSHMEMI_DECL_TEST_SOME_VECTOR(NAME, TYPE)                                          \
+    __device__ size_t nvshmem_##NAME##_test_some_vector(TYPE *ivars, size_t nelems,         \
+                                                        size_t *indices, const int *status, \
+                                                        int cmp, TYPE *cmp_values);
 
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_SOME_VECTOR)
 #undef NVSHMEMI_DECL_TEST_SOME_VECTOR
@@ -469,28 +463,26 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMI_DECL_TEST_SOME_VECTOR)
 
 //////////////////// Teams API ////////////////////
 
-#define NVSHMEM_TEAM_WORLD  0
+#define NVSHMEM_TEAM_WORLD 0
 #define NVSHMEM_TEAM_SHARED 1
-#define NVSHMEMX_TEAM_NODE  2
+#define NVSHMEMX_TEAM_NODE 2
 #define NVSHMEMX_TEAM_SAME_MYPE_NODE 3
 #define NVSHMEMI_TEAM_SAME_GPU 4
 #define NVSHMEMI_TEAM_GPU_LEADERS 5
 #define NVSHMEM_TEAM_INVALID -1
 
-
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_my_pe(nvshmem_team_t team);
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_n_pes(nvshmem_team_t team);
 
-
 void nvshmem_team_get_config(nvshmem_team_t team, nvshmem_team_config_t *config);
-NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_translate_pe(nvshmem_team_t src_team, int src_pe, nvshmem_team_t dest_team);
-int nvshmem_team_split_strided(nvshmem_team_t parent_team, int PE_start, int PE_stride,
-                                int PE_size, const nvshmem_team_config_t *config,
-                                long config_mask, nvshmem_team_t *new_team);
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_translate_pe(nvshmem_team_t src_team, int src_pe,
+                                                         nvshmem_team_t dest_team);
+int nvshmem_team_split_strided(nvshmem_team_t parent_team, int PE_start, int PE_stride, int PE_size,
+                               const nvshmem_team_config_t *config, long config_mask,
+                               nvshmem_team_t *new_team);
 int nvshmem_team_split_2d(nvshmem_team_t parent_team, int xrange,
-                          const nvshmem_team_config_t *xaxis_config,
-                          long xaxis_mask, nvshmem_team_t *xaxis_team,
-                          const nvshmem_team_config_t *yaxis_config,
+                          const nvshmem_team_config_t *xaxis_config, long xaxis_mask,
+                          nvshmem_team_t *xaxis_team, const nvshmem_team_config_t *yaxis_config,
                           long yaxis_mask, nvshmem_team_t *yaxis_team);
 void nvshmem_team_destroy(nvshmem_team_t team);
 

@@ -54,20 +54,20 @@ uint64_t getHostHash() {
 int nvshmemu_get_num_gpus_per_node() { return 128; }
 
 /* Convert data to a hexadecimal string */
-char * nvshmemu_hexdump(void *ptr, size_t len) {
+char *nvshmemu_hexdump(void *ptr, size_t len) {
     const char *hex = "0123456789abcdef";
 
-    char *str = (char *) malloc(len*2 + 1);
+    char *str = (char *)malloc(len * 2 + 1);
     if (str == NULL) return NULL;
 
-    char *ptr_c = (char *) ptr;
+    char *ptr_c = (char *)ptr;
 
     for (size_t i = 0; i < len; i++) {
-        str[i*2]   = hex[(ptr_c[i] >> 4) & 0xF];
-        str[i*2+1] = hex[ptr_c[i] & 0xF];
+        str[i * 2] = hex[(ptr_c[i] >> 4) & 0xF];
+        str[i * 2 + 1] = hex[ptr_c[i] & 0xF];
     }
 
-    str[len*2] = '\0';
+    str[len * 2] = '\0';
 
     return str;
 }
@@ -76,9 +76,8 @@ char * nvshmemu_hexdump(void *ptr, size_t len) {
  * with no whitespace that exceeds the allowed length. After each line break,
  * insert 'indent' string (if provided).  Caller must free the returned buffer.
  */
-char *
-nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent, const int strip_backticks)
-{
+char *nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent,
+                    const int strip_backticks) {
     const size_t indent_len = indent != NULL ? strlen(indent) : 0;
     size_t str_len = 0, line_len = 0, line_breaks = 0;
     char *str_s = NULL, *out_s = NULL;
@@ -90,17 +89,17 @@ nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent, const i
     /* Worst case is wrapping at 1/2 wraplen plus explicit line breaks. Each
      * wrap adds an indent string. The newline is either already in the source
      * string or replaces a whitespace in the source string */
-    const size_t out_len = str_len + 1 + (2 * (str_len/wraplen + 1) + line_breaks) * indent_len;
-    char *out = (char *) malloc(out_len);
+    const size_t out_len = str_len + 1 + (2 * (str_len / wraplen + 1) + line_breaks) * indent_len;
+    char *out = (char *)malloc(out_len);
     char *out_p = out;
-    char *str_p = (char*) str;
+    char *str_p = (char *)str;
 
     if (out == NULL) {
         fprintf(stderr, "%s:%d Unable to allocate output buffer\n", __FILE__, __LINE__);
         return NULL;
     }
 
-    while (*str_p != '\0' && /* avoid overflowing out */ out_p - out < (ssize_t) out_len - 1) {
+    while (*str_p != '\0' && /* avoid overflowing out */ out_p - out < (ssize_t)out_len - 1) {
         /* Remember location of last space */
         if (*str_p == ' ') {
             str_s = str_p;
@@ -172,27 +171,26 @@ void nvshmemu_debug_log_cpuset(int category, const char *thread_name) {
         int core_count = 0;
 
         for (int i = 0; i < CPU_SETSIZE; i++) {
-            if (CPU_ISSET(i, &my_set))
-                core_count++;
+            if (CPU_ISSET(i, &my_set)) core_count++;
         }
 
         size_t off = 0;
 
         for (int i = 0; i < CPU_SETSIZE; i++) {
             if (CPU_ISSET(i, &my_set)) {
-                off += snprintf(cores_str+off, sizeof(cores_str)-off, "%2d ", i);
+                off += snprintf(cores_str + off, sizeof(cores_str) - off, "%2d ", i);
                 if (off >= sizeof(cores_str)) break;
             }
         }
 
         cores_str_wrap = nvshmemu_wrap(cores_str, /* Line wrap */ 80, /* Indent */ "    ", 0);
-        INFO(category, "PE %d (%s) affinity to %d CPUs:\n    %s",
-                nvshmemi_boot_handle.pg_rank, thread_name, core_count, cores_str_wrap);
+        INFO(category, "PE %d (%s) affinity to %d CPUs:\n    %s", nvshmemi_boot_handle.pg_rank,
+             thread_name, core_count, cores_str_wrap);
         free(cores_str_wrap);
     }
 }
 
-nvshmemResult_t nvshmemu_gethostname(char* hostname, int maxlen) {
+nvshmemResult_t nvshmemu_gethostname(char *hostname, int maxlen) {
     if (gethostname(hostname, maxlen) != 0) {
         strncpy(hostname, "unknown", maxlen);
         return NVSHMEMI_SYSTEM_ERROR;

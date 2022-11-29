@@ -10,47 +10,47 @@ typedef struct {
 #ifdef NVSHMEM_USE_NCCL
 #include "nccl.h"
 
-template<rdxn_ops_t op>
+template <rdxn_ops_t op>
 inline ncclRedOp_t nvshmemi_get_nccl_op();
 
-template<>
+template <>
 inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_SUM>() {
     return ncclSum;
 }
-template<>
+template <>
 inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_PROD>() {
     return ncclProd;
 }
-template<>
+template <>
 inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_MIN>() {
     return ncclMin;
 }
-template<>
+template <>
 inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_MAX>() {
     return ncclMax;
 }
-template<>
+template <>
 inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_AND>() {
     return ncclNumOps;
 }
-template<>
+template <>
 inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_OR>() {
     return ncclNumOps;
 }
-template<>
+template <>
 inline ncclRedOp_t nvshmemi_get_nccl_op<RDXN_OPS_XOR>() {
     return ncclNumOps;
 }
 
 /* Reduction datatypes */
-/* 
+/*
  * ncclChar is an unsigned type. char in c++ can be signed or unsigned
  * so pick the "right" nccl type depending on the implementation of char.
  */
-template<typename T>
+template <typename T>
 inline ncclDataType_t nvshmemi_get_nccl_dt();
 
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<char>() {
 #if (CHAR_MIN == 0)
     return ncclUint8;
@@ -58,79 +58,81 @@ inline ncclDataType_t nvshmemi_get_nccl_dt<char>() {
     return ncclChar;
 #endif
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<signed char>() {
     return ncclChar;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<short>() {
     return ncclNumTypes;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<int>() {
     return ncclInt;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<long>() {
     return ncclInt64;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<long long>() {
     return ncclInt64;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned char>() {
     return ncclUint8;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned short>() {
     return ncclNumTypes;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned int>() {
     return ncclUint32;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned long>() {
     return ncclUint64;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned long long>() {
     return ncclUint64;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<float>() {
     return ncclFloat;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<double>() {
     return ncclDouble;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<long double>() {
     return ncclNumTypes;
 }
 #ifdef NVSHMEM_COMPLEX_SUPPORT
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<complex double>() {
     return ncclNumTypes;
 }
-template<>
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<complex float>() {
     return ncclNumTypes;
 }
 #endif
 
 struct nccl_function_table {
-    ncclResult_t (*GetVersion)(int *version);
-    const char*  (*GetErrorString)(ncclResult_t result);
+    ncclResult_t (*GetVersion)(int* version);
+    const char* (*GetErrorString)(ncclResult_t result);
     ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
     ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
     ncclResult_t (*CommDestroy)(ncclComm_t comm);
     ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count,
-                              ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
+                              ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
+                              cudaStream_t stream);
     ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count,
-                              ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream);
+                              ncclDataType_t datatype, int root, ncclComm_t comm,
+                              cudaStream_t stream);
     ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount,
                               ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
     ncclResult_t (*GroupStart)();
@@ -147,9 +149,9 @@ extern struct nccl_function_table nccl_ftable;
 
 typedef struct {
     int step1_sendto;
-    int *step1_recvfrom;
+    int* step1_recvfrom;
     int step1_nrecvs;
-    int **step2_nbrs;
+    int** step2_nbrs;
     int step2_nphases;
 } nvshmemi_reduce_recexch_t;
 
@@ -165,6 +167,8 @@ typedef struct {
     nvshmemi_reduce_recexch_t reduce_recexch;
     size_t rdxn_count;
     uint32_t ll_flag;
+    uint64_t alltoall_pwrk[2];
+    uint64_t alltoall_count;
     uint64_t bcast_count;
     uint64_t fcollect_count;
     uint32_t fcollect_ll_flag;

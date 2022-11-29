@@ -43,7 +43,7 @@ enum { PROXY_CST_STATUS_CHANNELS_INACTIVE = 0, PROXY_CST_STATUS_CHANNELS_ACTIVE 
 
 /* Note that this is only safe because we are using this across a single system
  * that shares the GPUs endianness.
- * This struct is not actually portable. 
+ * This struct is not actually portable.
  */
 typedef union channel_bounce_buffer {
     char bytes[8];
@@ -53,7 +53,7 @@ typedef union channel_bounce_buffer {
 /* base_request_t
  * 32 | 8 | 8 | 8 | 8
  * roffset_high | roffset_low | op | group_size | flag */
-typedef struct __attribute__ ((packed)) base_request {
+typedef struct __attribute__((packed)) base_request {
     volatile uint8_t flag;
     uint8_t groupsize;
     uint8_t op;
@@ -65,7 +65,7 @@ static_assert(sizeof(base_request_t) == 8, "request_size must be 8 bytes.");
 /* put_dma_request_0
  * 32 | 16 | 8 | 8
  * laddr_high | laddr_3| laddr_2 | flag */
-typedef struct __attribute__ ((packed)) put_dma_request_0 {
+typedef struct __attribute__((packed)) put_dma_request_0 {
     volatile uint8_t flag;
     uint8_t laddr_2;
     uint16_t laddr_3;  // source is local
@@ -76,7 +76,7 @@ static_assert(sizeof(put_dma_request_0) == 8, "request_size must be 8 bytes.");
 /* put_dma_request_1
  * 32 | 16 | 8 | 8
  * size_high | size_low | laddr_low | flag */
-typedef struct __attribute__ ((packed)) put_dma_request_1 {
+typedef struct __attribute__((packed)) put_dma_request_1 {
     volatile uint8_t flag;
     uint8_t laddr_low;
     uint16_t size_low;
@@ -87,7 +87,7 @@ static_assert(sizeof(put_dma_request_1) == 8, "request_size must be 8 bytes.");
 /* put_dma_request_2
  * 32 | 16 | 8 | 8
  * resv2 | pe | resv | flag */
-typedef struct __attribute__ ((packed)) put_dma_request_2 {
+typedef struct __attribute__((packed)) put_dma_request_2 {
     volatile uint8_t flag;
     uint8_t resv;
     uint16_t pe;
@@ -98,10 +98,10 @@ static_assert(sizeof(put_dma_request_2) == 8, "request_size must be 8 bytes.");
 /* put_inline_request_0
  * 32 | 16 | 8 | 8
  * loffset_high | loffset_low | pe | flag */
-typedef struct __attribute__ ((packed)) put_inline_request_0 {
+typedef struct __attribute__((packed)) put_inline_request_0 {
     volatile uint8_t flag;
     uint8_t resv;
-    uint16_t pe;  
+    uint16_t pe;
     uint32_t lvalue_low;
 } put_inline_request_0_t;
 static_assert(sizeof(put_inline_request_0) == 8, "request_size must be 8 bytes.");
@@ -109,7 +109,7 @@ static_assert(sizeof(put_inline_request_0) == 8, "request_size must be 8 bytes."
 /* put_inline_request_1
  * 32 | 16 | 8 | 8
  * size_high | size_low | resv | flag */
-typedef struct __attribute__ ((packed)) put_inline_request_1 {
+typedef struct __attribute__((packed)) put_inline_request_1 {
     volatile uint8_t flag;
     uint8_t resv;
     uint16_t size;
@@ -120,10 +120,10 @@ static_assert(sizeof(put_inline_request_1) == 8, "request_size must be 8 bytes."
 /* amo_request_0
  * 32 | 16 | 8 | 8
  * lvalue_low | pe | amo | flag */
-typedef struct __attribute__ ((packed)) amo_request_0 {
+typedef struct __attribute__((packed)) amo_request_0 {
     volatile uint8_t flag;
     uint8_t amo;
-    uint16_t pe;  
+    uint16_t pe;
     uint32_t swap_add_low;
 } amo_request_0_t;
 static_assert(sizeof(amo_request_0) == 8, "request_size must be 8 bytes.");
@@ -131,7 +131,7 @@ static_assert(sizeof(amo_request_0) == 8, "request_size must be 8 bytes.");
 /* amo_request_1
  * 32 | 16 | 8 | 8
  * lvalue_high | resv | size | flag */
-typedef struct __attribute__ ((packed)) amo_request_1 {
+typedef struct __attribute__((packed)) amo_request_1 {
     volatile uint8_t flag;
     uint8_t compare_low;
     uint16_t size;
@@ -142,13 +142,13 @@ static_assert(sizeof(amo_request_1) == 8, "request_size must be 8 bytes.");
 /* amo_request_2
  * 56 | 8
  * compare_high | flag */
-typedef struct __attribute__ ((packed)) amo_request_2 {
+typedef struct __attribute__((packed)) amo_request_2 {
     volatile uint8_t flag;
     uint8_t compare_high[7];
 } amo_request_2_t;
 static_assert(sizeof(amo_request_2) == 8, "request_size must be 8 bytes.");
 
-typedef struct __attribute__ ((packed)) amo_request_3 {
+typedef struct __attribute__((packed)) amo_request_3 {
     volatile uint8_t flag;
     uint8_t g_buf_counter[7];
 } amo_request_3_t;
@@ -197,7 +197,7 @@ typedef struct proxy_state {
     cudaEvent_t cuev;
     int finalize_count;
     int issued_get;
-    nvshmemi_timeout_t* nvshmemi_timeout;
+    nvshmemi_timeout_t *nvshmemi_timeout;
     bool is_consistency_api_supported;
     int gdr_device_native_ordering;
     int *global_exit_request_state;
@@ -208,6 +208,5 @@ int nvshmemi_proxy_prep_minimal_state(proxy_state_t *state);
 int nvshmemi_proxy_setup_device_channels(proxy_state_t *state);
 
 extern char *proxy_channel_g_buf;
-extern uint64_t proxy_channel_g_buf_size;   /* Total size of g_buf in bytes */
-extern uint64_t proxy_channel_g_buf_log_size;   /* Total size of g_buf in bytes */
-
+extern uint64_t proxy_channel_g_buf_size;     /* Total size of g_buf in bytes */
+extern uint64_t proxy_channel_g_buf_log_size; /* Total size of g_buf in bytes */

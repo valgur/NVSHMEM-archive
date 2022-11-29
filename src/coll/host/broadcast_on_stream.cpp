@@ -9,8 +9,6 @@
 #include "nvshmem_nvtx.hpp"
 #include "cpu_coll.h"
 
-
-
 #define DEFN_NVSHMEMX_BROADCAST_ON_STREAM(TYPENAME, TYPE)                                         \
     int nvshmemx_##TYPENAME##_broadcast_on_stream(nvshmem_team_t team, TYPE *dest,                \
                                                   const TYPE *source, size_t nelems, int PE_root, \

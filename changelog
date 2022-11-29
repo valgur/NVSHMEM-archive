@@ -1,4 +1,21 @@
 ===============================================================================
+				Changes in 2.8.0
+===============================================================================
+
+# The transport formerly called GPU Initiated Communication (GIC) has been
+renamed to InfiniBand GPUDirect Async (IBGDA) to reflect the underlying
+technology used by that transport.
+# Improvements to the all-to-all algorithm were made for both the IBGDA and
+IBRC transports. These changes specifically focused on latency bound all-to-all
+operations.
+# Support for RC connections was added to IBGDA to optimize workloads on small
+PE sets.
+# Fixed an issue in the IBGDA Transport which caused all GPUs on the same host
+to use the same NIC.
+# Fixed an issue in the DMA-BUF registration path. Users no longer need to
+limit their allocation granularity to 4GiB when using DMABUF.
+
+===============================================================================
 				Changes in 2.7.0
 ===============================================================================
 
@@ -17,7 +34,7 @@ major version and X and Y are compatible minor versions
 # Added support for Hopper compute_90 and sm_90
 # Removed support for Pascal compute_60, sm_60, compute_61, and sm_61
 # Added version number suffix to libnvshmem_host.so and bootstrap plugins
-# Added support for dmabuf memory registration on buffers smaller than 4 GiB
+# Added support for dmabuf memory registration
 # Updated Hydra installation script to install Hydra 4.0.2
 # Added a pre-built Hydra launcher to NVSHMEM binary packages.
 # Catch user buffer registration error when requested buffer overlaps with an

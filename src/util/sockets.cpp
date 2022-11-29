@@ -34,8 +34,9 @@ int ipcOpenSocket(ipcHandle *&handle) {
 
     strncpy(cliaddr.sun_path, temp, 50);
     if (bind(sock, (struct sockaddr *)&cliaddr, sizeof(cliaddr)) < 0) {
-        perror("IPC failure: Binding socket failed. If you have any (stale) files"
-                "with names like /tmp/nvshmem-socket-<0-9>*, delete or rename them!");
+        perror(
+            "IPC failure: Binding socket failed. If you have any (stale) files"
+            "with names like /tmp/nvshmem-socket-<0-9>*, delete or rename them!");
         delete handle;
         close(sock);
         return -1;

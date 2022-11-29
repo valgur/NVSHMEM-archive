@@ -39,12 +39,12 @@ int nvshmemi_coll_common_cpu_read_env();
 int nvshmemi_coll_common_cpu_init();
 int nvshmemi_coll_common_cpu_finalize();
 
-#define NVSHMEMI_COLL_CPU_ERR_POP()                                                        \
-    do {                                                                                   \
+#define NVSHMEMI_COLL_CPU_ERR_POP()                                                         \
+    do {                                                                                    \
         fprintf(stderr, "[pe = %d] Error at %s:%d in %s\n", nvshmemi_state->mype, __FILE__, \
-                __LINE__, __FUNCTION__);                                                   \
-        fflush(stderr);                                                                    \
-        goto fn_fail;                                                                      \
+                __LINE__, __FUNCTION__);                                                    \
+        fflush(stderr);                                                                     \
+        goto fn_fail;                                                                       \
     } while (0)
 
 #endif /* NVSHMEMI_COLL_CPU_H */

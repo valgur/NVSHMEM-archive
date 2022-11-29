@@ -39,7 +39,6 @@ int main(int c, char *v[]) {
         if (iters == skip) CUDA_CHECK(cudaEventRecord(start_event, stream));
 
         nvshmemx_barrier_on_stream(NVSHMEM_TEAM_WORLD, stream);
-
     }
     CUDA_CHECK(cudaEventRecord(stop_event, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -47,7 +46,8 @@ int main(int c, char *v[]) {
 
     if (!mype) {
         latency_value = (ms / BARRIER_MAX_ITERS) * 1000;
-        print_table("barrier_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size, &latency_value, 1);
+        print_table("barrier_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size,
+                    &latency_value, 1);
     }
 
     nvshmem_barrier_all();

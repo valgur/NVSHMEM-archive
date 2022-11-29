@@ -15,11 +15,9 @@
 #include "bootstrap_util.h"
 #include "nvshmem_constants.h"
 
-
 #define BOOTSTRAP_PMIX_KEYSIZE 64
 
 static pmix_proc_t myproc;
-
 
 static int bootstrap_pmix_barrier(bootstrap_handle_t *handle) {
     pmix_status_t status = PMIx_Fence(NULL, 0, NULL, 0);
@@ -28,7 +26,6 @@ static int bootstrap_pmix_barrier(bootstrap_handle_t *handle) {
 out:
     return status;
 }
-
 
 static pmix_status_t bootstrap_pmix_exchange(void) {
     pmix_status_t status;
@@ -51,14 +48,13 @@ out:
     return status;
 }
 
-static pmix_status_t bootstrap_pmix_put(char *key, void *value,
-                                        size_t valuelen) {
+static pmix_status_t bootstrap_pmix_put(char *key, void *value, size_t valuelen) {
     pmix_value_t val;
     pmix_status_t rc;
 
     PMIX_VALUE_CONSTRUCT(&val);
     val.type = PMIX_BYTE_OBJECT;
-    val.data.bo.bytes = (char*) value;
+    val.data.bo.bytes = (char *)value;
     val.data.bo.size = valuelen;
 
     rc = PMIx_Put(PMIX_GLOBAL, key, &val);
@@ -69,10 +65,7 @@ static pmix_status_t bootstrap_pmix_put(char *key, void *value,
     return rc;
 }
 
-
-static pmix_status_t bootstrap_pmix_get(int pe, char *key, void *value,
-                                        size_t valuelen)
-{
+static pmix_status_t bootstrap_pmix_get(int pe, char *key, void *value, size_t valuelen) {
     pmix_proc_t proc;
     pmix_value_t *val;
     pmix_status_t rc;
@@ -83,7 +76,7 @@ static pmix_status_t bootstrap_pmix_get(int pe, char *key, void *value,
     /* setup the ID of the proc whose info we are getting */
     PMIX_LOAD_NSPACE(proc.nspace, myproc.nspace);
 
-    proc.rank = (uint32_t) pe;
+    proc.rank = (uint32_t)pe;
 
     rc = PMIx_Get(&proc, key, NULL, 0, &val);
 
@@ -103,14 +96,13 @@ static pmix_status_t bootstrap_pmix_get(int pe, char *key, void *value,
     return rc;
 }
 
-
 static int bootstrap_pmix_allgather(const void *sendbuf, void *recvbuf, int length,
                                     bootstrap_handle_t *handle) {
     static int key_index = 1;
 
     pmix_status_t status = PMIX_SUCCESS;
     void *kvs_value;
-    char kvs_key[BOOTSTRAP_PMIX_KEYSIZE]; // FIXME: assert( 64 < PMIX_MAX_KEYLEN);
+    char kvs_key[BOOTSTRAP_PMIX_KEYSIZE];  // FIXME: assert( 64 < PMIX_MAX_KEYLEN);
 
     if (handle->pg_size == 1) {
         memcpy(recvbuf, sendbuf, length);
@@ -119,28 +111,25 @@ static int bootstrap_pmix_allgather(const void *sendbuf, void *recvbuf, int leng
 
     snprintf(kvs_key, BOOTSTRAP_PMIX_KEYSIZE, "BOOTSTRAP-%04x", key_index);
 
-    status = bootstrap_pmix_put(kvs_key, (void*) sendbuf, length);
-    BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-            "bootstrap_pmix_put failed\n");
+    status = bootstrap_pmix_put(kvs_key, (void *)sendbuf, length);
+    BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmix_put failed\n");
 
     status = bootstrap_pmix_exchange();
     BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-            "bootstrap_pmix_exchange failed\n");
+                           "bootstrap_pmix_exchange failed\n");
 
     for (int i = 0; i < handle->pg_size; i++) {
         snprintf(kvs_key, BOOTSTRAP_PMIX_KEYSIZE, "BOOTSTRAP-%04x", key_index);
 
         // assumes that same length is passed by all the processes
         status = bootstrap_pmix_get(i, kvs_key, (char *)recvbuf + length * i, length);
-        BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                "SPMI_KVS_Get failed\n");
+        BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "SPMI_KVS_Get failed\n");
     }
 
 out:
     key_index++;
     return status;
 }
-
 
 static int bootstrap_pmix_alltoall(const void *sendbuf, void *recvbuf, int length,
                                    bootstrap_handle_t *handle) {
@@ -159,21 +148,20 @@ static int bootstrap_pmix_alltoall(const void *sendbuf, void *recvbuf, int lengt
         snprintf(kvs_key, BOOTSTRAP_PMIX_KEYSIZE, "BOOTSTRAP-%04x-%08x", key_index, i);
 
         status = bootstrap_pmix_put(kvs_key, (char *)sendbuf + i * length, length);
-        BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                "bootstrap_pmix_put failed\n");
+        BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmix_put failed\n");
     }
 
     status = bootstrap_pmix_exchange();
     BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-            "bootstrap_pmix_exchange failed\n");
+                           "bootstrap_pmix_exchange failed\n");
 
     for (int i = 0; i < handle->pg_size; i++) {
-        snprintf(kvs_key, BOOTSTRAP_PMIX_KEYSIZE, "BOOTSTRAP-%04x-%08x", key_index, handle->pg_rank);
+        snprintf(kvs_key, BOOTSTRAP_PMIX_KEYSIZE, "BOOTSTRAP-%04x-%08x", key_index,
+                 handle->pg_rank);
 
         // assumes that same length is passed by all the processes
         status = bootstrap_pmix_get(i, kvs_key, (char *)recvbuf + length * i, length);
-        BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                "bootstrap_pmix_get failed\n");
+        BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_pmix_get failed\n");
     }
 
 out:
@@ -191,28 +179,28 @@ static void bootstrap_pmix_global_exit(int status) {
     }
 }
 
-
 static int bootstrap_pmix_finalize(bootstrap_handle_t *handle) {
     pmix_status_t status;
 
     status = PMIx_Finalize(NULL, 0);
-    BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-            "PMIx_Finalize failed\n");
+    BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "PMIx_Finalize failed\n");
 
 error:
 out:
     return status;
 }
 
-
-int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const int nvshmem_version) {
+int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle,
+                                   const int nvshmem_version) {
     pmix_status_t status = PMIX_SUCCESS;
     pmix_proc_t proc;
     proc.rank = PMIX_RANK_WILDCARD;
     pmix_value_t *val;
     int bootstrap_version = NVSHMEM_VENDOR_VERSION;
     if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
-        BOOTSTRAP_ERROR_PRINT("PMIx bootstrap version (%d) is not compatible with NVSHMEM version (%d)", bootstrap_version, nvshmem_version);
+        BOOTSTRAP_ERROR_PRINT(
+            "PMIx bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
+            bootstrap_version, nvshmem_version);
         exit(-1);
     }
 
@@ -226,15 +214,15 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
 
     status = PMIx_Get(&proc, PMIX_JOB_SIZE, NULL, 0, &val);
     BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-            "PMIx_Get(PMIX_JOB_SIZE) failed\n");
+                           "PMIx_Get(PMIX_JOB_SIZE) failed\n");
 
-    handle->pg_rank     = myproc.rank;
-    handle->pg_size     = val->data.uint32;
-    handle->allgather   = bootstrap_pmix_allgather;
-    handle->alltoall    = bootstrap_pmix_alltoall;
-    handle->barrier     = bootstrap_pmix_barrier;
+    handle->pg_rank = myproc.rank;
+    handle->pg_size = val->data.uint32;
+    handle->allgather = bootstrap_pmix_allgather;
+    handle->alltoall = bootstrap_pmix_alltoall;
+    handle->barrier = bootstrap_pmix_barrier;
     handle->global_exit = bootstrap_pmix_global_exit;
-    handle->finalize    = bootstrap_pmix_finalize;
+    handle->finalize = bootstrap_pmix_finalize;
 
     PMIX_VALUE_RELEASE(val);
 

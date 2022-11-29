@@ -13,7 +13,7 @@
 #include "coll_test.h"
 #define LARGEST_DT uint64_t
 
-#define RUN_RDXN(TYPENAME, TYPE, OP, team, d_source, h_source, d_dest, h_dest, num_elems, stream)       \
+#define RUN_RDXN(TYPENAME, TYPE, OP, team, d_source, h_source, d_dest, h_dest, num_elems, stream) \
     do {                                                                                          \
         int iters = MAX_ITERS;                                                                    \
         int skip = MAX_SKIP;                                                                      \
@@ -29,7 +29,8 @@
                                                                                                   \
             if (iters >= skip) gettimeofday(&t_start, NULL);                                      \
                                                                                                   \
-            nvshmem_##TYPENAME##_##OP##_reduce(team, (TYPE *)d_dest, (const TYPE *)d_source, num_elems);\
+            nvshmem_##TYPENAME##_##OP##_reduce(team, (TYPE *)d_dest, (const TYPE *)d_source,      \
+                                               num_elems);                                        \
                                                                                                   \
             if (iters >= skip) {                                                                  \
                 gettimeofday(&t_stop, NULL);                                                      \
@@ -47,30 +48,37 @@
         }                                                                                         \
     } while (0)
 
-#define RUN_RDXN_ITERS(TYPENAME, TYPE, team, d_source, h_source, d_dest, h_dest, num_elems, stream, mype, \
-                       size, usec_sum, usec_prod, usec_and, usec_or, usec_xor, usec_min, usec_max)      \
+#define RUN_RDXN_ITERS(TYPENAME, TYPE, team, d_source, h_source, d_dest, h_dest, num_elems,        \
+                       stream, mype, size, usec_sum, usec_prod, usec_and, usec_or, usec_xor,       \
+                       usec_min, usec_max)                                                         \
     do {                                                                                           \
         double latency = 0;                                                                        \
         size = num_elems * sizeof(TYPE);                                                           \
-        RUN_RDXN(TYPENAME, TYPE, sum, team, d_source, h_source, d_dest, h_dest, num_elems, stream);\
+        RUN_RDXN(TYPENAME, TYPE, sum, team, d_source, h_source, d_dest, h_dest, num_elems,         \
+                 stream);                                                                          \
         usec_sum = latency / MAX_ITERS;                                                            \
         latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, prod, team, d_source, h_source, d_dest, h_dest, num_elems, stream);  \
+        RUN_RDXN(TYPENAME, TYPE, prod, team, d_source, h_source, d_dest, h_dest, num_elems,        \
+                 stream);                                                                          \
         usec_prod = latency / MAX_ITERS;                                                           \
         latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, and, team, d_source, h_source, d_dest, h_dest, num_elems, stream);      \
+        RUN_RDXN(TYPENAME, TYPE, and, team, d_source, h_source, d_dest, h_dest, num_elems,         \
+                 stream);                                                                          \
         usec_and = latency / MAX_ITERS;                                                            \
         latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, or, team, d_source, h_source, d_dest, h_dest, num_elems, stream);       \
+        RUN_RDXN(TYPENAME, TYPE, or, team, d_source, h_source, d_dest, h_dest, num_elems, stream); \
         usec_or = latency / MAX_ITERS;                                                             \
         latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, xor, team, d_source, h_source, d_dest, h_dest, num_elems, stream);      \
+        RUN_RDXN(TYPENAME, TYPE, xor, team, d_source, h_source, d_dest, h_dest, num_elems,         \
+                 stream);                                                                          \
         usec_xor = latency / MAX_ITERS;                                                            \
         latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, min, team, d_source, h_source, d_dest, h_dest, num_elems, stream);      \
+        RUN_RDXN(TYPENAME, TYPE, min, team, d_source, h_source, d_dest, h_dest, num_elems,         \
+                 stream);                                                                          \
         usec_min = latency / MAX_ITERS;                                                            \
         latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, max, team, d_source, h_source, d_dest, h_dest, num_elems, stream);\
+        RUN_RDXN(TYPENAME, TYPE, max, team, d_source, h_source, d_dest, h_dest, num_elems,         \
+                 stream);                                                                          \
         usec_max = latency / MAX_ITERS;                                                            \
     } while (0)
 
@@ -140,39 +148,54 @@ int main(int argc, char **argv) {
     i = 0;
     for (num_elems = 1; num_elems < (MAX_ELEMS / 2); num_elems *= 2) {
         RUN_RDXN_ITERS(int32, int32_t, NVSHMEM_TEAM_WORLD, (int *)d_source, (int *)h_source,
-                       (int *)d_dest, (int *)h_dest, num_elems, stream, mype, size_array[i], sum_latency_array[i], prod_latency_array[i],
-                       and_latency_array[i], or_latency_array[i], xor_latency_array[i], min_latency_array[i],
+                       (int *)d_dest, (int *)h_dest, num_elems, stream, mype, size_array[i],
+                       sum_latency_array[i], prod_latency_array[i], and_latency_array[i],
+                       or_latency_array[i], xor_latency_array[i], min_latency_array[i],
                        max_latency_array[i]);
         i++;
     }
 
     if (!mype) {
-        print_table("reduction", "int-sum", "size (Bytes)", "latency", "us", '-', size_array, sum_latency_array, i);
-        print_table("reduction", "int-prod", "size (Bytes)", "latency", "us", '-', size_array, prod_latency_array, i);
-        print_table("reduction", "int-and", "size (Bytes)", "latency", "us", '-', size_array, and_latency_array, i);
-        print_table("reduction", "int-or", "size (Bytes)", "latency", "us", '-', size_array, or_latency_array, i);
-        print_table("reduction", "int-xor", "size (Bytes)", "latency", "us", '-', size_array, xor_latency_array, i);
-        print_table("reduction", "int-min", "size (Bytes)", "latency", "us", '-', size_array, min_latency_array, i);
-        print_table("reduction", "int-max", "size (Bytes)", "latency", "us", '-', size_array, max_latency_array, i);
+        print_table("reduction", "int-sum", "size (Bytes)", "latency", "us", '-', size_array,
+                    sum_latency_array, i);
+        print_table("reduction", "int-prod", "size (Bytes)", "latency", "us", '-', size_array,
+                    prod_latency_array, i);
+        print_table("reduction", "int-and", "size (Bytes)", "latency", "us", '-', size_array,
+                    and_latency_array, i);
+        print_table("reduction", "int-or", "size (Bytes)", "latency", "us", '-', size_array,
+                    or_latency_array, i);
+        print_table("reduction", "int-xor", "size (Bytes)", "latency", "us", '-', size_array,
+                    xor_latency_array, i);
+        print_table("reduction", "int-min", "size (Bytes)", "latency", "us", '-', size_array,
+                    min_latency_array, i);
+        print_table("reduction", "int-max", "size (Bytes)", "latency", "us", '-', size_array,
+                    max_latency_array, i);
     }
 
     i = 0;
     for (num_elems = 1; num_elems < (MAX_ELEMS / 2); num_elems *= 2) {
-        RUN_RDXN_ITERS(int64, int64_t, NVSHMEM_TEAM_WORLD, d_source, h_source,
-                       d_dest, h_dest, num_elems, stream, mype, size_array[i],
-                       sum_latency_array[i], prod_latency_array[i], and_latency_array[i], or_latency_array[i],
+        RUN_RDXN_ITERS(int64, int64_t, NVSHMEM_TEAM_WORLD, d_source, h_source, d_dest, h_dest,
+                       num_elems, stream, mype, size_array[i], sum_latency_array[i],
+                       prod_latency_array[i], and_latency_array[i], or_latency_array[i],
                        xor_latency_array[i], min_latency_array[i], max_latency_array[i]);
         i++;
     }
 
     if (!mype) {
-        print_table("reduction", "int64-sum", "size (Bytes)", "latency", "us", '-', size_array, sum_latency_array, i);
-        print_table("reduction", "int64-prod", "size (Bytes)", "latency", "us", '-', size_array, prod_latency_array, i);
-        print_table("reduction", "int64-and", "size (Bytes)", "latency", "us", '-', size_array, and_latency_array, i);
-        print_table("reduction", "int64-or", "size (Bytes)", "latency", "us", '-', size_array, or_latency_array, i);
-        print_table("reduction", "int64-xor", "size (Bytes)", "latency", "us", '-', size_array, xor_latency_array, i);
-        print_table("reduction", "int64-min", "size (Bytes)", "latency", "us", '-', size_array, min_latency_array, i);
-        print_table("reduction", "int64-max", "size (Bytes)", "latency", "us", '-', size_array, max_latency_array, i);
+        print_table("reduction", "int64-sum", "size (Bytes)", "latency", "us", '-', size_array,
+                    sum_latency_array, i);
+        print_table("reduction", "int64-prod", "size (Bytes)", "latency", "us", '-', size_array,
+                    prod_latency_array, i);
+        print_table("reduction", "int64-and", "size (Bytes)", "latency", "us", '-', size_array,
+                    and_latency_array, i);
+        print_table("reduction", "int64-or", "size (Bytes)", "latency", "us", '-', size_array,
+                    or_latency_array, i);
+        print_table("reduction", "int64-xor", "size (Bytes)", "latency", "us", '-', size_array,
+                    xor_latency_array, i);
+        print_table("reduction", "int64-min", "size (Bytes)", "latency", "us", '-', size_array,
+                    min_latency_array, i);
+        print_table("reduction", "int64-max", "size (Bytes)", "latency", "us", '-', size_array,
+                    max_latency_array, i);
     }
 
     nvshmem_barrier_all();

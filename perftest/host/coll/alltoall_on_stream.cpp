@@ -65,15 +65,19 @@ int main(int argc, char **argv) {
     d_source = (DATATYPE *)d_buffer;
     d_dest = (DATATYPE *)&d_source[num_elems * npes];
 
-    RUN_COLL_ON_STREAM(alltoall, ALLTOALL, int32, int32_t, (int32_t *)d_source, 
-                       (int32_t *)h_source, (int32_t *)d_dest, (int32_t *)h_dest, npes, -1, stream, size_array, latency_array);
+    RUN_COLL_ON_STREAM(alltoall, ALLTOALL, int32, int32_t, (int32_t *)d_source, (int32_t *)h_source,
+                       (int32_t *)d_dest, (int32_t *)h_dest, npes, -1, stream, size_array,
+                       latency_array);
     if (!mype) {
-        print_table("alltoall_on_stream", "32-bit", "size (bytes)", "latency", "us", '-', size_array, latency_array, MAX_ELEMS_LOG + 1);
+        print_table("alltoall_on_stream", "32-bit", "size (bytes)", "latency", "us", '-',
+                    size_array, latency_array, MAX_ELEMS_LOG + 1);
     }
 
-    RUN_COLL_ON_STREAM(alltoall, ALLTOALL, int64, int64_t, d_source, h_source, d_dest, h_dest, npes, -1, stream, size_array, latency_array);
+    RUN_COLL_ON_STREAM(alltoall, ALLTOALL, int64, int64_t, d_source, h_source, d_dest, h_dest, npes,
+                       -1, stream, size_array, latency_array);
     if (!mype) {
-        print_table("alltoall_on_stream", "64-bit", "size (bytes)", "latency", "us", '-', size_array, latency_array, MAX_ELEMS_LOG + 1);
+        print_table("alltoall_on_stream", "64-bit", "size (bytes)", "latency", "us", '-',
+                    size_array, latency_array, MAX_ELEMS_LOG + 1);
     }
 
     nvshmem_barrier_all();

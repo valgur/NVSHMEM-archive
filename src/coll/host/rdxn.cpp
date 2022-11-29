@@ -16,7 +16,7 @@
         NVSHMEMI_CHECK_INIT_STATUS();                                                           \
         NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();                                      \
         nvshmemi_reduce_on_stream<TYPE, RDXN_OPS_##OP>(team, dest, source, nreduce,             \
-                                                                 nvshmemi_state->my_stream);    \
+                                                       nvshmemi_state->my_stream);              \
         CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));                   \
         return 0;                                                                               \
     }

@@ -21,30 +21,57 @@
 #define MAX_SKIP 10
 #define THREADS 1024
 #define BLOCKS 4
-#define MAX_MSG_SIZE 64 * 1024
+#define MAX_DATA_SIZE 64 * 1024
+#define MIN_DATA_SIZE 1024
+#define ELEMENT_SIZE 8
+#define STRIDE 1
 #define UNROLL 2
 
-__global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, int pe, int iter) {
+template <typename T>
+__device__ inline void call_nvshmem_p(T *rptr, T val, int peer) {
+    switch (sizeof(T)) {
+        case 1:
+            nvshmem_uint8_p((uint8_t *)rptr, val, peer);
+            break;
+        case 2:
+            nvshmem_uint16_p((uint16_t *)rptr, val, peer);
+            break;
+        case 4:
+            nvshmem_uint32_p((uint32_t *)rptr, val, peer);
+            break;
+        case 8:
+            nvshmem_double_p((double *)rptr, val, peer);
+            break;
+        default:
+            assert(0);
+    }
+}
+
+template <typename T>
+__global__ void bw(T *data_d, volatile unsigned int *counter_d, int len, int pe, int iter,
+                   int stride) {
     int u, i, j, peer, tid, slice;
     unsigned int counter;
     int threads = gridDim.x * blockDim.x;
     tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     peer = !pe;
-    slice = UNROLL * threads;
+    slice = UNROLL * threads * stride;
 
-    for (i = 0; i < iter; i++) {
+    // When stride > 1, each iteration sends less than len elements.
+    // We increase the number of iterations to make up for that.
+    for (i = 0; i < iter * stride; i++) {
         for (j = 0; j < len - slice; j += slice) {
             for (u = 0; u < UNROLL; ++u) {
-                int idx = j + u * threads + tid;
-                nvshmem_double_p(data_d + idx, *(data_d + idx), peer);
+                int idx = j + u * threads + tid * stride;
+                call_nvshmem_p<T>(data_d + idx, *(data_d + idx), peer);
             }
             __syncthreads();
         }
 
         for (u = 0; u < UNROLL; ++u) {
-            int idx = j + u * threads + tid;
-            if (idx < len) nvshmem_double_p(data_d + idx, *(data_d + idx), peer);
+            int idx = j + u * threads + tid * stride;
+            if (idx >= 0 && idx < len) call_nvshmem_p<T>(data_d + idx, *(data_d + idx), peer);
         }
 
         // synchronizing across blocks
@@ -78,19 +105,49 @@ __global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, in
     }
 }
 
+void call_bw(int blocks, int threads, void *data_d, unsigned int *counter_d, size_t size,
+             int element_size, int mype, int iter, int stride) {
+    switch (element_size) {
+        case 1:
+            bw<uint8_t><<<blocks, threads>>>((uint8_t *)data_d, counter_d, size / sizeof(uint8_t),
+                                             mype, iter, stride);
+            break;
+        case 2:
+            bw<uint16_t><<<blocks, threads>>>((uint16_t *)data_d, counter_d,
+                                              size / sizeof(uint16_t), mype, iter, stride);
+            break;
+        case 4:
+            bw<uint32_t><<<blocks, threads>>>((uint32_t *)data_d, counter_d,
+                                              size / sizeof(uint32_t), mype, iter, stride);
+            break;
+        case 8:
+            bw<double><<<blocks, threads>>>((double *)data_d, counter_d, size / sizeof(double),
+                                            mype, iter, stride);
+            break;
+        default:
+            fprintf(stderr, "element_size=%d is not supported \n", element_size);
+            exit(-EINVAL);
+    }
+}
+
 int main(int argc, char *argv[]) {
     int mype, npes;
-    double *data_d = NULL;
+    void *data_d = NULL;
     unsigned int *counter_d;
     int max_blocks = BLOCKS, max_threads = THREADS;
     int array_size, i;
     void **h_tables;
     uint64_t *h_size_arr;
     double *h_bw;
+    double *h_msgrate;
+    bool report_msgrate = false;
 
     int iter = MAX_ITERS;
     int skip = MAX_SKIP;
-    int max_msg_size = MAX_MSG_SIZE;
+    int64_t max_data_size = MAX_DATA_SIZE;
+    int64_t min_data_size = MIN_DATA_SIZE;
+    int element_size = ELEMENT_SIZE;
+    int stride = STRIDE;
 
     float milliseconds;
     cudaEvent_t start, stop;
@@ -110,7 +167,7 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         int c;
-        c = getopt(argc, argv, "c:t:h");
+        c = getopt(argc, argv, "c:t:m:M:e:s:Rh");
         if (c == -1) break;
 
         switch (c) {
@@ -120,39 +177,77 @@ int main(int argc, char *argv[]) {
             case 't':
                 max_threads = strtol(optarg, NULL, 0);
                 break;
+            case 'm':
+                min_data_size = strtol(optarg, NULL, 0);
+                break;
+            case 'M':
+                max_data_size = strtol(optarg, NULL, 0);
+                break;
+            case 'e':
+                element_size = strtol(optarg, NULL, 0);
+                break;
+            case 's':
+                stride = strtol(optarg, NULL, 0);
+                break;
+            case 'R':
+                report_msgrate = true;
+                break;
             default:
             case 'h':
-                printf("-c [CTAs] -t [THREADS] \n");
+                printf(
+                    "-c [CTAs] -t [THREADS] -m [MIN_DATA] -M [MAX_DATA] -e [ELEMENT_SIZE] -s "
+                    "[STRIDE] -R(report_msgrate) \n");
                 goto finalize;
         }
     }
 
-    array_size = floor(log2((float)max_msg_size)) + 1;
-    alloc_tables(&h_tables, 2, array_size);
+    if (min_data_size <= 0) {
+        fprintf(stderr, "MIN_DATA must be a positive integer \n");
+        goto finalize;
+    }
+
+    if (max_data_size <= 0) {
+        fprintf(stderr, "MAX_DATA must be a positive integer \n");
+        goto finalize;
+    }
+
+    if (min_data_size > max_data_size) {
+        fprintf(stderr, "MIN_DATA must be less than or equal to MAX_DATA \n");
+        goto finalize;
+    }
+
+    if (stride < 1) {
+        fprintf(stderr, "STRIDE must be at least 1 \n");
+        goto finalize;
+    }
+
+    array_size = floor(log2((float)max_data_size)) + 1;
+    alloc_tables(&h_tables, 3, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_bw = (double *)h_tables[1];
+    h_msgrate = (double *)h_tables[2];
 
-    data_d = (double *)nvshmem_malloc(max_msg_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    data_d = (void *)nvshmem_malloc(max_data_size);
+    CUDA_CHECK(cudaMemset(data_d, 0, max_data_size));
 
     CUDA_CHECK(cudaMalloc((void **)&counter_d, sizeof(unsigned int) * 2));
     CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    int size;
+    size_t size;
     i = 0;
     if (mype == 0) {
-        for (size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
+        for (size = (size_t)min_data_size; size <= (size_t)max_data_size; size *= 2) {
             int blocks = max_blocks, threads = max_threads;
             h_size_arr[i] = size;
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
-            bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(double), mype, skip);
+            call_bw(blocks, threads, data_d, counter_d, size, element_size, mype, skip, stride);
             CUDA_CHECK(cudaDeviceSynchronize());
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
 
             cudaEventRecord(start);
-            bw<<<blocks, threads>>>(data_d, counter_d, size / sizeof(double), mype, iter);
+            call_bw(blocks, threads, data_d, counter_d, size, element_size, mype, iter, stride);
             cudaEventRecord(stop);
 
             CUDA_CHECK(cudaGetLastError());
@@ -160,23 +255,27 @@ int main(int argc, char *argv[]) {
 
             cudaEventElapsedTime(&milliseconds, start, stop);
             h_bw[i] = size / (milliseconds * (B_TO_GB / (iter * MS_TO_S)));
+            h_msgrate[i] = (double)(size / sizeof(double)) * iter / (milliseconds * MS_TO_S);
             nvshmem_barrier_all();
             i++;
         }
     } else {
-        for (size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
+        for (size = (size_t)min_data_size; size <= (size_t)max_data_size; size *= 2) {
             nvshmem_barrier_all();
         }
     }
 
     if (mype == 0) {
         print_table("shmem_p_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw, i);
+        if (report_msgrate)
+            print_table("shmem_p_bw", "None", "size (Bytes)", "msgrate", "MMPS", '+', h_size_arr,
+                        h_msgrate, i);
     }
 
 finalize:
 
     if (data_d) nvshmem_free(data_d);
-    free_tables(h_tables, 2);
+    free_tables(h_tables, 3);
     finalize_wrapper();
 
     return 0;

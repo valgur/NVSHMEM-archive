@@ -35,13 +35,13 @@ using namespace std;
 #define NUM_G_BUF_ELEMENTS 1024 * 1024
 #define MAX_PES_PER_GPU 48
 
-#define G_COALESCING_BUF_SIZE NUM_G_BUF_ELEMENTS * NVSHMEMI_WARP_SIZE * sizeof(uint64_t)
+#define G_COALESCING_BUF_SIZE NUM_G_BUF_ELEMENTS *NVSHMEMI_WARP_SIZE * sizeof(uint64_t)
 
-#define NVSHMEMI_CHECK_INIT_STATUS()														\
-	do {																					\
-		if (nvshmemi_is_nvshmem_initialized == false)										\
-			ERROR_EXIT("NVSHMEM API called before NVSHMEM initialization has completed\n");	\
-	} while (0)
+#define NVSHMEMI_CHECK_INIT_STATUS()                                                        \
+    do {                                                                                    \
+        if (nvshmemi_is_nvshmem_initialized == false)                                       \
+            ERROR_EXIT("NVSHMEM API called before NVSHMEM initialization has completed\n"); \
+    } while (0)
 
 typedef struct {
     int multi_processor_count;
@@ -55,10 +55,10 @@ typedef struct {
 } collective_launch_params_t;
 
 typedef struct nvshmemi_mps_shmdata_t {
-  volatile size_t nprocesses;
-  volatile atomic<int> barrier;
-  volatile atomic<bool> sense;
-  volatile cudaIpcEventHandle_t event_handle[MAX_PES_PER_GPU];
+    volatile size_t nprocesses;
+    volatile atomic<int> barrier;
+    volatile atomic<bool> sense;
+    volatile cudaIpcEventHandle_t event_handle[MAX_PES_PER_GPU];
 } nvshmemi_mps_shmdata;
 
 typedef struct nvshmemi_shared_memory_info_t {
@@ -96,8 +96,8 @@ typedef struct nvshmemi_state_dec {
     /* variables for VMM */
 #if CUDA_VERSION >= 11000
     vector<CUmemGenericAllocationHandle> cumem_handles;
-    size_t physical_heap_size;
 #endif
+    size_t physical_heap_size;
     vector<vector<nvshmem_mem_handle> > handles;
     vector<tuple<size_t, void *, size_t> > idx_in_handles;
     /*transport info*/
@@ -126,7 +126,9 @@ typedef struct nvshmemi_state_dec {
     cudaEvent_t *cuevents;
     /* MPS support */
     cudaEvent_t mps_event;
-    cudaEvent_t same_gpu_other_pe_mps_events[MAX_PES_PER_GPU - 1]; /* CUDA IPC mapped mps_events from the PEs sharing the same GPU */
+    cudaEvent_t
+        same_gpu_other_pe_mps_events[MAX_PES_PER_GPU - 1]; /* CUDA IPC mapped mps_events from the
+                                                              PEs sharing the same GPU */
     nvshmemi_shared_memory_info shm_info;
 
     nvshmemi_state_dec()
@@ -181,7 +183,8 @@ int nvshmemi_teardown_collective_launch(nvshmemi_state_t *state);
 int nvshmemi_setup_mops_kernels(nvshmemi_state_t *state);
 extern "C" {
 void *nvshmemi_malloc(size_t size);
-bool nvshmemi_is_version_compatible(const nvshmemi_version_t version_1, const nvshmemi_version_t version_2);
+bool nvshmemi_is_version_compatible(const nvshmemi_version_t version_1,
+                                    const nvshmemi_version_t version_2);
 }
 void *nvshmemi_calloc(size_t count, size_t size);
 void *nvshmemi_align(size_t alignment, size_t size);
@@ -199,25 +202,23 @@ int nvshmemi_proxy_finalize(nvshmemi_state_t *state);
 
 struct nvshmem_mem_handle *nvshmemi_get_registered_buffer_handle(void *addr, size_t *len);
 
-static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, size_t *len, void *addr, int transport_idx) {
+static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, size_t *len,
+                                                 void *addr, int transport_idx) {
     nvshmem_mem_handle_t *handle_ptr;
     size_t max_len = SIZE_MAX;
 
-    if (addr >= nvshmemi_state->heap_base && (addr < (void *)((char *)nvshmemi_state->heap_base + nvshmemi_state->heap_size))) {
+    if (addr >= nvshmemi_state->heap_base &&
+        (addr < (void *)((char *)nvshmemi_state->heap_base + nvshmemi_state->heap_size))) {
         /* heap lookup code. */
-        if (!nvshmemi_use_cuda_vmm) {
-            *handle = &nvshmemi_state->handles[0][nvshmemi_state->mype * NVSHMEM_TRANSPORT_COUNT + transport_idx];
-            if (len) *len = nvshmemi_state->heap_size - ((char *)addr - (char *)nvshmemi_state->heap_base);
-        }
-        else {
-            size_t offset = (char *)addr - (char *)nvshmemi_state->heap_base;
-            size_t addr_idx = offset >> log2_cumem_granularity;
-            size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
-            void* handle_start_addr = std::get<1>(nvshmemi_state->idx_in_handles[addr_idx]);
-            size_t handle_size = std::get<2>(nvshmemi_state->idx_in_handles[addr_idx]);
-            *handle = &nvshmemi_state->handles[handle_idx][nvshmemi_state->mype * NVSHMEM_TRANSPORT_COUNT + transport_idx];
-            if (len) *len = handle_size - ((char *)addr - (char *)handle_start_addr);
-        }
+        size_t offset = (char *)addr - (char *)nvshmemi_state->heap_base;
+        size_t addr_idx = offset >> log2_cumem_granularity;
+        size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
+        void *handle_start_addr = std::get<1>(nvshmemi_state->idx_in_handles[addr_idx]);
+        size_t handle_size = std::get<2>(nvshmemi_state->idx_in_handles[addr_idx]);
+        *handle =
+            &nvshmemi_state->handles[handle_idx][nvshmemi_state->mype * NVSHMEM_TRANSPORT_COUNT +
+                                                 transport_idx];
+        if (len) *len = handle_size - ((char *)addr - (char *)handle_start_addr);
     } else {
         /* registered buffer lookup code */
         handle_ptr = nvshmemi_get_registered_buffer_handle(addr, len);
@@ -228,11 +229,10 @@ static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, 
         }
     }
 
-    if (transport_idx == NVSHMEM_TRANSPORT_ID_IBRC 
-        || transport_idx == NVSHMEM_TRANSPORT_ID_IBDEVX 
-        #ifdef NVSHMEM_GPUINITIATED_SUPPORT
+    if (transport_idx == NVSHMEM_TRANSPORT_ID_IBRC || transport_idx == NVSHMEM_TRANSPORT_ID_IBDEVX
+#ifdef NVSHMEM_IBGDA_SUPPORT
         || transport_idx == NVSHMEM_TRANSPORT_ID_GIC
-        #endif
+#endif
     ) {
         /* 1 GB Max*/
         max_len = 1ULL << 30;
@@ -241,43 +241,41 @@ static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, 
     if (len) *len = *len < max_len ? *len : max_len;
 }
 
-static inline void nvshmemi_get_remote_mem_handle(nvshmem_mem_handle_t **handle, size_t *len, void *addr, int pe, int transport_idx) {
-    if (!nvshmemi_use_cuda_vmm) {
-        *handle = &nvshmemi_state->handles[0][pe * NVSHMEM_TRANSPORT_COUNT + transport_idx];
-        if (len) *len = nvshmemi_state->heap_size - ((char *)addr - (char *)nvshmemi_state->heap_base);
-    }
-    else {
-        size_t offset = (char *)addr - (char *)nvshmemi_state->heap_base;
-        size_t addr_idx = offset >> log2_cumem_granularity;
-        size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
-        void *handle_start_addr = std::get<1>(nvshmemi_state->idx_in_handles[addr_idx]);
-        size_t handle_size = std::get<2>(nvshmemi_state->idx_in_handles[addr_idx]);
-        *handle = &nvshmemi_state->handles[handle_idx][pe * NVSHMEM_TRANSPORT_COUNT + transport_idx];
-        if (len) *len = handle_size - ((char *)addr - (char *)handle_start_addr);
-    }
+static inline void nvshmemi_get_remote_mem_handle(nvshmem_mem_handle_t **handle, size_t *len,
+                                                  void *addr, int pe, int transport_idx) {
+    size_t offset = (char *)addr - (char *)nvshmemi_state->heap_base;
+    size_t addr_idx = offset >> log2_cumem_granularity;
+    size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
+    void *handle_start_addr = std::get<1>(nvshmemi_state->idx_in_handles[addr_idx]);
+    size_t handle_size = std::get<2>(nvshmemi_state->idx_in_handles[addr_idx]);
+
+    *handle = &nvshmemi_state->handles[handle_idx][pe * NVSHMEM_TRANSPORT_COUNT + transport_idx];
+    if (len) *len = handle_size - ((char *)addr - (char *)handle_start_addr);
 }
 /* rptr is symmetric address on the local pe
    lptr is local address - either symmetric or not */
 static inline void nvshmemi_process_multisend_rma(struct nvshmem_transport *tcurr, int transport_id,
-                                                  int pe, rma_verb_t verb, void *rptr,
-                                                  void *lptr, size_t size, bool is_proxy) {
+                                                  int pe, rma_verb_t verb, void *rptr, void *lptr,
+                                                  size_t size, bool is_proxy) {
     rma_memdesc_t localdesc, remotedesc;
     rma_bytesdesc_t bytes;
-    bytes.srcstride = 1; bytes.deststride = 1;
+    bytes.srcstride = 1;
+    bytes.deststride = 1;
     bytes.elembytes = 1;
     size_t local_chunk_size, remote_chunk_size, size_remaining;
     size_t chunk_size;
     size_remaining = size;
     int status;
 
-    while(size_remaining) {
+    while (size_remaining) {
         localdesc.ptr = lptr;
         NVSHMEMU_UNMAPPED_PTR_TRANSLATE(remotedesc.ptr, rptr, pe);
         remotedesc.offset = (char *)rptr - (char *)nvshmemi_state->heap_base;
         local_chunk_size = size_remaining;
         remote_chunk_size = size_remaining;
         nvshmemi_get_local_mem_handle(&localdesc.handle, &local_chunk_size, lptr, transport_id);
-        nvshmemi_get_remote_mem_handle(&remotedesc.handle, &remote_chunk_size, rptr, pe, transport_id);
+        nvshmemi_get_remote_mem_handle(&remotedesc.handle, &remote_chunk_size, rptr, pe,
+                                       transport_id);
         chunk_size = min(local_chunk_size, min(remote_chunk_size, size_remaining));
         bytes.nelems = chunk_size;
 

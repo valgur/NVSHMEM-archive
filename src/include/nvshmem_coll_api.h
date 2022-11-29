@@ -13,7 +13,6 @@
 #ifndef _NVSHMEM_COLL_API_H_
 #define _NVSHMEM_COLL_API_H_
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -22,20 +21,23 @@ extern "C" {
 //===============================
 
 // alltoall(s) collectives
-#define DECL_NVSHMEM_TYPENAME_ALLTOALL(TYPENAME, TYPE)                                                                  \
-    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_alltoall(nvshmem_team_t team, TYPE *dest, const TYPE* src, size_t nelems);
+#define DECL_NVSHMEM_TYPENAME_ALLTOALL(TYPENAME, TYPE)                                            \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_alltoall(nvshmem_team_t team, TYPE *dest, \
+                                                                 const TYPE *src, size_t nelems);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_ALLTOALL)
 #undef DECL_NVSHMEM_TYPENAME_ALLTOALL
 
-#define DECL_NVSHMEM_TYPENAME_ALLTOALLS(TYPENAME, TYPE)                                                                 \
-    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_alltoalls(nvshmem_team_t team, TYPE *dest, const TYPE* src,    \
-                                                                   ptrdiff_t dst, ptrdiff_t sst, size_t nelems);
+#define DECL_NVSHMEM_TYPENAME_ALLTOALLS(TYPENAME, TYPE)                                            \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_alltoalls(nvshmem_team_t team, TYPE *dest, \
+                                                                  const TYPE *src, ptrdiff_t dst,  \
+                                                                  ptrdiff_t sst, size_t nelems);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_ALLTOALLS)
 #undef DECL_NVSHMEM_TYPENAME_ALLTOALLS
 
-NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_alltoallmem(nvshmem_team_t team, void *dest, const void *src, size_t nelems);
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_alltoallmem(nvshmem_team_t team, void *dest, const void *src,
+                                                   size_t nelems);
 
 // barrier collectives
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_barrier(nvshmem_team_t team);
@@ -47,21 +49,23 @@ NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_sync_all();
 #define nvshmem_sync nvshmem_team_sync
 
 // broadcast collectives
-#define DECL_NVSHMEM_TYPENAME_BROADCAST(TYPENAME, TYPE) \
-    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_broadcast(nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nelem, int PE_root);
+#define DECL_NVSHMEM_TYPENAME_BROADCAST(TYPENAME, TYPE)            \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_broadcast( \
+        nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nelem, int PE_root);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_BROADCAST)
 #undef DECL_NVSHMEM_TYPENAME_BROADCAST
 
 // fcollect collective
-#define DECL_NVSHMEM_TYPENAME_FCOLLECT(TYPENAME, TYPE) \
-    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_fcollect(nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nelem);
+#define DECL_NVSHMEM_TYPENAME_FCOLLECT(TYPENAME, TYPE)                                            \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_fcollect(nvshmem_team_t team, TYPE *dest, \
+                                                                 const TYPE *src, size_t nelem);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_FCOLLECT)
 #undef DECL_NVSHMEM_TYPENAME_FCOLLECT
 
 // reduction collectives
-#define NVSHMEMI_DECL_TEAM_REDUCE(NAME, TYPE, OP)                            \
-    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##NAME##_##OP##_reduce(          \
-            nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nreduce);
+#define NVSHMEMI_DECL_TEAM_REDUCE(NAME, TYPE, OP)                  \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##NAME##_##OP##_reduce( \
+        nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nreduce);
 
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, and)
 NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_TEAM_REDUCE, or)

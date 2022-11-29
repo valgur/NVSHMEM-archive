@@ -53,8 +53,9 @@ int ibrc_qp_depth;
 
 enum { WAIT_ANY = 0, WAIT_ALL = 1 };
 
-int NVSHMEMT_IBRC_MAX_RD_ATOMIC; /* Maximum number of RDMA Read & Atomic operations that can be outstanding per QP
-                    */
+int NVSHMEMT_IBRC_MAX_RD_ATOMIC; /* Maximum number of RDMA Read & Atomic operations that can be
+                                  * outstanding per QP
+                                  */
 
 struct ibrc_request {
     struct ibv_send_wr sr;
@@ -115,7 +116,7 @@ struct ibrc_ep {
 struct ibrc_ep_handle {
     uint32_t qpn;
     uint16_t lid;
-    //ROCE
+    // ROCE
     uint64_t spn;
     uint64_t iid;
 };
@@ -175,16 +176,16 @@ int poll_recv(transport_ibrc_state_t *ibrc_state);
 // Allocate memory to be potentially ibv_reg_mr'd. This needs to be
 // // allocated on separate pages as those pages will be marked DONTFORK
 // // and if they are shared, that could cause a crash in a child process
-static int nvshmemi_ib_malloc_debug(void** ptr, size_t size, const char *filefunc, int line) {
-  size_t page_size = sysconf(_SC_PAGESIZE);
-  void* p;
-  int size_aligned = ROUNDUP(size, page_size);
-  int ret = posix_memalign(&p, page_size, size_aligned);
-  if (ret != 0) return -1;
-  memset(p, 0, size);
-  *ptr = p;
-  INFO(NVSHMEM_INIT, "%s:%d Ib Alloc Size %ld pointer %p", filefunc, line, size, *ptr);
-  return 0;
+static int nvshmemi_ib_malloc_debug(void **ptr, size_t size, const char *filefunc, int line) {
+    size_t page_size = sysconf(_SC_PAGESIZE);
+    void *p;
+    int size_aligned = ROUNDUP(size, page_size);
+    int ret = posix_memalign(&p, page_size, size_aligned);
+    if (ret != 0) return -1;
+    memset(p, 0, size);
+    *ptr = p;
+    INFO(NVSHMEM_INIT, "%s:%d Ib Alloc Size %ld pointer %p", filefunc, line, size, *ptr);
+    return 0;
 }
 #define nvshmemi_ib_malloc(...) nvshmemi_ib_malloc_debug(__VA_ARGS__, __FILE__, __LINE__)
 
@@ -192,14 +193,11 @@ ibrc_mem_handle_info_t get_mem_handle_info(void *gpu_ptr) {
     /* assumes that gpu_ptr is in symmetric heap */
     assert(!mem_handle_cache.empty());
     ibrc_mem_handle_info_t mem_handle_info;
-    if (nvshmemi_use_cuda_vmm) {
-        size_t offset = (char *) gpu_ptr - (char *) nvshmemi_state->heap_base; 
-        size_t addr_idx = offset >> log2_cumem_granularity;
-        size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
-        mem_handle_info = mem_handle_cache[handle_idx];
-    } else {
-        mem_handle_info = mem_handle_cache.back();
-    }
+    size_t offset = (char *)gpu_ptr - (char *)nvshmemi_state->heap_base;
+    size_t addr_idx = offset >> log2_cumem_granularity;
+    size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
+
+    mem_handle_info = mem_handle_cache[handle_idx];
 
     return mem_handle_info;
 }
@@ -236,7 +234,8 @@ int nvshmemt_ibrc_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
         INFO(NVSHMEM_TRANSPORT, "[%d] mem_handle %d : %p", mype, transport_id,
              &mem_handles[i * transport_count + transport_id]);
         struct nvshmemt_ib_common_mem_handle *mem_handle =
-            (struct nvshmemt_ib_common_mem_handle *)&mem_handles[i * transport_count + transport_id];
+            (struct nvshmemt_ib_common_mem_handle
+                 *)&mem_handles[i * transport_count + transport_id];
         INFO(NVSHMEM_TRANSPORT, "[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey,
              mem_handle->rkey, mem_handle->mr);
     }
@@ -394,9 +393,9 @@ static int ep_connect(struct ibrc_ep *ep, struct ibrc_ep_handle *ep_handle) {
         attr.ah_attr.grh.sgid_index = nvshmemi_options.IB_GID_INDEX;
         attr.ah_attr.grh.hop_limit = 255;
         attr.ah_attr.grh.traffic_class = nvshmemi_options.IB_TRAFFIC_CLASS;
-    } else { 
-       attr.ah_attr.dlid = ep_handle->lid;
-       attr.ah_attr.is_global = 0;
+    } else {
+        attr.ah_attr.dlid = ep_handle->lid;
+        attr.ah_attr.is_global = 0;
     }
     attr.max_dest_rd_atomic = NVSHMEMT_IBRC_MAX_RD_ATOMIC;
     attr.min_rnr_timer = 12;
@@ -448,7 +447,7 @@ int ep_get_handle(struct ibrc_ep_handle *ep_handle, struct ibrc_ep *ep) {
 
     ep_handle->lid = device->port_attr[ep->portid - 1].lid;
     ep_handle->qpn = ep->qp->qp_num;
-    if (ep_handle->lid == 0) { 
+    if (ep_handle->lid == 0) {
         ep_handle->spn = device->gid[ep->portid - 1].global.subnet_prefix;
         ep_handle->iid = device->gid[ep->portid - 1].global.interface_id;
     }
@@ -477,13 +476,13 @@ int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     int status = 0;
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)transport->state;
-    struct ibrc_device *device =
-        ((struct ibrc_device *)ibrc_state->devices + ibrc_state->dev_ids[ibrc_state->selected_dev_id]);
+    struct ibrc_device *device = ((struct ibrc_device *)ibrc_state->devices +
+                                  ibrc_state->dev_ids[ibrc_state->selected_dev_id]);
     struct ibrc_mem_handle_info handle_info;
     struct nvshmemt_ib_common_mem_handle *handle;
 
-    status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf,
-                                               length, local_only, ibrc_state->dmabuf_support);
+    status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf, length,
+                                               local_only, ibrc_state->dmabuf_support);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to register memory handle.");
 
     handle = (struct nvshmemt_ib_common_mem_handle *)mem_handle;
@@ -552,26 +551,27 @@ out:
 
 int nvshmemt_ibrc_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
     int status = 0;
-    struct nvshmemt_ib_common_mem_handle *handle = (struct nvshmemt_ib_common_mem_handle *)mem_handle;
+    struct nvshmemt_ib_common_mem_handle *handle =
+        (struct nvshmemt_ib_common_mem_handle *)mem_handle;
 
     status = nvshmemt_ib_common_release_mem_handle(&ftable, mem_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to dereg memory.\n");
 
-    for (std::vector<ibrc_mem_handle_info_t>::iterator it = mem_handle_cache.begin(); it != mem_handle_cache.end(); it++) {
-       if (handle->mr == it->mr) {
+    for (std::vector<ibrc_mem_handle_info_t>::iterator it = mem_handle_cache.begin();
+         it != mem_handle_cache.end(); it++) {
+        if (handle->mr == it->mr) {
 #ifdef NVSHMEM_USE_GDRCOPY
             if (use_gdrcopy) {
-                status = gdrcopy_ftable.unmap(gdr_desc, it->mh, it->cpu_ptr_base,
-                                              it->size);
+                status = gdrcopy_ftable.unmap(gdr_desc, it->mh, it->cpu_ptr_base, it->size);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unmap failed\n");
 
                 status = gdrcopy_ftable.unpin_buffer(gdr_desc, it->mh);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
-               }
+            }
 #endif
-               mem_handle_cache.erase(it);
-               break;
-       }
+            mem_handle_cache.erase(it);
+            break;
+        }
     }
 out:
     return status;
@@ -647,9 +647,10 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
     int status = 0;
 
     T old_value, new_value;
-    // FIXME: gdrcopy causing duplicate copies for small transfers, using direct LD/ST until this resolved
-    //status = gdrcopy_ftable.copy_from_mapping(mh, &old_value, ptr, sizeof(T));
-    //NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr copy from mapping failed\n");
+    // FIXME: gdrcopy causing duplicate copies for small transfers, using direct LD/ST until this
+    // resolved
+    // status = gdrcopy_ftable.copy_from_mapping(mh, &old_value, ptr, sizeof(T));
+    // NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr copy from mapping failed\n");
 #if __cplusplus >= 201103L
     // assert size is 64-bit or smaller, issued as single tansaction
     static_assert(sizeof(T) <= 8, "static_assert(sizeof(T) >= 8) failed");
@@ -661,7 +662,8 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
         case NVSHMEMI_AMO_SIGNAL_SET:
         case NVSHMEMI_AMO_SET:
         case NVSHMEMI_AMO_SWAP: {
-            /* The static_cast is used to truncate the uint64_t value of swap_add back to its original length */
+            /* The static_cast is used to truncate the uint64_t value of swap_add back to its
+             * original length */
             new_value = static_cast<T>(op->swap_add);
             break;
         }
@@ -687,7 +689,8 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
             break;
         }
         case NVSHMEMI_AMO_COMPARE_SWAP: {
-            new_value = (old_value == static_cast<T>(op->compare)) ? static_cast<T>(op->swap_add) : old_value;
+            new_value = (old_value == static_cast<T>(op->compare)) ? static_cast<T>(op->swap_add)
+                                                                   : old_value;
             break;
         }
         case NVSHMEMI_AMO_FETCH: {
@@ -700,8 +703,8 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
         }
     }
 
-    // FIXME: gdrcopy causing duplicate copies for small transfers, using direct LD/ST until this resolved
-    // status = gdrcopy_ftable.copy_to_mapping(mh, ptr, (void *)&new_value, sizeof(T));
+    // FIXME: gdrcopy causing duplicate copies for small transfers, using direct LD/ST until this
+    // resolved status = gdrcopy_ftable.copy_to_mapping(mh, ptr, (void *)&new_value, sizeof(T));
     // NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr copy to mapping failed\n");
     *((volatile T *)ptr) = new_value;
 #if defined(NVSHMEM_X86_64)
@@ -800,7 +803,6 @@ int poll_recv(transport_ibrc_state_t *ibrc_state) {
             status = ne;
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_poll_cq failed \n");
         } else if (ne) {
-
             assert(ne == 1);
             ibrc_buf_t *buf = (ibrc_buf_t *)wc.wr_id;
             if (wc.wc_flags & IBV_WC_WITH_IMM) {
@@ -979,8 +981,9 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb, rma_memdesc_t *remote, rma_memdesc_t *local,
-                      rma_bytesdesc_t bytesdesc, int is_proxy) {
+int nvshmemt_ibrc_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
+                      rma_memdesc_t *remote, rma_memdesc_t *local, rma_bytesdesc_t bytesdesc,
+                      int is_proxy) {
     int status = 0;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)tcurr->state;
     struct ibv_send_wr *sr, **bad_sr;
@@ -1053,8 +1056,8 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, amo_verb_t verb, amo_memdesc_t *remote,
-                      amo_bytesdesc_t bytesdesc, int is_proxy) {
+int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, amo_verb_t verb,
+                      amo_memdesc_t *remote, amo_bytesdesc_t bytesdesc, int is_proxy) {
     int status = 0;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)tcurr->state;
     struct ibrc_ep *ep;
@@ -1318,16 +1321,18 @@ int nvshmemt_ibrc_connect_endpoints(nvshmem_transport_t t) {
     int ep_count = ibrc_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
     ibrc_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
 
-    ibrc_state->ep = (struct ibrc_ep **)calloc(nvshmemi_state->npes * ep_count, sizeof(struct ibrc_ep *));
+    ibrc_state->ep =
+        (struct ibrc_ep **)calloc(nvshmemi_state->npes * ep_count, sizeof(struct ibrc_ep *));
     NULL_ERROR_JMP(ibrc_state->ep, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                    "failed allocating space for endpoints \n");
+                   "failed allocating space for endpoints \n");
 
     local_ep_handles = (struct ibrc_ep_handle *)calloc(nvshmemi_state->npes * ep_count,
-                                                        sizeof(struct ibrc_ep_handle));
+                                                       sizeof(struct ibrc_ep_handle));
     NULL_ERROR_JMP(local_ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                    "failed allocating space for local ep handles \n");
-    
-    ep_handles = (struct ibrc_ep_handle *)calloc(nvshmemi_state->npes * ep_count, sizeof(struct ibrc_ep_handle));
+                   "failed allocating space for local ep handles \n");
+
+    ep_handles = (struct ibrc_ep_handle *)calloc(nvshmemi_state->npes * ep_count,
+                                                 sizeof(struct ibrc_ep_handle));
     NULL_ERROR_JMP(ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                    "failed allocating space for ep handles \n");
 
@@ -1339,38 +1344,40 @@ int nvshmemt_ibrc_connect_endpoints(nvshmem_transport_t t) {
         ndev = ibrc_state->n_dev_ids;
 
         ibrc_state->selected_dev_id = nvshmemi_state->mype_node % ndev;
-        INFO(NVSHMEM_INIT, "NVSHMEM_ENABLE_NIC_PE_MAPPING = 1, setting dev_id = %d", ibrc_state->selected_dev_id);
+        INFO(NVSHMEM_INIT, "NVSHMEM_ENABLE_NIC_PE_MAPPING = 1, setting dev_id = %d",
+             ibrc_state->selected_dev_id);
     } else {
         status = get_device_by_distance(&ibrc_state->selected_dev_id, nvshmemi_state, t);
-        INFO(NVSHMEM_INIT, "Getting closest device by distance, device index = %d", ibrc_state->selected_dev_id);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                        "get_device_by_distance failed \n");
+        INFO(NVSHMEM_INIT, "Getting closest device by distance, device index = %d",
+             ibrc_state->selected_dev_id);
+        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get_device_by_distance failed \n");
     }
 
     for (int j = 0; j < nvshmemi_state->npes; j++) {
         for (int k = 0; k < ep_count; k++) {
-            nvshmemt_ibrc_ep_create(&ibrc_state->ep[j * ep_count + k], ibrc_state->selected_dev_id, ibrc_state);
+            nvshmemt_ibrc_ep_create(&ibrc_state->ep[j * ep_count + k], ibrc_state->selected_dev_id,
+                                    ibrc_state);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport create ep failed \n");
-            status = nvshmemt_ibrc_ep_get_handle(&local_ep_handles[j * ep_count + k], ibrc_state->ep[j * ep_count + k]);
+            status = nvshmemt_ibrc_ep_get_handle(&local_ep_handles[j * ep_count + k],
+                                                 ibrc_state->ep[j * ep_count + k]);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport get ep handle failed \n");
         }
     }
 
-    status = nvshmemi_boot_handle.alltoall(
-        (void *)local_ep_handles, (void *)ep_handles,
-        sizeof(struct ibrc_ep_handle) * ep_count, &nvshmemi_boot_handle);
+    status = nvshmemi_boot_handle.alltoall((void *)local_ep_handles, (void *)ep_handles,
+                                           sizeof(struct ibrc_ep_handle) * ep_count,
+                                           &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of ep handles failed \n");
 
     for (int j = 0; j < nvshmemi_state->npes; j++) {
         for (int k = 0; k < ep_count; k++) {
-            status = nvshmemt_ibrc_ep_connect(
-                ibrc_state->ep[j * ep_count + k],
-                &ep_handles[j * ep_count + k]);
+            status = nvshmemt_ibrc_ep_connect(ibrc_state->ep[j * ep_count + k],
+                                              &ep_handles[j * ep_count + k]);
             NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                            "transport create connect failed \n");
+                         "transport create connect failed \n");
         }
     }
-    out:
+out:
     if (status) {
         if (ibrc_state->ep) free(ibrc_state->ep);
     }
@@ -1396,13 +1403,14 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     int offset = 0;
     connected_qp_count = 0;
 
-    transport_skipped = strncasecmp(nvshmemi_options.REMOTE_TRANSPORT,
-                                        IB_TRANSPORT_STRING,
-                                        TRANSPORT_STRING_MAX_LENGTH);
+    transport_skipped = strncasecmp(nvshmemi_options.REMOTE_TRANSPORT, IB_TRANSPORT_STRING,
+                                    TRANSPORT_STRING_MAX_LENGTH);
 
     if (transport_skipped) {
-        INFO(NVSHMEM_INIT, "IB disabled by user through environment "
-                            "in favor of the %s transport.\n", nvshmemi_options.REMOTE_TRANSPORT);
+        INFO(NVSHMEM_INIT,
+             "IB disabled by user through environment "
+             "in favor of the %s transport.\n",
+             nvshmemi_options.REMOTE_TRANSPORT);
         status = NVSHMEMI_ERROR_SKIPPED;
         goto out;
     }
@@ -1468,8 +1476,8 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
                 "NVSHMEM_HCA_PE_MAPPING \n");
         } else {
             user_selection = 1;
-            pe_hca_map_count = nvshmemt_parse_hca_list(nvshmemi_options.HCA_PE_MAPPING, pe_hca_mapping,
-                                                       MAX_NUM_PES_PER_NODE);
+            pe_hca_map_count = nvshmemt_parse_hca_list(nvshmemi_options.HCA_PE_MAPPING,
+                                                       pe_hca_mapping, MAX_NUM_PES_PER_NODE);
         }
     }
 
@@ -1530,10 +1538,9 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
                 status = ftable.query_port(device->context, p, &device->port_attr[p - 1]);
                 NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_port_query failed \n");
 
-                if ((device->port_attr[p - 1].state != IBV_PORT_ACTIVE) 
-                    || (device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_INFINIBAND
-                    && device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_ETHERNET)) { 
-
+                if ((device->port_attr[p - 1].state != IBV_PORT_ACTIVE) ||
+                    (device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_INFINIBAND &&
+                     device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_ETHERNET)) {
                     if (user_selection) {
                         WARN_PRINT(
                             "found inactive port or port with non-IB link layer protocol, "
@@ -1542,8 +1549,10 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
                     continue;
                 }
 
-                status = ftable.query_gid(device->context, p, nvshmemi_options.IB_GID_INDEX, &device->gid[p - 1]);
-                NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out, "query_gid failed \n");
+                status = ftable.query_gid(device->context, p, nvshmemi_options.IB_GID_INDEX,
+                                          &device->gid[p - 1]);
+                NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out,
+                               "query_gid failed \n");
 
                 device->pd = ftable.alloc_pd(device->context);
                 NULL_ERROR_JMP(device->pd, status, NVSHMEMX_ERROR_INTERNAL, out,
@@ -1641,7 +1650,8 @@ int nvshmemt_ibrc_init(nvshmem_transport_t *t) {
     ibrc_state->dmabuf_support = false;
 #if CUDA_VERSION >= 11070
     int flag;
-    status = CUPFN(cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, nvshmemi_state->cudevice));
+    status = CUPFN(cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED,
+                                        nvshmemi_state->cudevice));
     if (status != CUDA_SUCCESS) {
         status = 0;
         cudaGetLastError();

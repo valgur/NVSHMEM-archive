@@ -13,23 +13,21 @@ template <typename TYPE, rdxn_ops_t OP>
 void nvshmemi_call_rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
                                          size_t nreduce, cudaStream_t stream);
 
-template<typename TYPE, rdxn_ops_t OP>
-int nvshmemi_reduce_on_stream(nvshmem_team_t team, TYPE *dest,            
-                                      const TYPE *source, size_t nreduce,         
-                                      cudaStream_t stream) {                      
+template <typename TYPE, rdxn_ops_t OP>
+int nvshmemi_reduce_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce,
+                              cudaStream_t stream) {
 #ifdef NVSHMEM_USE_NCCL
-    nvshmemi_team_t *teami = nvshmemi_team_pool[team];                                        
-    if (nvshmemi_use_nccl && nvshmemi_get_nccl_op<OP>() != ncclNumOps && nvshmemi_get_nccl_dt<TYPE>() != ncclNumTypes) {             
-        NCCL_CHECK(                                                                           
-            nccl_ftable.AllReduce(source, dest, nreduce, nvshmemi_get_nccl_dt<TYPE>(),  
-                                  nvshmemi_get_nccl_op<OP>(), teami->nccl_comm, stream));   
-    } else 
+    nvshmemi_team_t *teami = nvshmemi_team_pool[team];
+    if (nvshmemi_use_nccl && nvshmemi_get_nccl_op<OP>() != ncclNumOps &&
+        nvshmemi_get_nccl_dt<TYPE>() != ncclNumTypes) {
+        NCCL_CHECK(nccl_ftable.AllReduce(source, dest, nreduce, nvshmemi_get_nccl_dt<TYPE>(),
+                                         nvshmemi_get_nccl_op<OP>(), teami->nccl_comm, stream));
+    } else
 #endif /* NVSHMEM_USE_NCCL */
-    {                                                                                  
-        nvshmemi_call_rdxn_on_stream_kernel<TYPE, OP>(team, dest, source, nreduce, 
-                                                                 stream);                     
-    }                                                                                         
-    return 0;                                                                                 
+    {
+        nvshmemi_call_rdxn_on_stream_kernel<TYPE, OP>(team, dest, source, nreduce, stream);
+    }
+    return 0;
 }
 
 #endif /* NVSHMEMI_RDXN_COMMON_CPU_H */

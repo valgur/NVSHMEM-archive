@@ -28,7 +28,7 @@ endif()
    target_compile_definitions(nvshmem_example_helper INTERFACE NVSHMEM_UCX_SUPPORT)
 endif()
 
-if (NVSHMEM_IBDEVX_SUPPORT OR NVSHMEM_GPUINITIATED_SUPPORT)
+if (NVSHMEM_IBDEVX_SUPPORT OR NVSHMEM_IBGDA_SUPPORT)
   target_link_libraries(nvshmem_example_helper INTERFACE ${MLX5_lib})
 endif()
 

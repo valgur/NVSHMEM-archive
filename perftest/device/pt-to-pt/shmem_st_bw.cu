@@ -24,7 +24,8 @@
 #define MAX_MSG_SIZE 32 * 1024 * 1024
 #define UNROLL 2
 
-__global__ void bw(double *data_d, double *remote_d, volatile unsigned int *counter_d, int len, int pe, int iter) {
+__global__ void bw(double *data_d, double *remote_d, volatile unsigned int *counter_d, int len,
+                   int pe, int iter) {
     int u, i, j, tid, slice;
     unsigned int counter;
     int threads = gridDim.x * blockDim.x;
@@ -183,7 +184,8 @@ int main(int argc, char *argv[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_st_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw, i);
+        print_table("shmem_st_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
+                    i);
     }
 
 finalize:

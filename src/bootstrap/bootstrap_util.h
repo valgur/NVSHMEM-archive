@@ -37,13 +37,12 @@
 
 #endif
 
-#define BOOTSTRAP_NULL_ERROR_JMP(var, status, err, label, ...)                          \
-    do {                                                                                \
-        if (var == NULL) {                                                              \
-            fprintf(stderr, "%s:%d: NULL value ", __FILE__, __LINE__);                  \
-            fprintf(stderr, __VA_ARGS__);                                               \
-            status = err;                                                               \
-            goto label;                                                                 \
-        }                                                                               \
+#define BOOTSTRAP_NULL_ERROR_JMP(var, status, err, label, ...)         \
+    do {                                                               \
+        if (var == NULL) {                                             \
+            fprintf(stderr, "%s:%d: NULL value ", __FILE__, __LINE__); \
+            fprintf(stderr, __VA_ARGS__);                              \
+            status = err;                                              \
+            goto label;                                                \
+        }                                                              \
     } while (0)
-

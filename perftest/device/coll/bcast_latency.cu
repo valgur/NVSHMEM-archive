@@ -13,25 +13,22 @@
 #include "coll_test.h"
 #define DATATYPE int64_t
 
-#define CALL_BCAST(TYPENAME, TYPE, TG_PRE, THREADGROUP, THREAD_COMP, ELEM_COMP)                    \
-__global__ void test_##TYPENAME##_bcast_call_kern##THREADGROUP(nvshmem_team_t team,                \
-                                                                   TYPE *dest, const TYPE *source, \
-                                                                   int nelems, int PE_root,        \
-                                                                   int mype, int iter) {           \
-    int i;                                                                                         \
-                                                                                                   \
-                                                                                                   \
-    if (!blockIdx.x && (threadIdx.x < THREAD_COMP) && (nelems < ELEM_COMP)) {                      \
-        for (i = 0; i < iter; i++) {                                                               \
-            nvshmem##TG_PRE##_##TYPENAME##_broadcast##THREADGROUP(team, dest, source, nelems,      \
-                                                                  PE_root);                        \
-        }                                                                                          \
-    }                                                                                              \
-                                                                                                   \
-}
+#define CALL_BCAST(TYPENAME, TYPE, TG_PRE, THREADGROUP, THREAD_COMP, ELEM_COMP)                   \
+    __global__ void test_##TYPENAME##_bcast_call_kern##THREADGROUP(                               \
+        nvshmem_team_t team, TYPE *dest, const TYPE *source, int nelems, int PE_root, int mype,   \
+        int iter) {                                                                               \
+        int i;                                                                                    \
+                                                                                                  \
+        if (!blockIdx.x && (threadIdx.x < THREAD_COMP) && (nelems < ELEM_COMP)) {                 \
+            for (i = 0; i < iter; i++) {                                                          \
+                nvshmem##TG_PRE##_##TYPENAME##_broadcast##THREADGROUP(team, dest, source, nelems, \
+                                                                      PE_root);                   \
+            }                                                                                     \
+        }                                                                                         \
+    }
 
-CALL_BCAST(int32, int32_t,,, 1, 512);
-CALL_BCAST(int64, int64_t,,, 1, 512);
+CALL_BCAST(int32, int32_t, , , 1, 512);
+CALL_BCAST(int64, int64_t, , , 1, 512);
 CALL_BCAST(int32, int32_t, x, _warp, warpSize, 4096);
 CALL_BCAST(int64, int64_t, x, _warp, warpSize, 4096);
 CALL_BCAST(int32, int32_t, x, _block, INT_MAX, INT_MAX);
@@ -60,9 +57,8 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
     nvshmem_barrier_all();
     i = 0;
     for (num_elems = 1; num_elems < 512; num_elems *= 2) {
-        status = nvshmemx_collective_launch((const void *)test_int32_bcast_call_kern,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_1, 0, stream);
+        status = nvshmemx_collective_launch((const void *)test_int32_bcast_call_kern, num_blocks,
+                                            nvshm_test_num_tpb, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -72,9 +68,8 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
         nvshmem_barrier_all();
 
         cudaEventRecord(start, stream);
-        status = nvshmemx_collective_launch((const void *)test_int32_bcast_call_kern,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_2, 0, stream);
+        status = nvshmemx_collective_launch((const void *)test_int32_bcast_call_kern, num_blocks,
+                                            nvshm_test_num_tpb, args_2, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -93,8 +88,7 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
     i = 0;
     for (num_elems = 1; num_elems < 4096; num_elems *= 2) {
         status = nvshmemx_collective_launch((const void *)test_int32_bcast_call_kern_warp,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_1, 0, stream);
+                                            num_blocks, nvshm_test_num_tpb, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -105,8 +99,7 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
 
         cudaEventRecord(start, stream);
         status = nvshmemx_collective_launch((const void *)test_int32_bcast_call_kern_warp,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_2, 0, stream);
+                                            num_blocks, nvshm_test_num_tpb, args_2, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -126,8 +119,7 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
     for (num_elems = 1; num_elems < max_elems; num_elems *= 2) {
         h_size_array[i] = num_elems * 4;
         status = nvshmemx_collective_launch((const void *)test_int32_bcast_call_kern_block,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_1, 0, stream);
+                                            num_blocks, nvshm_test_num_tpb, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -138,8 +130,7 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
 
         cudaEventRecord(start, stream);
         status = nvshmemx_collective_launch((const void *)test_int32_bcast_call_kern_block,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_2, 0, stream);
+                                            num_blocks, nvshm_test_num_tpb, args_2, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -156,16 +147,18 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
     }
 
     if (!mype) {
-        print_table("bcast_device", "32-bit-thread", "size (Bytes)", "latency", "us", '-', h_size_array, h_thread_lat, i);
-        print_table("bcast_device", "32-bit-warp", "size (Bytes)", "latency", "us", '-', h_size_array, h_warp_lat, i);
-        print_table("bcast_device", "32-bit-block", "size (Bytes)", "latency", "us", '-', h_size_array, h_block_lat, i);
+        print_table("bcast_device", "32-bit-thread", "size (Bytes)", "latency", "us", '-',
+                    h_size_array, h_thread_lat, i);
+        print_table("bcast_device", "32-bit-warp", "size (Bytes)", "latency", "us", '-',
+                    h_size_array, h_warp_lat, i);
+        print_table("bcast_device", "32-bit-block", "size (Bytes)", "latency", "us", '-',
+                    h_size_array, h_block_lat, i);
     }
 
     i = 0;
     for (num_elems = 1; num_elems < 512; num_elems *= 2) {
-        status = nvshmemx_collective_launch((const void *)test_int64_bcast_call_kern,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_1, 0, stream);
+        status = nvshmemx_collective_launch((const void *)test_int64_bcast_call_kern, num_blocks,
+                                            nvshm_test_num_tpb, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -175,9 +168,8 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
         nvshmem_barrier_all();
 
         cudaEventRecord(start, stream);
-        status = nvshmemx_collective_launch((const void *)test_int64_bcast_call_kern,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_2, 0, stream);
+        status = nvshmemx_collective_launch((const void *)test_int64_bcast_call_kern, num_blocks,
+                                            nvshm_test_num_tpb, args_2, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -196,8 +188,7 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
     i = 0;
     for (num_elems = 1; num_elems < 4096; num_elems *= 2) {
         status = nvshmemx_collective_launch((const void *)test_int64_bcast_call_kern_warp,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_1, 0, stream);
+                                            num_blocks, nvshm_test_num_tpb, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -208,8 +199,7 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
 
         cudaEventRecord(start, stream);
         status = nvshmemx_collective_launch((const void *)test_int64_bcast_call_kern_warp,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_2, 0, stream);
+                                            num_blocks, nvshm_test_num_tpb, args_2, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -229,8 +219,7 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
     for (num_elems = 1; num_elems < max_elems; num_elems *= 2) {
         h_size_array[i] = num_elems * 8;
         status = nvshmemx_collective_launch((const void *)test_int64_bcast_call_kern_block,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_1, 0, stream);
+                                            num_blocks, nvshm_test_num_tpb, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -241,8 +230,7 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
 
         cudaEventRecord(start, stream);
         status = nvshmemx_collective_launch((const void *)test_int64_bcast_call_kern_block,
-                                            num_blocks, nvshm_test_num_tpb,
-                                            args_2, 0, stream);
+                                            num_blocks, nvshm_test_num_tpb, args_2, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);
@@ -259,9 +247,12 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
     }
 
     if (!mype) {
-        print_table("bcast_device", "64-bit-thread", "size (Bytes)", "latency", "us", '-', h_size_array, h_thread_lat, i);
-        print_table("bcast_device", "64-bit-warp", "size (Bytes)", "latency", "us", '-', h_size_array, h_warp_lat, i);
-        print_table("bcast_device", "64-bit-block", "size (Bytes)", "latency", "us", '-', h_size_array, h_block_lat, i);
+        print_table("bcast_device", "64-bit-thread", "size (Bytes)", "latency", "us", '-',
+                    h_size_array, h_thread_lat, i);
+        print_table("bcast_device", "64-bit-warp", "size (Bytes)", "latency", "us", '-',
+                    h_size_array, h_warp_lat, i);
+        print_table("bcast_device", "64-bit-block", "size (Bytes)", "latency", "us", '-',
+                    h_size_array, h_block_lat, i);
     }
 
     return status;
@@ -311,7 +302,8 @@ int main(int argc, char **argv) {
     mype = nvshmem_my_pe();
     CUDA_CHECK(cudaStreamCreateWithFlags(&cstrm, cudaStreamNonBlocking));
 
-    DEBUG_PRINT("SHMEM: [%d of %d] hello shmem world! \n", mype, nvshmem_team_n_pes(NVSHMEM_TEAM_WORLD));
+    DEBUG_PRINT("SHMEM: [%d of %d] hello shmem world! \n", mype,
+                nvshmem_team_n_pes(NVSHMEM_TEAM_WORLD));
 
     num_elems = MAX_ELEMS / 2;
     alloc_size = (num_elems * 2) * sizeof(DATATYPE);
@@ -339,7 +331,8 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaMemcpyAsync(d_dest, h_dest, (sizeof(DATATYPE) * num_elems),
                                cudaMemcpyHostToDevice, cstrm));
 
-    broadcast_calling_kernel(NVSHMEM_TEAM_WORLD, d_dest, d_source, mype, root, max_elems, cstrm, h_tables);
+    broadcast_calling_kernel(NVSHMEM_TEAM_WORLD, d_dest, d_source, mype, root, max_elems, cstrm,
+                             h_tables);
 
     CUDA_CHECK(cudaMemcpyAsync(h_source, d_source, (sizeof(DATATYPE) * num_elems),
                                cudaMemcpyDeviceToHost, cstrm));

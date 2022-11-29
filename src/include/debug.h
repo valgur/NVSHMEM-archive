@@ -43,12 +43,11 @@ typedef enum {
 } nvshmem_debug_log_sub_sys;
 
 extern "C" {
-void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags,
-                       const char *filefunc, int line, const char *fmt, ...);
+void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const char *filefunc,
+                       int line, const char *fmt, ...);
 }
 
-#define WARN(...) \
-    nvshmem_debug_log(NVSHMEM_LOG_WARN, NVSHMEM_ALL, __FILE__, __LINE__, __VA_ARGS__)
+#define WARN(...) nvshmem_debug_log(NVSHMEM_LOG_WARN, NVSHMEM_ALL, __FILE__, __LINE__, __VA_ARGS__)
 #define INFO(FLAGS, ...) \
     nvshmem_debug_log(NVSHMEM_LOG_INFO, (FLAGS), __func__, __LINE__, __VA_ARGS__)
 

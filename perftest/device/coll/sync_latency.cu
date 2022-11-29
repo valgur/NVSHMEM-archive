@@ -12,33 +12,33 @@
 
 #include "coll_test.h"
 
-#define SYNC_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)                                 \
-__global__ void test_sync_call_kernel##THREADGROUP(nvshmem_team_t team, int iter) {   \
-    int i;                                                                            \
-    if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                                 \
-        for (i = 0; i < iter; i++) {                                                  \
-            nvshmem##TG_PRE##_team_sync##THREADGROUP(team);                           \
-        }                                                                             \
-    }                                                                                 \
-}
+#define SYNC_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)                                   \
+    __global__ void test_sync_call_kernel##THREADGROUP(nvshmem_team_t team, int iter) { \
+        int i;                                                                          \
+        if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                               \
+            for (i = 0; i < iter; i++) {                                                \
+                nvshmem##TG_PRE##_team_sync##THREADGROUP(team);                         \
+            }                                                                           \
+        }                                                                               \
+    }
 
-#define SYNC_ALL_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)                              \
-__global__ void test_sync_all_call_kernel##THREADGROUP(int iter) {                     \
-    int i;                                                                             \
-    if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                                  \
-        for (i = 0; i < iter; i++) {                                                   \
-            nvshmem##TG_PRE##_sync_all##THREADGROUP();                                 \
-        }                                                                              \
-    }                                                                                  \
-}
+#define SYNC_ALL_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)              \
+    __global__ void test_sync_all_call_kernel##THREADGROUP(int iter) { \
+        int i;                                                         \
+        if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {              \
+            for (i = 0; i < iter; i++) {                               \
+                nvshmem##TG_PRE##_sync_all##THREADGROUP();             \
+            }                                                          \
+        }                                                              \
+    }
 
-SYNC_KERNEL(,,1);
-SYNC_KERNEL(x,_warp,warpSize);
-SYNC_KERNEL(x,_block,INT_MAX);
+SYNC_KERNEL(, , 1);
+SYNC_KERNEL(x, _warp, warpSize);
+SYNC_KERNEL(x, _block, INT_MAX);
 
-SYNC_ALL_KERNEL(,,1);
-SYNC_ALL_KERNEL(x,_warp,warpSize);
-SYNC_ALL_KERNEL(x,_block,INT_MAX);
+SYNC_ALL_KERNEL(, , 1);
+SYNC_ALL_KERNEL(x, _warp, warpSize);
+SYNC_ALL_KERNEL(x, _block, INT_MAX);
 
 int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, void **h_tables) {
     int status = 0;
@@ -138,9 +138,12 @@ int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, void
     }
 
     if (!mype) {
-        print_table("sync_device", "thread", "threads per block", "latency", "us", '-', &num_tpb, h_thread_lat, 1);
-        print_table("sync_device", "warp", "threads per block", "latency", "us", '-', &num_tpb, h_warp_lat, 1);
-        print_table("sync_device", "block", "threads per block", "latency", "us", '-', &num_tpb, h_block_lat, 1);
+        print_table("sync_device", "thread", "threads per block", "latency", "us", '-', &num_tpb,
+                    h_thread_lat, 1);
+        print_table("sync_device", "warp", "threads per block", "latency", "us", '-', &num_tpb,
+                    h_warp_lat, 1);
+        print_table("sync_device", "block", "threads per block", "latency", "us", '-', &num_tpb,
+                    h_block_lat, 1);
     }
 
     nvshmem_barrier_all();
@@ -221,9 +224,12 @@ int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, void
     }
 
     if (!mype) {
-        print_table("sync_all_device", "thread", "threads per block", "latency", "us", '-', &num_tpb, h_thread_lat, 1);
-        print_table("sync_all_device", "warp", "threads per block", "latency", "us", '-', &num_tpb, h_warp_lat, 1);
-        print_table("sync_all_device", "block", "threads per block", "latency", "us", '-', &num_tpb, h_block_lat, 1);
+        print_table("sync_all_device", "thread", "threads per block", "latency", "us", '-',
+                    &num_tpb, h_thread_lat, 1);
+        print_table("sync_all_device", "warp", "threads per block", "latency", "us", '-', &num_tpb,
+                    h_warp_lat, 1);
+        print_table("sync_all_device", "block", "threads per block", "latency", "us", '-', &num_tpb,
+                    h_block_lat, 1);
     }
 
     return status;

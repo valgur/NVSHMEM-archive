@@ -83,7 +83,7 @@ int main(int c, char *v[]) {
     if (mype == 0) {
         printf("Note: This test measures full round-trip latency\n");
     }
-    
+
     {
         int status = 0;
         void *args_1[] = {&flag_d, &mype, &skip};
@@ -118,7 +118,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_sig_ping_lat", "None", "size (Bytes)", "latency", "us", '-', &size, h_lat, 1);
+        print_table("shmem_sig_ping_lat", "None", "size (Bytes)", "latency", "us", '-', &size,
+                    h_lat, 1);
     }
 finalize:
 

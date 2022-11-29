@@ -39,10 +39,10 @@ NVSHMEM_IBDEVX_SUPPORT ?= 0
 # whether to build with libfabric support.
 NVSHMEM_LIBFABRIC_SUPPORT ?= 0
 # whether to build with GPU-initiated communication support.
-NVSHMEM_GPUINITIATED_SUPPORT ?= 0
+NVSHMEM_IBGDA_SUPPORT ?= 0
 # whether to build with GPU-initiated communication support for GPU memory only.
 # host memory will not be supported but users could gain improved performance.
-NVSHMEM_GPUINITIATED_SUPPORT_GPUMEM_ONLY ?= 0
+NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY ?= 0
 # UCX install location
 UCX_HOME ?= /usr/local/ucx
 # libfabric installation location
@@ -81,17 +81,19 @@ TESTINC := -I$(CUDA_INC) -I$(mkfile_dir)/common
 # Better define NVCC_GENCODE in your environment to the minimal set
 # of archs to reduce compile time.
 NVCC_GENCODE_DEFAULT = -gencode=arch=compute_70,code=sm_70
-ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 11; echo $$?),0)
+ifeq ($(shell test "0$(CUDA_MAJOR)" -eq 11; echo $$?),0)
 NVCC_GENCODE_DEFAULT += -gencode=arch=compute_80,code=sm_80
-ifeq ($(shell test "0$(CUDA_MINOR)" -ge 8; echo $$?),0)
-NVCC_GENCODE_DEFAULT += -gencode=arch=compute_90,code=sm_90
-else
-ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 12; echo $$?),0)
-NVCC_GENCODE_DEFAULT += -gencode=arch=compute_90,code=sm_90
-endif
-endif
 # The threads option was introuced to NVCC in CUDA 11.2
 ifeq ($(shell test "0$(CUDA_MINOR)" -ge 2; echo $$?),0)
+NVCUFLAGS += -t 4
+TESTCUFLAGS += -t 4
+endif
+ifeq ($(shell test "0$(CUDA_MINOR)" -ge 8; echo $$?),0)
+NVCC_GENCODE_DEFAULT += -gencode=arch=compute_90,code=sm_90
+endif
+else
+ifeq ($(shell test "0$(CUDA_MAJOR)" -ge 12; echo $$?),0)
+NVCC_GENCODE_DEFAULT += -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_90,code=sm_90
 NVCUFLAGS += -t 4
 TESTCUFLAGS += -t 4
 endif
@@ -127,7 +129,7 @@ LDFLAGS += -lmlx5
 TESTLDFLAGS += -lmlx5
 endif
 
-ifeq ($(NVSHMEM_GPUINITIATED_SUPPORT), 1)
+ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
 LDFLAGS += -lmlx5
 TESTLDFLAGS += -lmlx5
 endif

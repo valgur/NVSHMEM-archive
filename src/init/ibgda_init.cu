@@ -6,7 +6,7 @@
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
-#include "nvshmemi_gic.h"
+#include "nvshmemi_ibgda.h"
 #include "nvshmemx_error.h"
 #include "util.h"
 

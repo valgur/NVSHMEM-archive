@@ -29,31 +29,31 @@
 void atomic_op_parse(char *amo, nvshmemi_amo_t *atomic_op) {
     size_t string_length = strnlen(amo, 20);
 
-    if(strncmp(amo, "inc", string_length) == 0) {
+    if (strncmp(amo, "inc", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_INC;
-    } else if(strncmp(amo, "fetch_inc", string_length) == 0) {
+    } else if (strncmp(amo, "fetch_inc", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_FETCH_INC;
-    } else if(strncmp(amo, "set", string_length) == 0) {
+    } else if (strncmp(amo, "set", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_SET;
-    } else if(strncmp(amo, "add", string_length) == 0) {
+    } else if (strncmp(amo, "add", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_ADD;
-    } else if(strncmp(amo, "fetch_add", string_length) == 0) {
+    } else if (strncmp(amo, "fetch_add", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_FETCH_ADD;
-    } else if(strncmp(amo, "and", string_length) == 0) {
+    } else if (strncmp(amo, "and", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_AND;
-    } else if(strncmp(amo, "fetch_and", string_length) == 0) {
+    } else if (strncmp(amo, "fetch_and", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_FETCH_AND;
-    } else if(strncmp(amo, "or", string_length) == 0) {
+    } else if (strncmp(amo, "or", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_OR;
-    } else if(strncmp(amo, "fetch_or", string_length) == 0) {
+    } else if (strncmp(amo, "fetch_or", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_FETCH_OR;
-    } else if(strncmp(amo, "xor", string_length) == 0) {
+    } else if (strncmp(amo, "xor", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_XOR;
-    } else if(strncmp(amo, "fetch_xor", string_length) == 0) {
+    } else if (strncmp(amo, "fetch_xor", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_FETCH_XOR;
-    } else if(strncmp(amo, "swap", string_length) == 0) {
+    } else if (strncmp(amo, "swap", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_SWAP;
-    } else if(strncmp(amo, "compare_swap", string_length) == 0) {
+    } else if (strncmp(amo, "compare_swap", string_length) == 0) {
         *atomic_op = NVSHMEMI_AMO_COMPARE_SWAP;
     } else {
         *atomic_op = NVSHMEMI_AMO_ACK;
@@ -77,168 +77,164 @@ void atomic_usage(void) {
     fprintf(stderr, "compare_swap\n");
 }
 
-#define DEFINE_ATOMIC_BW_FN_NO_ARG(AMO)                                               \
-__global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, \
-                                   int len, int pe, int iter) {                       \
-    int u, i, j, peer, tid, slice;                                                    \
-    unsigned int counter;                                                             \
-    int threads = gridDim.x * blockDim.x;                                             \
-    tid = blockIdx.x * blockDim.x + threadIdx.x;                                      \
-                                                                                      \
-    peer = !pe;                                                                       \
-    slice = threads;                                                                  \
-                                                                                      \
-    for (i = 0; i < iter; i++) {                                                      \
-                                                                                      \
-        for (j = 0; j < len - slice; j += slice) {                                    \
-            int idx = j * threads + tid;                                              \
-            nvshmem_uint64_atomic_##AMO(data_d + idx, peer);                          \
-            __syncthreads();                                                          \
-        }                                                                             \
-                                                                                      \
-        int idx = j + u * threads + tid;                                              \
-        if (idx < len) nvshmem_uint64_atomic_##AMO(data_d + idx, peer);               \
-                                                                                      \
-        /* synchronizing across blocks */                                             \
-        __syncthreads();                                                              \
-                                                                                      \
-        if (!threadIdx.x) {                                                           \
-            __threadfence();                                                          \
-            counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                 \
-            if (counter == (gridDim.x * (i + 1) - 1)) {                               \
-                *(counter_d + 1) += 1;                                                \
-            }                                                                         \
-            while (*(counter_d + 1) != i + 1)                                         \
-                ;                                                                     \
-        }                                                                             \
-                                                                                      \
-        __syncthreads();                                                              \
-    }                                                                                 \
-                                                                                      \
-    /* synchronizing across blocks */                                                 \
-    __syncthreads();                                                                  \
-                                                                                      \
-    if (!threadIdx.x) {                                                               \
-        __threadfence();                                                              \
-        counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                     \
-        if (counter == (gridDim.x * (i + 1) - 1)) {                                   \
-            nvshmem_quiet();                                                          \
-            *(counter_d + 1) += 1;                                                    \
-        }                                                                             \
-        while (*(counter_d + 1) != i + 1)                                             \
-            ;                                                                         \
-    }                                                                                 \
-}
+#define DEFINE_ATOMIC_BW_FN_NO_ARG(AMO)                                                            \
+    __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
+                                      int pe, int iter) {                                          \
+        int u, i, j, peer, tid, slice;                                                             \
+        unsigned int counter;                                                                      \
+        int threads = gridDim.x * blockDim.x;                                                      \
+        tid = blockIdx.x * blockDim.x + threadIdx.x;                                               \
+                                                                                                   \
+        peer = !pe;                                                                                \
+        slice = threads;                                                                           \
+                                                                                                   \
+        for (i = 0; i < iter; i++) {                                                               \
+            for (j = 0; j < len - slice; j += slice) {                                             \
+                int idx = j * threads + tid;                                                       \
+                nvshmem_uint64_atomic_##AMO(data_d + idx, peer);                                   \
+                __syncthreads();                                                                   \
+            }                                                                                      \
+                                                                                                   \
+            int idx = j + u * threads + tid;                                                       \
+            if (idx < len) nvshmem_uint64_atomic_##AMO(data_d + idx, peer);                        \
+                                                                                                   \
+            /* synchronizing across blocks */                                                      \
+            __syncthreads();                                                                       \
+                                                                                                   \
+            if (!threadIdx.x) {                                                                    \
+                __threadfence();                                                                   \
+                counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                          \
+                if (counter == (gridDim.x * (i + 1) - 1)) {                                        \
+                    *(counter_d + 1) += 1;                                                         \
+                }                                                                                  \
+                while (*(counter_d + 1) != i + 1)                                                  \
+                    ;                                                                              \
+            }                                                                                      \
+                                                                                                   \
+            __syncthreads();                                                                       \
+        }                                                                                          \
+                                                                                                   \
+        /* synchronizing across blocks */                                                          \
+        __syncthreads();                                                                           \
+                                                                                                   \
+        if (!threadIdx.x) {                                                                        \
+            __threadfence();                                                                       \
+            counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                              \
+            if (counter == (gridDim.x * (i + 1) - 1)) {                                            \
+                nvshmem_quiet();                                                                   \
+                *(counter_d + 1) += 1;                                                             \
+            }                                                                                      \
+            while (*(counter_d + 1) != i + 1)                                                      \
+                ;                                                                                  \
+        }                                                                                          \
+    }
 
-#define DEFINE_ATOMIC_BW_FN_ONE_ARG(AMO, SET_EXPR)                                    \
-__global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, \
-                                  int len, int pe, int iter) {                        \
-    int u, i, j, peer, tid, slice;                                                    \
-    unsigned int counter;                                                             \
-    int threads = gridDim.x * blockDim.x;                                             \
-    tid = blockIdx.x * blockDim.x + threadIdx.x;                                      \
-                                                                                      \
-    peer = !pe;                                                                       \
-    slice = threads;                                                                  \
-                                                                                      \
-    for (i = 0; i < iter; i++) {                                                      \
-                                                                                      \
-        for (j = 0; j < len - slice; j += slice) {                                    \
-            int idx = j * threads + tid;                                              \
-            nvshmem_uint64_atomic_##AMO(data_d + idx, SET_EXPR, peer);                \
-            __syncthreads();                                                          \
-        }                                                                             \
-                                                                                      \
-        int idx = j + u * threads + tid;                                              \
-        if (idx < len) nvshmem_uint64_atomic_##AMO(data_d + idx, SET_EXPR, peer);     \
-                                                                                      \
-        /* synchronizing across blocks */                                             \
-        __syncthreads();                                                              \
-                                                                                      \
-        if (!threadIdx.x) {                                                           \
-            __threadfence();                                                          \
-            counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                 \
-            if (counter == (gridDim.x * (i + 1) - 1)) {                               \
-                *(counter_d + 1) += 1;                                                \
-            }                                                                         \
-            while (*(counter_d + 1) != i + 1)                                         \
-                ;                                                                     \
-        }                                                                             \
-                                                                                      \
-        __syncthreads();                                                              \
-    }                                                                                 \
-                                                                                      \
-    /* synchronizing across blocks */                                                 \
-    __syncthreads();                                                                  \
-                                                                                      \
-    if (!threadIdx.x) {                                                               \
-        __threadfence();                                                              \
-        counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                     \
-        if (counter == (gridDim.x * (i + 1) - 1)) {                                   \
-            nvshmem_quiet();                                                          \
-            *(counter_d + 1) += 1;                                                    \
-        }                                                                             \
-        while (*(counter_d + 1) != i + 1)                                             \
-            ;                                                                         \
-    }                                                                                 \
-                                                                                      \
-    __syncthreads();                                                                  \
-                                                                                      \
-}
+#define DEFINE_ATOMIC_BW_FN_ONE_ARG(AMO, SET_EXPR)                                                 \
+    __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
+                                      int pe, int iter) {                                          \
+        int u, i, j, peer, tid, slice;                                                             \
+        unsigned int counter;                                                                      \
+        int threads = gridDim.x * blockDim.x;                                                      \
+        tid = blockIdx.x * blockDim.x + threadIdx.x;                                               \
+                                                                                                   \
+        peer = !pe;                                                                                \
+        slice = threads;                                                                           \
+                                                                                                   \
+        for (i = 0; i < iter; i++) {                                                               \
+            for (j = 0; j < len - slice; j += slice) {                                             \
+                int idx = j * threads + tid;                                                       \
+                nvshmem_uint64_atomic_##AMO(data_d + idx, SET_EXPR, peer);                         \
+                __syncthreads();                                                                   \
+            }                                                                                      \
+                                                                                                   \
+            int idx = j + u * threads + tid;                                                       \
+            if (idx < len) nvshmem_uint64_atomic_##AMO(data_d + idx, SET_EXPR, peer);              \
+                                                                                                   \
+            /* synchronizing across blocks */                                                      \
+            __syncthreads();                                                                       \
+                                                                                                   \
+            if (!threadIdx.x) {                                                                    \
+                __threadfence();                                                                   \
+                counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                          \
+                if (counter == (gridDim.x * (i + 1) - 1)) {                                        \
+                    *(counter_d + 1) += 1;                                                         \
+                }                                                                                  \
+                while (*(counter_d + 1) != i + 1)                                                  \
+                    ;                                                                              \
+            }                                                                                      \
+                                                                                                   \
+            __syncthreads();                                                                       \
+        }                                                                                          \
+                                                                                                   \
+        /* synchronizing across blocks */                                                          \
+        __syncthreads();                                                                           \
+                                                                                                   \
+        if (!threadIdx.x) {                                                                        \
+            __threadfence();                                                                       \
+            counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                              \
+            if (counter == (gridDim.x * (i + 1) - 1)) {                                            \
+                nvshmem_quiet();                                                                   \
+                *(counter_d + 1) += 1;                                                             \
+            }                                                                                      \
+            while (*(counter_d + 1) != i + 1)                                                      \
+                ;                                                                                  \
+        }                                                                                          \
+                                                                                                   \
+        __syncthreads();                                                                           \
+    }
 
-#define DEFINE_ATOMIC_BW_FN_TWO_ARG(AMO, COMPARE_EXPR, SET_EXPR)                      \
-__global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, \
-                                 int len, int pe, int iter) {                         \
-    int u, i, j, peer, tid, slice;                                                    \
-    unsigned int counter;                                                             \
-    int threads = gridDim.x * blockDim.x;                                             \
-    tid = blockIdx.x * blockDim.x + threadIdx.x;                                      \
-                                                                                      \
-    peer = !pe;                                                                       \
-    slice = threads;                                                                  \
-                                                                                      \
-    for (i = 0; i < iter; i++) {                                                      \
-                                                                                      \
-        for (j = 0; j < len - slice; j += slice) {                                    \
-            int idx = j * threads + tid;                                              \
-            nvshmem_uint64_atomic_##AMO(data_d + idx, COMPARE_EXPR, SET_EXPR, peer);  \
-            __syncthreads();                                                          \
-        }                                                                             \
-                                                                                      \
-        int idx = j + u * threads + tid;                                              \
-        if (idx < len) {                                                              \
-            nvshmem_uint64_atomic_##AMO(data_d + idx, COMPARE_EXPR, SET_EXPR, peer);  \
-        }                                                                             \
-                                                                                      \
-        /* synchronizing across blocks */                                             \
-        __syncthreads();                                                              \
-                                                                                      \
-        if (!threadIdx.x) {                                                           \
-            __threadfence();                                                          \
-            counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                 \
-            if (counter == (gridDim.x * (i + 1) - 1)) {                               \
-                *(counter_d + 1) += 1;                                                \
-            }                                                                         \
-            while (*(counter_d + 1) != i + 1)                                         \
-                ;                                                                     \
-        }                                                                             \
-                                                                                      \
-        __syncthreads();                                                              \
-    }                                                                                 \
-                                                                                      \
-    /* synchronizing across blocks */                                                 \
-    __syncthreads();                                                                  \
-                                                                                      \
-    if (!threadIdx.x) {                                                               \
-        __threadfence();                                                              \
-        counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                     \
-        if (counter == (gridDim.x * (i + 1) - 1)) {                                   \
-            nvshmem_quiet();                                                          \
-            *(counter_d + 1) += 1;                                                    \
-        }                                                                             \
-        while (*(counter_d + 1) != i + 1)                                             \
-            ;                                                                         \
-    }                                                                                 \
-}
+#define DEFINE_ATOMIC_BW_FN_TWO_ARG(AMO, COMPARE_EXPR, SET_EXPR)                                   \
+    __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
+                                      int pe, int iter) {                                          \
+        int u, i, j, peer, tid, slice;                                                             \
+        unsigned int counter;                                                                      \
+        int threads = gridDim.x * blockDim.x;                                                      \
+        tid = blockIdx.x * blockDim.x + threadIdx.x;                                               \
+                                                                                                   \
+        peer = !pe;                                                                                \
+        slice = threads;                                                                           \
+                                                                                                   \
+        for (i = 0; i < iter; i++) {                                                               \
+            for (j = 0; j < len - slice; j += slice) {                                             \
+                int idx = j * threads + tid;                                                       \
+                nvshmem_uint64_atomic_##AMO(data_d + idx, COMPARE_EXPR, SET_EXPR, peer);           \
+                __syncthreads();                                                                   \
+            }                                                                                      \
+                                                                                                   \
+            int idx = j + u * threads + tid;                                                       \
+            if (idx < len) {                                                                       \
+                nvshmem_uint64_atomic_##AMO(data_d + idx, COMPARE_EXPR, SET_EXPR, peer);           \
+            }                                                                                      \
+                                                                                                   \
+            /* synchronizing across blocks */                                                      \
+            __syncthreads();                                                                       \
+                                                                                                   \
+            if (!threadIdx.x) {                                                                    \
+                __threadfence();                                                                   \
+                counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                          \
+                if (counter == (gridDim.x * (i + 1) - 1)) {                                        \
+                    *(counter_d + 1) += 1;                                                         \
+                }                                                                                  \
+                while (*(counter_d + 1) != i + 1)                                                  \
+                    ;                                                                              \
+            }                                                                                      \
+                                                                                                   \
+            __syncthreads();                                                                       \
+        }                                                                                          \
+                                                                                                   \
+        /* synchronizing across blocks */                                                          \
+        __syncthreads();                                                                           \
+                                                                                                   \
+        if (!threadIdx.x) {                                                                        \
+            __threadfence();                                                                       \
+            counter = atomicInc((unsigned int *)counter_d, UINT_MAX);                              \
+            if (counter == (gridDim.x * (i + 1) - 1)) {                                            \
+                nvshmem_quiet();                                                                   \
+                *(counter_d + 1) += 1;                                                             \
+            }                                                                                      \
+            while (*(counter_d + 1) != i + 1)                                                      \
+                ;                                                                                  \
+        }                                                                                          \
+    }
 
 #endif /* _ATOMIC_BW_COMMON_H_ */

@@ -49,7 +49,8 @@ int main(int c, char *v[]) {
 
     if (!mype) {
         latency_value = latency / MAX_ITERS;
-        print_table("sync_all_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size, &latency_value, 1);
+        print_table("sync_all_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size,
+                    &latency_value, 1);
     }
 
     nvshmem_barrier_all();

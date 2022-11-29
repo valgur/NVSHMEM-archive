@@ -102,16 +102,16 @@ CXXFLAGS  += -DNVSHMEM_IBDEVX_SUPPORT
 NVCUFLAGS += -DNVSHMEM_IBDEVX_SUPPORT
 endif
 
-ifeq ($(NVSHMEM_GPUINITIATED_SUPPORT), 1)
-CXXFLAGS  += -DNVSHMEM_GPUINITIATED_SUPPORT
-NVCUFLAGS += -DNVSHMEM_GPUINITIATED_SUPPORT
+ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
+CXXFLAGS  += -DNVSHMEM_IBGDA_SUPPORT
+NVCUFLAGS += -DNVSHMEM_IBGDA_SUPPORT
 ifeq ($(NVSHMEM_DEBUG), 1)
-CXXFLAGS  += -DNVSHMEM_GPUINITIATED_DEBUG
-NVCUFLAGS += -DNVSHMEM_GPUINITIATED_DEBUG
+CXXFLAGS  += -DNVSHMEM_IBGDA_DEBUG
+NVCUFLAGS += -DNVSHMEM_IBGDA_DEBUG
 endif
-ifeq ($(NVSHMEM_GPUINITIATED_SUPPORT_GPUMEM_ONLY), 1)
-CXXFLAGS  += -DNVSHMEM_GPUINITIATED_SUPPORT_GPUMEM_ONLY
-NVCUFLAGS += -DNVSHMEM_GPUINITIATED_SUPPORT_GPUMEM_ONLY
+ifeq ($(NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY), 1)
+CXXFLAGS  += -DNVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
+NVCUFLAGS += -DNVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
 endif
 endif
 
@@ -241,10 +241,10 @@ ifneq ($(NVSHMEM_IBRC_SUPPORT), 1)
 HOSTLIBSRCFILES += comm/transports/common/transport_ib_common.cpp
 endif
 endif
-ifeq ($(NVSHMEM_GPUINITIATED_SUPPORT), 1)
-HOSTLIBSRCFILES += comm/transports/gic/gic.cpp \
-                   init/gic_init.cu
-DEVICELIBSRCFILES += init/gic_init_device.cu
+ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
+HOSTLIBSRCFILES += comm/transports/ibgda/ibgda.cpp \
+                   init/ibgda_init.cu
+DEVICELIBSRCFILES += init/ibgda_init_device.cu
 ifneq ($(NVSHMEM_IBRC_SUPPORT), 1)
 ifneq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
 HOSTLIBSRCFILES += comm/transports/common/transport_ib_common.cpp
@@ -407,13 +407,13 @@ $(PLUGINSDIR)/%: src/bootstrap/%
 
 $(LIBDIR)/$(PMI_PLUGIN_TARGET): src/bootstrap/bootstrap_pmi.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmiutil.o
 	@mkdir -p $(LIBDIR)
-	$(CC) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI_PLUGIN_TARGET) -fpic -I$(INCDIR) -Isrc/pmi/simple-pmi $< -o $@ $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmiutil.o
+	$(CXX) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI_PLUGIN_TARGET) -fpic -I$(INCDIR) -Isrc/pmi/simple-pmi $< -o $@ $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmiutil.o
 	ln -sf $(PMI_PLUGIN_SONAME) $(LIBDIR)/$(PMI_PLUGIN)
 	ln -sf $(PMI_PLUGIN_TARGET) $(LIBDIR)/$(PMI_PLUGIN_SONAME)
 
 $(LIBDIR)/$(PMI2_PLUGIN_TARGET): src/bootstrap/bootstrap_pmi.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_util.o
 	@mkdir -p $(LIBDIR)
-	$(CC) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI2_PLUGIN_TARGET) -fpic -Xlinker --version-script=nvshmem_bootstrap.sym -DNVSHMEM_BUILD_PMI2 -I$(INCDIR) -Isrc/pmi/pmi-2 $< -o $@ $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_util.o
+	$(CXX) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI2_PLUGIN_TARGET) -fpic -Xlinker --version-script=nvshmem_bootstrap.sym -DNVSHMEM_BUILD_PMI2 -I$(INCDIR) -Isrc/pmi/pmi-2 $< -o $@ $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_util.o
 	ln -sf $(PMI2_PLUGIN_SONAME) $(LIBDIR)/$(PMI2_PLUGIN)
 	ln -sf $(PMI2_PLUGIN_TARGET) $(LIBDIR)/$(PMI2_PLUGIN_SONAME)
 

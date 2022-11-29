@@ -15,13 +15,18 @@
 #include "barrier.h"
 #include "barrier_device.cuh"
 
-__global__ void barrier_on_stream_kernel(int start, int stride, int size, long *pSync, long *counter);
-__global__ void barrier_on_stream_kernel_warp(int start, int stride, int size, long *pSync, long *counter);
-__global__ void barrier_on_stream_kernel_block(int start, int stride, int size, long *pSync, long *counter);
+__global__ void barrier_on_stream_kernel(int start, int stride, int size, long *pSync,
+                                         long *counter);
+__global__ void barrier_on_stream_kernel_warp(int start, int stride, int size, long *pSync,
+                                              long *counter);
+__global__ void barrier_on_stream_kernel_block(int start, int stride, int size, long *pSync,
+                                               long *counter);
 
 __global__ void sync_on_stream_kernel(int start, int stride, int size, long *pSync, long *counter);
-__global__ void sync_on_stream_kernel_warp(int start, int stride, int size, long *pSync, long *counter);
-__global__ void sync_on_stream_kernel_block(int start, int stride, int size, long *pSync, long *counter);
+__global__ void sync_on_stream_kernel_warp(int start, int stride, int size, long *pSync,
+                                           long *counter);
+__global__ void sync_on_stream_kernel_block(int start, int stride, int size, long *pSync,
+                                            long *counter);
 __global__ void sync_all_on_stream_kernel();
 __global__ void sync_all_on_stream_kernel_warp();
 __global__ void sync_all_on_stream_kernel_block();
@@ -32,7 +37,7 @@ __global__ void barrier_on_stream_kernel_threadgroup(nvshmem_team_t team) {
     int myidx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
 
     if (nvshmemi_device_state_d.job_connectivity >= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
-        if (!myidx) nvshmemi_transfer_quiet(false);
+        if (!myidx) nvshmemi_transfer_quiet<NVSHMEMI_THREADGROUP_THREAD>(false);
         nvshmemi_threadgroup_sync<SCOPE>();
     }
 
@@ -57,15 +62,15 @@ int nvshmemi_call_barrier_on_stream_kernel(nvshmem_team_t team, cudaStream_t str
     int num_threads_per_block;
     if (nvshmemi_job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
         int size = nvshmemi_team_pool[team]->size;
-        num_threads_per_block = size - 1; // Have enough threads for alltoall algo
+        num_threads_per_block = size - 1;  // Have enough threads for alltoall algo
     } else {
         num_threads_per_block = nvshmemi_options.BARRIER_TG_DISSEM_KVAL;
     }
 
     if (num_threads_per_block <= 32) {
-        barrier_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_WARP><<<num_blocks, 32, 0, stream>>>(team);
-    }
-    else {
+        barrier_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_WARP>
+            <<<num_blocks, 32, 0, stream>>>(team);
+    } else {
         barrier_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_BLOCK>
             <<<num_blocks, num_threads_per_block, 0, stream>>>(team);
     }
@@ -79,13 +84,14 @@ int nvshmemi_call_sync_on_stream_kernel(nvshmem_team_t team, cudaStream_t stream
     int num_threads_per_block;
     if (nvshmemi_job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
         int size = nvshmemi_team_pool[team]->size;
-        num_threads_per_block = size - 1; // Have enough threads for alltoall algo
+        num_threads_per_block = size - 1;  // Have enough threads for alltoall algo
     } else {
         num_threads_per_block = nvshmemi_options.BARRIER_TG_DISSEM_KVAL;
     }
 
     if (num_threads_per_block <= 32) {
-        sync_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_WARP><<<num_blocks, 32, 0, stream>>>(team);
+        sync_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_WARP>
+            <<<num_blocks, 32, 0, stream>>>(team);
     } else {
         sync_on_stream_kernel_threadgroup<NVSHMEMI_THREADGROUP_BLOCK>
             <<<num_blocks, num_threads_per_block, 0, stream>>>(team);

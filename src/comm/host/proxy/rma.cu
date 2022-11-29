@@ -8,23 +8,16 @@
 #include "nvshmem_internal.h"
 #include "nvshmemi_proxy.h"
 
-__global__ void nvshmemi_proxy_rma_entrypoint(void *rptr, void *lptr,
-                                              rma_bytesdesc_t bytesdesc,
+__global__ void nvshmemi_proxy_rma_entrypoint(void *rptr, void *lptr, rma_bytesdesc_t bytesdesc,
                                               int pe, nvshmemi_op_t desc) {
-    nvshmemi_proxy_rma_nbi((void *)rptr,
-                           (void *)lptr,
-                           bytesdesc.nelems * bytesdesc.elembytes,
-                           pe,
+    nvshmemi_proxy_rma_nbi((void *)rptr, (void *)lptr, bytesdesc.nelems * bytesdesc.elembytes, pe,
                            desc);
 }
 
 __global__ void nvshmemi_proxy_rma_entrypoint_blocking(void *rptr, void *lptr,
-                                                       rma_bytesdesc_t bytesdesc,
-                                                       int pe, nvshmemi_op_t desc) {
-    nvshmemi_proxy_rma_nbi((void *)rptr,
-                           (void *)lptr,
-                           bytesdesc.nelems * bytesdesc.elembytes,
-                           pe,
+                                                       rma_bytesdesc_t bytesdesc, int pe,
+                                                       nvshmemi_op_t desc) {
+    nvshmemi_proxy_rma_nbi((void *)rptr, (void *)lptr, bytesdesc.nelems * bytesdesc.elembytes, pe,
                            desc);
     nvshmemi_proxy_quiet(true);
 }
@@ -33,10 +26,7 @@ __global__ void nvshmemi_proxy_rma_signal_entrypoint(void *rptr, void *lptr,
                                                      rma_bytesdesc_t bytesdesc, uint64_t *sig_addr,
                                                      uint64_t signal, int sig_op, int pe,
                                                      nvshmemi_op_t desc) {
-    nvshmemi_proxy_rma_nbi((void *)rptr,
-                           (void *)lptr,
-                           bytesdesc.nelems * bytesdesc.elembytes,
-                           pe,
+    nvshmemi_proxy_rma_nbi((void *)rptr, (void *)lptr, bytesdesc.nelems * bytesdesc.elembytes, pe,
                            desc);
     nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe, (nvshmemi_amo_t)sig_op);
 }
@@ -44,11 +34,9 @@ __global__ void nvshmemi_proxy_rma_signal_entrypoint(void *rptr, void *lptr,
 __global__ void nvshmemi_proxy_rma_signal_entrypoint_blocking(void *rptr, void *lptr,
                                                               rma_bytesdesc_t bytesdesc,
                                                               uint64_t *sig_addr, uint64_t signal,
-                                                              int sig_op, int pe, nvshmemi_op_t desc) {
-    nvshmemi_proxy_rma_nbi((void *)rptr,
-                           (void *)lptr,
-                           bytesdesc.nelems * bytesdesc.elembytes,
-                           pe,
+                                                              int sig_op, int pe,
+                                                              nvshmemi_op_t desc) {
+    nvshmemi_proxy_rma_nbi((void *)rptr, (void *)lptr, bytesdesc.nelems * bytesdesc.elembytes, pe,
                            desc);
     nvshmemi_proxy_amo_nonfetch<uint64_t>((void *)sig_addr, signal, pe, (nvshmemi_amo_t)sig_op);
     nvshmemi_proxy_quiet(true);
@@ -56,12 +44,15 @@ __global__ void nvshmemi_proxy_rma_signal_entrypoint_blocking(void *rptr, void *
 
 int nvshmemi_proxy_rma_launcher(void *args[], cudaStream_t cstrm, bool is_nbi, bool is_signal) {
     if (is_signal && is_nbi) {
-        return cudaLaunchKernel((const void *)nvshmemi_proxy_rma_signal_entrypoint, 1, 1, args, 0, cstrm);
+        return cudaLaunchKernel((const void *)nvshmemi_proxy_rma_signal_entrypoint, 1, 1, args, 0,
+                                cstrm);
     } else if (is_nbi) {
         return cudaLaunchKernel((const void *)nvshmemi_proxy_rma_entrypoint, 1, 1, args, 0, cstrm);
     } else if (is_signal) {
-        return cudaLaunchKernel((const void *)nvshmemi_proxy_rma_signal_entrypoint_blocking, 1, 1, args, 0, cstrm);
+        return cudaLaunchKernel((const void *)nvshmemi_proxy_rma_signal_entrypoint_blocking, 1, 1,
+                                args, 0, cstrm);
     } else {
-        return cudaLaunchKernel((const void *)nvshmemi_proxy_rma_entrypoint_blocking, 1, 1, args, 0, cstrm);
+        return cudaLaunchKernel((const void *)nvshmemi_proxy_rma_entrypoint_blocking, 1, 1, args, 0,
+                                cstrm);
     }
 }

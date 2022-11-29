@@ -15,7 +15,7 @@
  * to other PEs that participate in the power-of-k recursive exchange algorithm in Step 2.
  * Step 2 has log_k (PE_size) phases. In each phase k PEs exchange data with each other.
  * In Step 3, PEs from step 2 send the final reduced data to PEs that did not participate in Step 2.
-*/
+ */
 void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami) {
     int i, j, k;
     int p_of_k = 1, log_p_of_k = 0, rem, T, newpe;
@@ -69,13 +69,13 @@ void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami) {
 
     /* Step 1 */
     if (my_pe < T) {
-        if (my_pe % k != (k - 1)) {                    /* I am a non-participating PE */
+        if (my_pe % k != (k - 1)) {                     /* I am a non-participating PE */
             step1_sendto = my_pe + (k - 1 - my_pe % k); /* partipating PE to send the data to */
             /* if the corresponding participating PE is not in T,
              * then send to the Tth PE to preserve non-commutativity */
             if (step1_sendto > T - 1) step1_sendto = T;
             newpe = -1; /* tag this PE as non-participating */
-        } else {          /* participating PE */
+        } else {        /* participating PE */
             for (i = 0; i < k - 1; i++) {
                 step1_recvfrom[i] = my_pe - i - 1;
             }
@@ -146,8 +146,7 @@ void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami) {
         free(digit);
     }
     // Update with global PE numbers
-    if (step1_sendto != -1)
-        step1_sendto = teami->start + step1_sendto * teami->stride;
+    if (step1_sendto != -1) step1_sendto = teami->start + step1_sendto * teami->stride;
     for (int i = 0; i < step1_nrecvs; i++)
         step1_recvfrom[i] = teami->start + step1_recvfrom[i] * teami->stride;
     for (int i = 0; i < step2_nphases; i++)
@@ -156,21 +155,26 @@ void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami) {
 
     // Copy the data to device memory
     CUDA_RUNTIME_CHECK(cudaMalloc(&step1_recvfrom_device, sizeof(int) * (k - 1)));
-    CUDA_RUNTIME_CHECK(cudaMalloc(&step2_nbrs_device, sizeof(int *) * (step2_nphases + 1))); /* + 1 to make it non-zero otherwise cuMemAlloc returns error when step2_nphases is 0 */
+    CUDA_RUNTIME_CHECK(cudaMalloc(
+        &step2_nbrs_device,
+        sizeof(int *) * (step2_nphases + 1))); /* + 1 to make it non-zero otherwise cuMemAlloc
+                                                  returns error when step2_nphases is 0 */
 
     for (int i = 0; i < step2_nphases; i++) {
         void *dev_ptr;
         CUDA_RUNTIME_CHECK(cudaMalloc(&dev_ptr, sizeof(int) * (k - 1)));
-        CUDA_RUNTIME_CHECK(
-            cudaMemcpy((int **)step2_nbrs_device + i, &dev_ptr, sizeof(int *), cudaMemcpyHostToDevice));
+        CUDA_RUNTIME_CHECK(cudaMemcpy((int **)step2_nbrs_device + i, &dev_ptr, sizeof(int *),
+                                      cudaMemcpyHostToDevice));
     }
-    CUDA_RUNTIME_CHECK(cudaMemcpy(step1_recvfrom_device, step1_recvfrom,
-                            sizeof(int) * step1_nrecvs, cudaMemcpyHostToDevice));
+    CUDA_RUNTIME_CHECK(cudaMemcpy(step1_recvfrom_device, step1_recvfrom, sizeof(int) * step1_nrecvs,
+                                  cudaMemcpyHostToDevice));
     void *dev_ptr, *dev_ptr_2;
     dev_ptr = step2_nbrs_device;
     for (int i = 0; i < step2_nphases; i++) {
-        CUDA_RUNTIME_CHECK(cudaMemcpy(&dev_ptr_2, (int **)dev_ptr + i, sizeof(int *), cudaMemcpyDeviceToHost));
-        CUDA_RUNTIME_CHECK(cudaMemcpy(dev_ptr_2, step2_nbrs[i], sizeof(int) * (k - 1), cudaMemcpyHostToDevice));
+        CUDA_RUNTIME_CHECK(
+            cudaMemcpy(&dev_ptr_2, (int **)dev_ptr + i, sizeof(int *), cudaMemcpyDeviceToHost));
+        CUDA_RUNTIME_CHECK(
+            cudaMemcpy(dev_ptr_2, step2_nbrs[i], sizeof(int) * (k - 1), cudaMemcpyHostToDevice));
     }
     teami->reduce_recexch.step1_sendto = step1_sendto;
     teami->reduce_recexch.step1_nrecvs = step1_nrecvs;

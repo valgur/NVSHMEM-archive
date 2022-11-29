@@ -32,7 +32,7 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     CUDA_CHECK(cudaEventCreate(&start_event));
     CUDA_CHECK(cudaEventCreate(&stop_event));
- 
+
     DEBUG_PRINT("SHMEM: [%d of %d] hello shmem world! \n", mype, npes);
 
     for (iters = 0; iters < BARRIER_MAX_ITERS + skip; iters++) {
@@ -46,7 +46,8 @@ int main(int c, char *v[]) {
 
     if (!mype) {
         latency_value = (ms / BARRIER_MAX_ITERS) * 1000;
-        print_table("barrier_all_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size, &latency_value, 1);
+        print_table("barrier_all_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size,
+                    &latency_value, 1);
     }
 
     nvshmem_barrier_all();
@@ -54,7 +55,7 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaStreamDestroy(stream));
     CUDA_CHECK(cudaEventDestroy(start_event));
     CUDA_CHECK(cudaEventDestroy(stop_event));
- 
+
     finalize_wrapper();
 
     return status;

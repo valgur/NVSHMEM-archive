@@ -49,7 +49,7 @@ __global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, in
         }
         __syncthreads();
     }
-    
+
     // synchronize and call nvshme_quiet
     __syncthreads();
     if (!tid) {
@@ -156,7 +156,8 @@ int main(int argc, char *argv[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_put_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw, i);
+        print_table("shmem_put_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
+                    i);
     }
 
 finalize:

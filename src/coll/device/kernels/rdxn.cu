@@ -12,7 +12,9 @@ template <typename TYPE, rdxn_ops_t OP>
 __global__ void rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
                                       size_t nreduce) {
 #ifdef __CUDA_ARCH__
-    if (!blockIdx.x) nvshmemi_reduce_threadgroup<TYPE, OP, NVSHMEMI_THREADGROUP_BLOCK>(team, dest, source, nreduce);
+    if (!blockIdx.x)
+        nvshmemi_reduce_threadgroup<TYPE, OP, NVSHMEMI_THREADGROUP_BLOCK>(team, dest, source,
+                                                                          nreduce);
 #endif
 }
 

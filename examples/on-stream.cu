@@ -92,7 +92,8 @@ int main(int c, char *v[]) {
     full_sum = (int *)nvshmem_malloc(sizeof(int));
 
     accumulate<<<1, input_nelems, 0, stream>>>(input, partial_sum);
-    nvshmemx_int_sum_reduce_on_stream(NVSHMEM_TEAM_WORLD, full_sum, partial_sum, to_all_nelems, stream);
+    nvshmemx_int_sum_reduce_on_stream(NVSHMEM_TEAM_WORLD, full_sum, partial_sum, to_all_nelems,
+                                      stream);
     correct_accumulate<<<1, input_nelems, 0, stream>>>(input, partial_sum, full_sum);
     CUDA_CHECK(cudaStreamSynchronize(stream));
 

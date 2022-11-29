@@ -17,17 +17,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("[%s][%ld] Starting up...\n", hostname, (long) getpid());
+    printf("[%s][%ld] Starting up...\n", hostname, (long)getpid());
 
     nvshmem_init();
 
     int mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
     cudaSetDevice(mype_node);
 
-    printf("[%s][%ld] Hello from PE %d of %d\n",
-            hostname, (long) getpid(), nvshmem_my_pe(), nvshmem_n_pes());
+    printf("[%s][%ld] Hello from PE %d of %d\n", hostname, (long)getpid(), nvshmem_my_pe(),
+           nvshmem_n_pes());
 
     nvshmem_finalize();
     return 0;
 }
-

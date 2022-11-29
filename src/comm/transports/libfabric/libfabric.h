@@ -37,7 +37,7 @@
 #define NVSHMEMT_LIBFABRIC_INJECT_BYTES 8
 #endif
 
-#define NVSHMEMT_LIBFABRIC_MAX_RETRIES (1ULL<<20)
+#define NVSHMEMT_LIBFABRIC_MAX_RETRIES (1ULL << 20)
 
 typedef struct {
     char name[NVSHMEMT_LIBFABRIC_DOMAIN_LEN];
@@ -48,33 +48,33 @@ typedef struct {
 } nvshmemt_libfabric_ep_name_t;
 
 typedef struct {
-    struct fid_ep                       *endpoint;
-    struct fid_cq                       *cq;
-    struct fid_cntr                     *counter;
-    uint64_t                            submitted_ops;
+    struct fid_ep *endpoint;
+    struct fid_cq *cq;
+    struct fid_cntr *counter;
+    uint64_t submitted_ops;
 } nvshmemt_libfabric_endpoint_t;
 
 typedef struct {
-    struct fi_info                      *prov_info;
-    struct fid_fabric                   *fabric;
-    struct fid_domain                   *domain;
-    struct fid_av                       *addresses;
-    nvshmemt_libfabric_endpoint_t       *eps;
+    struct fi_info *prov_info;
+    struct fid_fabric *fabric;
+    struct fid_domain *domain;
+    struct fid_av *addresses;
+    nvshmemt_libfabric_endpoint_t *eps;
     /* local_mr is used only for consistency ops. */
-    struct fid_mr                       *local_mr[2];
-    uint64_t                            local_mr_key[2];
-    void                                *local_mr_desc[2];
-    void                                *local_mem_ptr;
-    nvshmemt_libfabric_domain_name_t    *domain_names;
-    int                                 num_domains;
-    int                                 next_key;
-    int                                 is_verbs;
+    struct fid_mr *local_mr[2];
+    uint64_t local_mr_key[2];
+    void *local_mr_desc[2];
+    void *local_mem_ptr;
+    nvshmemt_libfabric_domain_name_t *domain_names;
+    int num_domains;
+    int next_key;
+    int is_verbs;
 } nvshmemt_libfabric_state_t;
 
 typedef struct {
-    struct fid_mr   *mr;
-    uint64_t        key;
-    void            *local_desc;
+    struct fid_mr *mr;
+    uint64_t key;
+    void *local_desc;
 } nvshmemt_libfabric_mem_handle_ep_t;
 
 typedef struct {

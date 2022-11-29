@@ -12,37 +12,35 @@
 
 #include "coll_test.h"
 
-#define BARRIER_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)                               \
-__global__ void test_barrier_call_kernel##THREADGROUP(nvshmem_team_t team, int iter) { \
-    int i;                                                                             \
-    if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                                  \
-        for (i = 0; i < iter; i++) {                                                   \
-            nvshmem##TG_PRE##_barrier##THREADGROUP(team);                              \
-        }                                                                              \
-    }                                                                                  \
-}
+#define BARRIER_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)                                   \
+    __global__ void test_barrier_call_kernel##THREADGROUP(nvshmem_team_t team, int iter) { \
+        int i;                                                                             \
+        if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                                  \
+            for (i = 0; i < iter; i++) {                                                   \
+                nvshmem##TG_PRE##_barrier##THREADGROUP(team);                              \
+            }                                                                              \
+        }                                                                                  \
+    }
 
-#define BARRIER_ALL_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)                           \
-__global__ void test_barrier_all_call_kernel##THREADGROUP(int iter) {                  \
-    int i;                                                                             \
-    if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                                  \
-        for (i = 0; i < iter; i++) {                                                   \
-            nvshmem##TG_PRE##_barrier_all##THREADGROUP();                              \
-        }                                                                              \
-    }                                                                                  \
-}
+#define BARRIER_ALL_KERNEL(TG_PRE, THREADGROUP, THREAD_COMP)              \
+    __global__ void test_barrier_all_call_kernel##THREADGROUP(int iter) { \
+        int i;                                                            \
+        if (!blockIdx.x && (threadIdx.x < THREAD_COMP)) {                 \
+            for (i = 0; i < iter; i++) {                                  \
+                nvshmem##TG_PRE##_barrier_all##THREADGROUP();             \
+            }                                                             \
+        }                                                                 \
+    }
 
-BARRIER_KERNEL(,,1);
-BARRIER_KERNEL(x,_warp,warpSize);
-BARRIER_KERNEL(x,_block,INT_MAX);
+BARRIER_KERNEL(, , 1);
+BARRIER_KERNEL(x, _warp, warpSize);
+BARRIER_KERNEL(x, _block, INT_MAX);
 
-BARRIER_ALL_KERNEL(,,1);
-BARRIER_ALL_KERNEL(x,_warp,warpSize);
-BARRIER_ALL_KERNEL(x,_block,INT_MAX);
+BARRIER_ALL_KERNEL(, , 1);
+BARRIER_ALL_KERNEL(x, _warp, warpSize);
+BARRIER_ALL_KERNEL(x, _block, INT_MAX);
 
-
-int barrier_calling_kernel(nvshmem_team_t team, cudaStream_t stream,
-                           int mype, void **h_tables) {
+int barrier_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, void **h_tables) {
     int status = 0;
     int nvshm_test_num_tpb = TEST_NUM_TPB_BLOCK;
     int skip = MAX_SKIP;
@@ -140,9 +138,12 @@ int barrier_calling_kernel(nvshmem_team_t team, cudaStream_t stream,
     }
 
     if (!mype) {
-        print_table("barrier_device", "thread", "threads per block", "latency", "us", '-', &num_tpb, h_thread_lat, 1);
-        print_table("barrier_device", "warp", "threads per block", "latency", "us", '-', &num_tpb, h_warp_lat, 1);
-        print_table("barrier_device", "block", "threads per block", "latency", "us", '-', &num_tpb, h_block_lat, 1);
+        print_table("barrier_device", "thread", "threads per block", "latency", "us", '-', &num_tpb,
+                    h_thread_lat, 1);
+        print_table("barrier_device", "warp", "threads per block", "latency", "us", '-', &num_tpb,
+                    h_warp_lat, 1);
+        print_table("barrier_device", "block", "threads per block", "latency", "us", '-', &num_tpb,
+                    h_block_lat, 1);
     }
 
     nvshmem_barrier_all();
@@ -198,8 +199,9 @@ int barrier_calling_kernel(nvshmem_team_t team, cudaStream_t stream,
     }
 
     nvshmem_barrier_all();
-    status = nvshmemx_collective_launch((const void *)test_barrier_all_call_kernel_block, num_blocks,
-                                        nvshm_test_num_tpb, barrier_all_args_1, 0, stream);
+    status =
+        nvshmemx_collective_launch((const void *)test_barrier_all_call_kernel_block, num_blocks,
+                                   nvshm_test_num_tpb, barrier_all_args_1, 0, stream);
     if (status != NVSHMEMX_SUCCESS) {
         fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
         exit(-1);
@@ -209,8 +211,9 @@ int barrier_calling_kernel(nvshmem_team_t team, cudaStream_t stream,
     nvshmem_barrier_all();
 
     cudaEventRecord(start, stream);
-    status = nvshmemx_collective_launch((const void *)test_barrier_all_call_kernel_block, num_blocks,
-                                        nvshm_test_num_tpb, barrier_all_args_2, 0, stream);
+    status =
+        nvshmemx_collective_launch((const void *)test_barrier_all_call_kernel_block, num_blocks,
+                                   nvshm_test_num_tpb, barrier_all_args_2, 0, stream);
     if (status != NVSHMEMX_SUCCESS) {
         fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
         exit(-1);
@@ -224,9 +227,12 @@ int barrier_calling_kernel(nvshmem_team_t team, cudaStream_t stream,
     }
 
     if (!mype) {
-        print_table("barrier_all_device", "thread", "threads per block", "latency", "us", '-', &num_tpb, h_thread_lat, 1);
-        print_table("barrier_all_device", "warp", "threads per block", "latency", "us", '-', &num_tpb, h_warp_lat, 1);
-        print_table("barrier_all_device", "block", "threads per block", "latency", "us", '-', &num_tpb, h_block_lat, 1);
+        print_table("barrier_all_device", "thread", "threads per block", "latency", "us", '-',
+                    &num_tpb, h_thread_lat, 1);
+        print_table("barrier_all_device", "warp", "threads per block", "latency", "us", '-',
+                    &num_tpb, h_warp_lat, 1);
+        print_table("barrier_all_device", "block", "threads per block", "latency", "us", '-',
+                    &num_tpb, h_block_lat, 1);
     }
 
     return status;
@@ -242,7 +248,6 @@ int main(int argc, char **argv) {
 
     mype = nvshmem_my_pe();
     CUDA_CHECK(cudaStreamCreateWithFlags(&cstrm, cudaStreamNonBlocking));
-
 
     barrier_calling_kernel(NVSHMEM_TEAM_WORLD, cstrm, mype, h_tables);
 

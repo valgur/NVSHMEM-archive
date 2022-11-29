@@ -12,17 +12,12 @@
 
 #define MAX_LENGTH_ERROR_STRING 128
 
-enum {
-    BOOTSTRAP_MPI,
-    BOOTSTRAP_SHMEM,
-    BOOTSTRAP_PMI,
-    BOOTSTRAP_PLUGIN
-};
+enum { BOOTSTRAP_MPI, BOOTSTRAP_SHMEM, BOOTSTRAP_PMI, BOOTSTRAP_PLUGIN };
 
-#define BOOTSTRAP_MPI_PLUGIN   "nvshmem_bootstrap_mpi.so"
-#define BOOTSTRAP_PMI_PLUGIN   "nvshmem_bootstrap_pmi.so"
-#define BOOTSTRAP_PMI2_PLUGIN  "nvshmem_bootstrap_pmi2.so"
-#define BOOTSTRAP_PMIX_PLUGIN  "nvshmem_bootstrap_pmix.so"
+#define BOOTSTRAP_MPI_PLUGIN "nvshmem_bootstrap_mpi.so"
+#define BOOTSTRAP_PMI_PLUGIN "nvshmem_bootstrap_pmi.so"
+#define BOOTSTRAP_PMI2_PLUGIN "nvshmem_bootstrap_pmi2.so"
+#define BOOTSTRAP_PMIX_PLUGIN "nvshmem_bootstrap_pmix.so"
 #define BOOTSTRAP_SHMEM_PLUGIN "nvshmem_bootstrap_shmem.so"
 
 typedef struct bootstrap_attr {

@@ -63,8 +63,7 @@ __global__ void ping_pong(int *data_d, uint64_t *flag_d, int len, int pe, int it
         }
     }
 
-    if(!tid)
-        nvshmem_quiet();
+    if (!tid) nvshmem_quiet();
 }
 
 int main(int c, char *v[]) {
@@ -148,7 +147,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_ping_pong_lat", "None", "size (Bytes)", "latency", "us", '-', h_size_arr, h_lat, i);
+        print_table("shmem_ping_pong_lat", "None", "size (Bytes)", "latency", "us", '-', h_size_arr,
+                    h_lat, i);
     }
 
 finalize:

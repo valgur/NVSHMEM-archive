@@ -186,14 +186,17 @@ int main(int argc, char *argv[]) {
             bw(data_d, data_d_local, size, mype, iter, skip, iss, dir, strm, sev, eev, &ms, &us);
 
             if (iss == ON_STREAM) {
-                bandwidth_array[i] = ((float)iter * (float)size) / ((ms / 1000) * 1024 *1024 * 1024);
+                bandwidth_array[i] =
+                    ((float)iter * (float)size) / ((ms / 1000) * 1024 * 1024 * 1024);
             } else {
-                bandwidth_array[i] = ((float)iter * (float)size) / ((us / 1000000) * 1024 * 1024 * 1024);
+                bandwidth_array[i] =
+                    ((float)iter * (float)size) / ((us / 1000000) * 1024 * 1024 * 1024);
             }
             i++;
         }
 
-        print_table("Bandwidth", "None", "size (Bytes)", "Bandwidth", "GB", '+', size_array, bandwidth_array, i);
+        print_table("Bandwidth", "None", "size (Bytes)", "Bandwidth", "GB", '+', size_array,
+                    bandwidth_array, i);
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));
 

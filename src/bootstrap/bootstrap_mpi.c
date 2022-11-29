@@ -13,15 +13,15 @@
 #include "bootstrap_util.h"
 #include "nvshmem_constants.h"
 
-static MPI_Comm bootstrap_comm          = MPI_COMM_NULL;
-static int      nvshmem_initialized_mpi = 0;
+static MPI_Comm bootstrap_comm = MPI_COMM_NULL;
+static int nvshmem_initialized_mpi = 0;
 
 static int bootstrap_mpi_barrier(struct bootstrap_handle *handle) {
     int status = MPI_SUCCESS;
 
     status = MPI_Barrier(bootstrap_comm);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-            "MPI_Barrier failed\n");
+                           "MPI_Barrier failed\n");
 
 out:
     return status;
@@ -33,7 +33,7 @@ static int bootstrap_mpi_allgather(const void *sendbuf, void *recvbuf, int lengt
 
     status = MPI_Allgather(sendbuf, length, MPI_BYTE, recvbuf, length, MPI_BYTE, bootstrap_comm);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-            "MPI_Allgather failed\n");
+                           "MPI_Allgather failed\n");
 
 out:
     return status;
@@ -45,7 +45,7 @@ static int bootstrap_mpi_alltoall(const void *sendbuf, void *recvbuf, int length
 
     status = MPI_Alltoall(sendbuf, length, MPI_BYTE, recvbuf, length, MPI_BYTE, bootstrap_comm);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-            "MPI_Alltoall failed\n");
+                           "MPI_Alltoall failed\n");
 
 out:
     return status;
@@ -67,14 +67,13 @@ static int bootstrap_mpi_finalize(bootstrap_handle_t *handle) {
     /* Ensure user hasn't finalized MPI before finalizing NVSHMEM */
     status = MPI_Finalized(&finalized);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-            "MPI_Finalized failed\n");
+                           "MPI_Finalized failed\n");
 
     if (finalized) {
         if (nvshmem_initialized_mpi) {
             status = NVSHMEMX_ERROR_INTERNAL;
             BOOTSTRAP_ERROR_PRINT("MPI is finalized\n");
-        }
-        else {
+        } else {
             status = 0;
         }
 
@@ -83,21 +82,23 @@ static int bootstrap_mpi_finalize(bootstrap_handle_t *handle) {
 
     status = MPI_Comm_free(&bootstrap_comm);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-            "Freeing bootstrap communicator failed\n");
+                           "Freeing bootstrap communicator failed\n");
 
-    if (nvshmem_initialized_mpi)
-        MPI_Finalize();
+    if (nvshmem_initialized_mpi) MPI_Finalize();
 
 out:
     return status;
 }
 
-int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle, const int nvshmem_version) {
+int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle,
+                                   const int nvshmem_version) {
     int status = MPI_SUCCESS, initialized = 0, finalized = 0;
     MPI_Comm src_comm;
     int bootstrap_version = NVSHMEM_VENDOR_VERSION;
     if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
-        BOOTSTRAP_ERROR_PRINT("MPI bootstrap version (%d) is not compatible with NVSHMEM version (%d)", bootstrap_version, nvshmem_version);
+        BOOTSTRAP_ERROR_PRINT(
+            "MPI bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
+            bootstrap_version, nvshmem_version);
         exit(-1);
     }
 
@@ -108,11 +109,11 @@ int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle, c
 
     status = MPI_Initialized(&initialized);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, error,
-            "MPI_Initialized failed\n");
+                           "MPI_Initialized failed\n");
 
     status = MPI_Finalized(&finalized);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, error,
-            "MPI_Finalized failed\n");
+                           "MPI_Finalized failed\n");
 
     if (!initialized && !finalized) {
         MPI_Init(NULL, NULL);
@@ -131,24 +132,23 @@ int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle, c
         goto error;
     }
 
-
     status = MPI_Comm_dup(src_comm, &bootstrap_comm);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, error,
-            "Creating bootstrap communicator failed\n");
+                           "Creating bootstrap communicator failed\n");
 
     status = MPI_Comm_rank(bootstrap_comm, &handle->pg_rank);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, error,
-            "MPI_Comm_rank failed\n");
+                           "MPI_Comm_rank failed\n");
 
     status = MPI_Comm_size(bootstrap_comm, &handle->pg_size);
     BOOTSTRAP_NE_ERROR_JMP(status, MPI_SUCCESS, NVSHMEMX_ERROR_INTERNAL, error,
-            "MPI_Comm_size failed\n");
+                           "MPI_Comm_size failed\n");
 
-    handle->allgather   = bootstrap_mpi_allgather;
-    handle->alltoall    = bootstrap_mpi_alltoall;
-    handle->barrier     = bootstrap_mpi_barrier;
+    handle->allgather = bootstrap_mpi_allgather;
+    handle->alltoall = bootstrap_mpi_alltoall;
+    handle->barrier = bootstrap_mpi_barrier;
     handle->global_exit = bootstrap_mpi_global_exit;
-    handle->finalize    = bootstrap_mpi_finalize;
+    handle->finalize = bootstrap_mpi_finalize;
 
     goto out;
 

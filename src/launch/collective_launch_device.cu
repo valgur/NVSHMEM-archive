@@ -53,7 +53,6 @@ out:
     return status;
 }
 
-
 int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, void **args,
                                size_t sharedMem, cudaStream_t stream) {
     int multiProcessorCount;
@@ -99,21 +98,23 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
 #ifdef _NVSHMEM_DEBUG
     INFO(NVSHMEM_COLL, "nvshmemi_maxv allgather target %p source %p nbytes %ld", &launchFailed,
          nvshmemi_state->scratch, sizeof(int));
-    status =
-        nvshmemi_boot_handle.allgather((void *)&launchFailed, (void *)nvshmemi_state->scratch,
-                                             sizeof(int), &nvshmemi_boot_handle);
+    status = nvshmemi_boot_handle.allgather((void *)&launchFailed, (void *)nvshmemi_state->scratch,
+                                            sizeof(int), &nvshmemi_boot_handle);
     NZ_ERROR_JMP(status, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
                  "allgather of launch capability failed \n");
 
     launchFailed = nvshmemi_maxv(nvshmemi_state->scratch, nvshmemi_state->npes);
 #endif
-    /* TODO: make it obvious we aren't going to complete this call from this thread. Possibly global exit? */
+    /* TODO: make it obvious we aren't going to complete this call from this thread. Possibly global
+     * exit? */
     NZ_ERROR_JMP(launchFailed, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
                  "One or more PEs cannot launch \n");
 
-    CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(nvshmemi_state->claunch_params.begin_event, stream), status, out);
+    CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(nvshmemi_state->claunch_params.begin_event, stream),
+                            status, out);
     CUDA_RUNTIME_CHECK_GOTO(cudaStreamWaitEvent(nvshmemi_state->claunch_params.stream,
-                                               nvshmemi_state->claunch_params.begin_event, 0), status, out);
+                                                nvshmemi_state->claunch_params.begin_event, 0),
+                            status, out);
 
     if (nvshmemi_state->cu_dev_attrib.cooperative_launch) {
         status = cudaLaunchCooperativeKernel(func, gridDims, blockDims, args, sharedMem,
@@ -128,9 +129,11 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
     }
 
     CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(nvshmemi_state->claunch_params.end_event,
-                           nvshmemi_state->claunch_params.stream), status, out);
+                                            nvshmemi_state->claunch_params.stream),
+                            status, out);
 
-    CUDA_RUNTIME_CHECK_GOTO(cudaStreamWaitEvent(stream, nvshmemi_state->claunch_params.end_event, 0), status, out);
+    CUDA_RUNTIME_CHECK_GOTO(
+        cudaStreamWaitEvent(stream, nvshmemi_state->claunch_params.end_event, 0), status, out);
 
 out:
     return status;

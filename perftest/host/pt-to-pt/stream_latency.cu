@@ -192,8 +192,10 @@ int main(int argc, char *argv[]) {
             i++;
         }
 
-        print_table("Stream_Latency", "with _on_stream", "size (Bytes)", "latency", "us", '-', size_array, ons_latency_array, i);
-        print_table("Stream_Latency", "without _on_stream", "size (Bytes)", "latency", "us", '-', size_array, offs_latency_array, i);
+        print_table("Stream_Latency", "with _on_stream", "size (Bytes)", "latency", "us", '-',
+                    size_array, ons_latency_array, i);
+        print_table("Stream_Latency", "without _on_stream", "size (Bytes)", "latency", "us", '-',
+                    size_array, offs_latency_array, i);
 
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));
@@ -211,7 +213,6 @@ finalize:
     if (size_array) free(size_array);
     if (ons_latency_array) free(ons_latency_array);
     if (offs_latency_array) free(offs_latency_array);
-
 
     if (data_d_local) nvshmem_free(data_d_local);
 

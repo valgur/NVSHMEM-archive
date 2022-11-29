@@ -94,8 +94,8 @@ int main(int c, char *v[]) {
         nvshmemx_collective_launch((const void *)reduce_ring, dimGrid, dimBlock, args, 0, 0));
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    cudaMemcpy(h, u,  sizeof(int), cudaMemcpyDeviceToHost);
-    printf("results on device [%d] is %d \n",mype, h[0]);
+    cudaMemcpy(h, u, sizeof(int), cudaMemcpyDeviceToHost);
+    printf("results on device [%d] is %d \n", mype, h[0]);
 
     nvshmem_free(u);
     free(h);

@@ -49,7 +49,7 @@ void nvshmemi_transports_preinit() {
 #ifdef NVSHMEM_LIBFABRIC_SUPPORT
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_FABRIC, nvshmemt_libfabric_init);
 #endif
-#ifdef NVSHMEM_GPUINITIATED_SUPPORT
+#ifdef NVSHMEM_IBGDA_SUPPORT
     nvshmemi_add_transport(NVSHMEM_TRANSPORT_ID_GIC, nvshmemt_gic_init);
 #endif
 }
@@ -77,8 +77,7 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
                 }
 
                 transports[i]->cap = (int *)calloc(state->npes, sizeof(int));
-                INFO(NVSHMEM_INIT, "cap array for transport %d : %p", i,
-                     transports[i]->cap);
+                INFO(NVSHMEM_INIT, "cap array for transport %d : %p", i, transports[i]->cap);
             }
         }
     }

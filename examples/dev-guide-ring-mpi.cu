@@ -15,16 +15,16 @@
 #include "nvshmem.h"
 #include "nvshmemx.h"
 
-#define CUDA_CHECK(stmt)                                  \
-do {                                                      \
-    cudaError_t result = (stmt);                          \
-    if (cudaSuccess != result) {                          \
-        fprintf(stderr, "[%s:%d] CUDA failed with %s \n", \
-         __FILE__, __LINE__, cudaGetErrorString(result)); \
-        exit(-1);                                         \
-    }                                                     \
-} while (0)
- 
+#define CUDA_CHECK(stmt)                                                          \
+    do {                                                                          \
+        cudaError_t result = (stmt);                                              \
+        if (cudaSuccess != result) {                                              \
+            fprintf(stderr, "[%s:%d] CUDA failed with %s \n", __FILE__, __LINE__, \
+                    cudaGetErrorString(result));                                  \
+            exit(-1);                                                             \
+        }                                                                         \
+    } while (0)
+
 __global__ void simple_shift(int *destination) {
     int mype = nvshmem_my_pe();
     int npes = nvshmem_n_pes();
@@ -32,8 +32,8 @@ __global__ void simple_shift(int *destination) {
 
     nvshmem_int_p(destination, mype, peer);
 }
- 
-int main (int argc, char *argv[]) {
+
+int main(int argc, char *argv[]) {
     int mype_node, msg;
     cudaStream_t stream;
     int rank, nranks;
@@ -50,12 +50,11 @@ int main (int argc, char *argv[]) {
 
     CUDA_CHECK(cudaSetDevice(mype_node));
     CUDA_CHECK(cudaStreamCreate(&stream));
-    int *destination = (int *) nvshmem_malloc (sizeof(int));
+    int *destination = (int *)nvshmem_malloc(sizeof(int));
 
     simple_shift<<<1, 1, 0, stream>>>(destination);
     nvshmemx_barrier_all_on_stream(stream);
-    CUDA_CHECK(cudaMemcpyAsync(&msg, destination, sizeof(int),
-                cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(&msg, destination, sizeof(int), cudaMemcpyDeviceToHost, stream));
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
     printf("%d: received message %d\n", nvshmem_my_pe(), msg);

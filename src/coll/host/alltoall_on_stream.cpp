@@ -21,10 +21,8 @@
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFN_NVSHMEMX_TYPENAME_ALLTOALL_ON_STREAM)
 #undef DEFN_NVSHMEMX_TYPENAME_ALLTOALL_ON_STREAM
 
-int nvshmemx_alltoallmem_on_stream(nvshmem_team_t team, void *dest,
-                                   const void *source, size_t nelems,
-                                   cudaStream_t stream) {
-    return nvshmemx_char_alltoall_on_stream(team, (char *)dest,
-                                            (const char *)source,
-                                            nelems, stream);
+int nvshmemx_alltoallmem_on_stream(nvshmem_team_t team, void *dest, const void *source,
+                                   size_t nelems, cudaStream_t stream) {
+    return nvshmemx_char_alltoall_on_stream(team, (char *)dest, (const char *)source, nelems,
+                                            stream);
 }

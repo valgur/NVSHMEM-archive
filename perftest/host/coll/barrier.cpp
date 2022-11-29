@@ -46,7 +46,8 @@ int main(int c, char *v[]) {
 
     if (!mype) {
         latency_value = latency / BARRIER_MAX_ITERS;
-        print_table("barrier", "None", "size (Bytes)", "latency", "us", '-', &size, &latency_value, 1);
+        print_table("barrier", "None", "size (Bytes)", "latency", "us", '-', &size, &latency_value,
+                    1);
     }
 
     nvshmem_barrier_all();

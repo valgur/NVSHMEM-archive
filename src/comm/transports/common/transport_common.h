@@ -46,8 +46,10 @@ struct gdrcopy_function_table {
     int (*driver_get_version)(gdr_t g, int *major, int *minor);
 };
 
-bool nvshmemt_gdrcopy_ftable_init(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc, void **gdrcopy_handle);
-void nvshmemt_gdrcopy_ftable_fini(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc, void **gdrcopy_handle);
+bool nvshmemt_gdrcopy_ftable_init(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc,
+                                  void **gdrcopy_handle);
+void nvshmemt_gdrcopy_ftable_fini(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc,
+                                  void **gdrcopy_handle);
 #endif
 
 int nvshmemt_parse_hca_list(const char *string, struct nvshmemt_hca_info *hca_list, int max_count);
@@ -73,8 +75,7 @@ struct nvshmemt_ibv_function_table {
     struct ibv_qp *(*create_qp)(struct ibv_pd *pd, struct ibv_qp_init_attr *qp_init_attr);
     struct ibv_srq *(*create_srq)(struct ibv_pd *pd, struct ibv_srq_init_attr *srq_init_attr);
     int (*modify_qp)(struct ibv_qp *qp, struct ibv_qp_attr *attr, int attr_mask);
-    int (*query_gid)(struct ibv_context *context, uint8_t port_num,
-                  int index, union ibv_gid *gid);
+    int (*query_gid)(struct ibv_context *context, uint8_t port_num, int index, union ibv_gid *gid);
     int (*destroy_qp)(struct ibv_qp *qp);
     int (*destroy_cq)(struct ibv_cq *cq);
     int (*destroy_srq)(struct ibv_srq *srq);

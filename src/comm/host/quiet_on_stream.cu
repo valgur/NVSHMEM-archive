@@ -21,9 +21,9 @@ __device__ void nvshmem_quiet();
 __global__ void nvshmemi_proxy_quiet_entrypoint() { nvshmem_quiet(); }
 
 void nvshmemi_call_proxy_quiet_entrypoint(cudaStream_t cstrm) {
-	int status = cudaLaunchKernel((const void *)nvshmemi_proxy_quiet_entrypoint, 1, 1, NULL,
-							  0, cstrm);
-	if (status) {
-		ERROR_PRINT("cudaLaunchKernel() failed in nvshmem_quiet_on_stream \n");
-	}
+    int status =
+        cudaLaunchKernel((const void *)nvshmemi_proxy_quiet_entrypoint, 1, 1, NULL, 0, cstrm);
+    if (status) {
+        ERROR_PRINT("cudaLaunchKernel() failed in nvshmem_quiet_on_stream \n");
+    }
 }

@@ -15,9 +15,7 @@ void nvshmemi_barrier(nvshmem_team_t team) {
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));
 }
 
-void nvshmemi_barrier_all() {
-    nvshmemi_barrier(NVSHMEM_TEAM_WORLD);
-}
+void nvshmemi_barrier_all() { nvshmemi_barrier(NVSHMEM_TEAM_WORLD); }
 
 int nvshmem_barrier(nvshmem_team_t team) {
     NVTX_FUNC_RANGE_IN_GROUP(COLL);
@@ -31,7 +29,7 @@ int nvshmem_barrier(nvshmem_team_t team) {
 
 void nvshmem_barrier_all() {
     NVTX_FUNC_RANGE_IN_GROUP(COLL);
-	(*nvshmemi_check_state_and_init_fn_ptr)();
+    (*nvshmemi_check_state_and_init_fn_ptr)();
     nvshmemi_barrier_all();
     return;
 }
@@ -53,7 +51,7 @@ int nvshmem_team_sync(nvshmem_team_t team) {
 
 void nvshmem_sync_all() {
     NVTX_FUNC_RANGE_IN_GROUP(COLL);
-	(*nvshmemi_check_state_and_init_fn_ptr)();
+    (*nvshmemi_check_state_and_init_fn_ptr)();
 
     nvshmemxi_sync_all_on_stream(nvshmemi_state->my_stream);
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(nvshmemi_state->my_stream));

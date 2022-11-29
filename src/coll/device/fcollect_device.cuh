@@ -16,7 +16,7 @@
 #ifdef __CUDA_ARCH__
 template <typename T, threadgroup_t SCOPE>
 __device__ inline void nvshmemi_fcollect_allpush_ll_threadgroup(nvshmem_team_t team, T *dest,
-                                                       const T *source, size_t nelems) {
+                                                                const T *source, size_t nelems) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     const size_t fcollect_ll_threshold = nvshmemi_device_state_d.fcollect_ll_threshold;
     const size_t fcollect_count = teami->fcollect_count;
@@ -45,30 +45,34 @@ __device__ inline void nvshmemi_fcollect_allpush_ll_threadgroup(nvshmem_team_t t
                 for (int j = 2 * thread_id; j < (nelems * sizeof(T)) / sizeof(uint32_t); j += 64) {
                     uint32_t val1 = *((uint32_t *)source + j);
                     uint32_t val2 = *((uint32_t *)source + j + 1);
-                    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" :: \
-                                 "l"((uint64_t *)peer_addr + pack_offset + j), "r"(val1), \
-                                 "r"(ll_flag), "r"(val2), "r"(ll_flag));
+                    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(
+                                     (uint64_t *)peer_addr + pack_offset + j),
+                                 "r"(val1), "r"(ll_flag), "r"(val2), "r"(ll_flag));
                 }
             } else {
-                nvshmemi_put_nbi_threadgroup<uint64_t, NVSHMEMI_THREADGROUP_WARP>((uint64_t *)pWrk + pack_offset, 
-                                (uint64_t *)pWrk + pack_offset, nelems * sizeof(T) / sizeof(uint32_t), next_rank);
+                nvshmemi_put_nbi_threadgroup<uint64_t, NVSHMEMI_THREADGROUP_WARP>(
+                    (uint64_t *)pWrk + pack_offset, (uint64_t *)pWrk + pack_offset,
+                    nelems * sizeof(T) / sizeof(uint32_t), next_rank);
             }
         }
         for (int ii = ii_start; ii < teami->size; ii += ii_inc) {
             prev_pe_in_team = (my_pe_in_team - ii + teami->size) % teami->size;
             prev_offset = nelems * prev_pe_in_team * (sizeof(T) / sizeof(uint32_t));
-            nvshmemi_recvLL<T, NVSHMEMI_THREADGROUP_WARP>(dest + (prev_pe_in_team * nelems), (uint64_t *)pWrk + prev_offset, nelems, ll_flag);
+            nvshmemi_recvLL<T, NVSHMEMI_THREADGROUP_WARP>(
+                dest + (prev_pe_in_team * nelems), (uint64_t *)pWrk + prev_offset, nelems, ll_flag);
         }
     } else {
         for (int ii = 1; ii < teami->size; ii += 1) {
             next_rank = teami->start + ((my_pe_in_team + ii) % teami->size) * teami->stride;
-            nvshmemi_put_nbi_threadgroup<uint64_t, SCOPE>((uint64_t *)pWrk + pack_offset, 
-                    (uint64_t *)pWrk + pack_offset, nelems * sizeof(T) / sizeof(uint32_t), next_rank);
+            nvshmemi_put_nbi_threadgroup<uint64_t, SCOPE>(
+                (uint64_t *)pWrk + pack_offset, (uint64_t *)pWrk + pack_offset,
+                nelems * sizeof(T) / sizeof(uint32_t), next_rank);
         }
         for (int ii = 0; ii < teami->size; ii += 1) {
             prev_pe_in_team = (my_pe_in_team - ii + teami->size) % teami->size;
             prev_offset = nelems * prev_pe_in_team * (sizeof(T) / sizeof(uint32_t));
-            nvshmemi_recvLL<T, SCOPE>(dest + (prev_pe_in_team * nelems), (uint64_t *)pWrk + prev_offset, nelems, ll_flag);
+            nvshmemi_recvLL<T, SCOPE>(dest + (prev_pe_in_team * nelems),
+                                      (uint64_t *)pWrk + prev_offset, nelems, ll_flag);
         }
     }
     nvshmemi_threadgroup_sync<SCOPE>();
@@ -88,7 +92,7 @@ __device__ inline void nvshmemi_fcollect_allpush_threadgroup(nvshmem_team_t team
     int my_idx_in_active_set = (mype - PE_start) / PE_stride;
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
 
-    //nvshmemi_threadgroup_sync<SCOPE>();
+    // nvshmemi_threadgroup_sync<SCOPE>();
     for (int ii = 0; ii < PE_size; ii++) {
         next_rank = PE_start + ((my_idx_in_active_set + ii) % PE_size) * stride;
         next_offset = nelems * ((mype - PE_start) / stride);
@@ -127,10 +131,10 @@ __device__ inline void nvshmemi_fcollect_threadgroup(nvshmem_team_t team, T *des
     if (!myIdx) /* Only one thread should increment fcollect_count */
         nvshmemi_device_state_d.team_pool[team]->fcollect_count += 1;
     nvshmemi_threadgroup_sync<SCOPE>();
-    if (sizeof(T) >= sizeof(uint32_t) && nelems % 2 == 0 && 
+    if (sizeof(T) >= sizeof(uint32_t) && nelems % 2 == 0 &&
         nvshmemi_device_state_d.fcollect_ll_threshold >= (nelems * sizeof(T)) &&
         SCOPE == NVSHMEMI_THREADGROUP_BLOCK)
-        nvshmemi_fcollect_allpush_ll_threadgroup<T, SCOPE>(team, dest, source, nelems);  
+        nvshmemi_fcollect_allpush_ll_threadgroup<T, SCOPE>(team, dest, source, nelems);
     else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS)
         nvshmemi_fcollect_p2p_allpush_threadgroup<T, SCOPE>(team, dest, source, nelems);
     else {

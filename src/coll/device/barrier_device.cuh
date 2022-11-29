@@ -172,7 +172,11 @@ template <threadgroup_t SCOPE>
 __device__ void nvshmemi_barrier_threadgroup(nvshmem_team_t team) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     nvshmemi_threadgroup_sync<SCOPE>();
-    if (!myIdx) nvshmem_quiet();
+    if ((nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST_ATOMICS)) {
+        nvshmemi_transfer_quiet<SCOPE>(true);
+    } else if (!myIdx) {
+        __threadfence_system();
+    }
     nvshmemi_threadgroup_sync<SCOPE>();
 
     nvshmemi_sync_algo_threadgroup<SCOPE>(team);

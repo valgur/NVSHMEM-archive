@@ -28,6 +28,8 @@ typedef struct nvshmem_local_buf_handle {
     size_t length;
     nvshmem_mem_handle_t *handle;
     bool registered_by_us;
+    bool linked_with_prev;
+    bool linked_with_next;
 } nvshmem_local_buf_handle_t;
 
 enum {

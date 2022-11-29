@@ -30,20 +30,28 @@ NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(DECL_NVSHMEMI_TYPENAME_OP_REDUCE, sum)
 NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(DECL_NVSHMEMI_TYPENAME_OP_REDUCE, prod)
 #undef DECL_NVSHMEMI_TYPENAME_OP_REDUCE
 
-#define DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP)                       \
-    __device__ void nvshmemxi_##TYPENAME##_##OP##_reduce_##SC(TYPE *dest, const TYPE *source,       \
-                            size_t nreduce, int start, int stride, int size, uint64_t *pWrk, uint64_t *pSync);
+#define DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP(SC, TYPENAME, TYPE, OP)            \
+    __device__ void nvshmemxi_##TYPENAME##_##OP##_reduce_##SC(                           \
+        TYPE *dest, const TYPE *source, size_t nreduce, int start, int stride, int size, \
+        uint64_t *pWrk, uint64_t *pSync);
 
-#define DECL_NVSHMEMI_REDUCE_THREADGROUP(SC)                                                                 \
-NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, and)    \
-NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, or)     \
-NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, xor)    \
-                                                                                                             \
-NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, max)   \
-NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, min)   \
-                                                                                                             \
-NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, sum)      \
-NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, prod)
+#define DECL_NVSHMEMI_REDUCE_THREADGROUP(SC)                                                       \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(                                             \
+        DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, and)                                    \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(                                             \
+        DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, or)                                     \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(                                             \
+        DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, xor)                                    \
+                                                                                                   \
+    NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(                                            \
+        DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, max)                                    \
+    NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(                                            \
+        DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, SC, min)                                    \
+                                                                                                   \
+    NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, \
+                                                    SC, sum)                                       \
+    NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_OP_REDUCE_THREADGROUP, \
+                                                    SC, prod)
 
 DECL_NVSHMEMI_REDUCE_THREADGROUP(warp)
 DECL_NVSHMEMI_REDUCE_THREADGROUP(block)
@@ -55,7 +63,8 @@ DECL_NVSHMEMI_REDUCE_THREADGROUP(block)
         nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, int PE_root);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP, warp)
-NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP, block)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP,
+                                                block)
 #undef DECL_NVSHMEMXI_TYPENAME_BROADCAST_THREADGROUP
 
 #define DECL_NVSHMEMXI_TYPENAME_FCOLLECT_THREADGROUP(SC, TYPENAME, TYPE)  \

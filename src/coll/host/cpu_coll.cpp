@@ -24,7 +24,6 @@ struct nccl_function_table nccl_ftable;
 int nvshmemi_use_nccl = 0;
 int nccl_version;
 
-
 int nvshmemi_coll_common_cpu_read_env() {
     int status = 0;
     nvshmemi_device_state.bcast_ll_threshold = nvshmemi_options.BCAST_LL_THRESHOLD;
@@ -58,7 +57,7 @@ int nvshmemi_coll_common_cpu_init() {
         nvshmemi_use_nccl = 0;
         goto fn_out;
     }
-    
+
     nccl_build_version = NCCL_VERSION_CODE;
     LOAD_SYM(nccl_handle, "ncclGetVersion", nccl_ftable.GetVersion);
     nccl_ftable.GetVersion(&nccl_version);

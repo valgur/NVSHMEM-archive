@@ -40,18 +40,17 @@
         assert(cudaSuccess == result);                                            \
     } while (0)
 
-#define CU_CHECK(stmt)                                                            \
-    do {                                                                          \
-        CUresult result = (stmt);                                                 \
-        char str[1024];                                                           \
-        if (CUDA_SUCCESS != result) {                                             \
-            CUresult ret = cuGetErrorString(result, (const char **)&str);         \
-            fprintf(stderr, "[%s:%d] cuda failed with (%d) %s \n", __FILE__,      \
-                    __LINE__, (int) result,                                       \
-                    (ret != CUDA_SUCCESS) ? "cuGetErrorString failed" : str);     \
-            exit(-1);                                                             \
-        }                                                                         \
-        assert(CUDA_SUCCESS == result);                                           \
+#define CU_CHECK(stmt)                                                                     \
+    do {                                                                                   \
+        CUresult result = (stmt);                                                          \
+        char str[1024];                                                                    \
+        if (CUDA_SUCCESS != result) {                                                      \
+            CUresult ret = cuGetErrorString(result, (const char **)&str);                  \
+            fprintf(stderr, "[%s:%d] cuda failed with (%d) %s \n", __FILE__, __LINE__,     \
+                    (int)result, (ret != CUDA_SUCCESS) ? "cuGetErrorString failed" : str); \
+            exit(-1);                                                                      \
+        }                                                                                  \
+        assert(CUDA_SUCCESS == result);                                                    \
     } while (0)
 
 #define ERROR_EXIT(...)                                                  \
@@ -95,6 +94,6 @@ void finalize_wrapper();
 void alloc_tables(void ***table_mem, int num_tables, int num_entries_per_table);
 void free_tables(void **tables, int num_tables);
 void print_table(const char *job_name, const char *subjob_name, const char *var_name,
-                 const char *output_var, const char *units, const char plus_minus,
-                 uint64_t *size, double *value, int num_entries);
+                 const char *output_var, const char *units, const char plus_minus, uint64_t *size,
+                 double *value, int num_entries);
 #endif

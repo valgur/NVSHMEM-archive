@@ -22,7 +22,6 @@
 #include "nvshmemx_error.h"
 #include "nvshmem_api.h"
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,12 +44,11 @@ void nvshmemx_query_thread(int *provided) __attribute__((deprecated));
 
 static inline int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attributes) {
     int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
-    nvshmemi_version_t app_nvshmem_version = {NVSHMEM_VENDOR_MAJOR_VERSION,
-                                              NVSHMEM_VENDOR_MINOR_VERSION,
-                                              NVSHMEM_VENDOR_PATCH_VERSION};
+    nvshmemi_version_t app_nvshmem_version = {
+        NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
     status = nvshmemi_init_thread(requested, &provided, flags, attributes, app_nvshmem_version);
     NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
-	return status;
+    return status;
 }
 int nvshmemx_cumodule_init(CUmodule module);
 
@@ -64,37 +62,37 @@ int nvshmemx_free_init_handle(nvshmemx_init_handle_t handle);
 
 int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, void **args,
                                size_t sharedMem, cudaStream_t stream);
-static inline int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, void **args,
-                               size_t sharedMem, cudaStream_t stream) {
-	(*nvshmemi_check_state_and_init_fn_ptr)();
+static inline int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims,
+                                             void **args, size_t sharedMem, cudaStream_t stream) {
+    (*nvshmemi_check_state_and_init_fn_ptr)();
     return nvshmemi_collective_launch(func, gridDims, blockDims, args, sharedMem, stream);
 }
 int nvshmemi_collective_launch_query_gridsize(const void *func, dim3 blockDims, void **args,
                                               size_t sharedMem, int *gridsize);
-static inline int nvshmemx_collective_launch_query_gridsize(const void *func, dim3 blockDims, void **args,
-                                              size_t sharedMem, int *gridsize) {
+static inline int nvshmemx_collective_launch_query_gridsize(const void *func, dim3 blockDims,
+                                                            void **args, size_t sharedMem,
+                                                            int *gridsize) {
     return nvshmemi_collective_launch_query_gridsize(func, blockDims, args, sharedMem, gridsize);
 }
 
 //////////////////// Put On Stream ////////////////////
 
-#define NVSHMEMX_DECL_TYPE_P_ON_STREAM(NAME, TYPE)                              \
-    void nvshmemx_##NAME##_p_on_stream(TYPE *dest, const TYPE value, int pe,    \
-            cudaStream_t cstrm);
+#define NVSHMEMX_DECL_TYPE_P_ON_STREAM(NAME, TYPE) \
+    void nvshmemx_##NAME##_p_on_stream(TYPE *dest, const TYPE value, int pe, cudaStream_t cstrm);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_DECL_TYPE_P_ON_STREAM)
 #undef NVSHMEMX_DECL_TYPE_P_ON_STREAM
 
-#define NVSHMEMX_DECL_TYPE_PUT_ON_STREAM(NAME, TYPE)                            \
-    void nvshmemx_##NAME##_put_on_stream(TYPE *dest, const TYPE *source,        \
-            size_t nelems, int pe, cudaStream_t cstrm);
+#define NVSHMEMX_DECL_TYPE_PUT_ON_STREAM(NAME, TYPE)                                            \
+    void nvshmemx_##NAME##_put_on_stream(TYPE *dest, const TYPE *source, size_t nelems, int pe, \
+                                         cudaStream_t cstrm);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_DECL_TYPE_PUT_ON_STREAM)
 #undef NVSHMEMX_DECL_TYPE_PUT_ON_STREAM
 
-#define NVSHMEMX_DECL_SIZE_PUT_ON_STREAM(NAME)                                  \
-    void nvshmemx_put##NAME##_on_stream(void *dest, const void *source,         \
-            size_t nelems, int pe, cudaStream_t cstrm);
+#define NVSHMEMX_DECL_SIZE_PUT_ON_STREAM(NAME)                                                 \
+    void nvshmemx_put##NAME##_on_stream(void *dest, const void *source, size_t nelems, int pe, \
+                                        cudaStream_t cstrm);
 
 NVSHMEMI_REPT_FOR_SIZES(NVSHMEMX_DECL_SIZE_PUT_ON_STREAM)
 #undef NVSHMEMX_DECL_SIZE_PUT_ON_STREAM
@@ -142,16 +140,18 @@ void nvshmemx_putmem_signal_nbi_on_stream(void *dest, const void *source, size_t
                                           uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
                                           cudaStream_t cstrm);
 
-#define NVSHMEMX_DECL_TYPE_IPUT_ON_STREAM(NAME, TYPE)                           \
-    void nvshmemx_##NAME##_iput_on_stream(TYPE *dest, const TYPE *source,       \
-            ptrdiff_t dst, ptrdiff_t sst, size_t nelems, int pe, cudaStream_t cstrm);
+#define NVSHMEMX_DECL_TYPE_IPUT_ON_STREAM(NAME, TYPE)                                    \
+    void nvshmemx_##NAME##_iput_on_stream(TYPE *dest, const TYPE *source, ptrdiff_t dst, \
+                                          ptrdiff_t sst, size_t nelems, int pe,          \
+                                          cudaStream_t cstrm);
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMX_DECL_TYPE_IPUT_ON_STREAM)
 #undef NVSHMEMX_DECL_TYPE_IPUT_ON_STREAM
 
-#define NVSHMEMX_DECL_SIZE_IPUT_ON_STREAM(NAME)                                 \
-    void nvshmemx_iput##NAME##_on_stream(void *dest, const void *source,        \
-            ptrdiff_t dst, ptrdiff_t sst, size_t nelems, int pe, cudaStream_t cstrm);
+#define NVSHMEMX_DECL_SIZE_IPUT_ON_STREAM(NAME)                                         \
+    void nvshmemx_iput##NAME##_on_stream(void *dest, const void *source, ptrdiff_t dst, \
+                                         ptrdiff_t sst, size_t nelems, int pe,          \
+                                         cudaStream_t cstrm);
 
 NVSHMEMI_REPT_FOR_SIZES(NVSHMEMX_DECL_SIZE_IPUT_ON_STREAM)
 #undef NVSHMEMX_DECL_SIZE_IPUT_ON_STREAM
@@ -208,7 +208,8 @@ void nvshmemx_getmem_on_stream(void *dest, const void *source, size_t bytes, int
 
 #define NVSHMEMX_DECL_SIZE_IGET_ON_STREAM(NAME)                                         \
     void nvshmemx_iget##NAME##_on_stream(void *dest, const void *source, ptrdiff_t dst, \
-                                         ptrdiff_t sst, size_t nelems, int pe, cudaStream_t cstrm);
+                                         ptrdiff_t sst, size_t nelems, int pe,          \
+                                         cudaStream_t cstrm);
 
 NVSHMEMI_REPT_FOR_SIZES(NVSHMEMX_DECL_SIZE_IGET_ON_STREAM)
 #undef NVSHMEMX_DECL_SIZE_IGET_ON_STREAM
@@ -238,7 +239,7 @@ void nvshmemx_quiet_on_stream(cudaStream_t cstrm);
 void nvshmemx_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
                                   cudaStream_t cstrm);
 
-#define NVSHMEMX_DECL_WAIT_UNTIL_ON_STREAM(NAME, Type)                                        \
+#define NVSHMEMX_DECL_WAIT_UNTIL_ON_STREAM(NAME, Type)                               \
     void nvshmemx_##NAME##_wait_until_on_stream(Type *ivar, int cmp, Type cmp_value, \
                                                 cudaStream_t cstream);
 NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_DECL_WAIT_UNTIL_ON_STREAM)
@@ -261,7 +262,6 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEMX_DECL_WAIT_UNTIL_ALL_VECTOR_ON_STREAM)
 void nvshmemx_signal_wait_until_on_stream(uint64_t *sig_addr, int cmp, uint64_t cmp_value,
                                           cudaStream_t cstream);
 //////////////////// Put on Thread Group ////////////////////
-
 
 #define NVSHMEMX_DECL_TYPE_PUT_THREADGROUP(NAME, TYPE)                                         \
     __device__ void nvshmemx_##NAME##_put_warp(TYPE *dest, const TYPE *source, size_t nelems,  \
@@ -446,18 +446,17 @@ NVSHMEMI_REPT_FOR_SIZES(NVSHMEMX_DECL_SIZE_GET_NBI_THREADGROUP)
 __device__ void nvshmemx_getmem_nbi_warp(void *dest, const void *source, size_t bytes, int pe);
 __device__ void nvshmemx_getmem_nbi_block(void *dest, const void *source, size_t bytes, int pe);
 
-
 //////////////////// Signal ////////////////////
 
-#define NVSHMEMX_DECL_TYPE_SIGNAL(NAME, TYPE)                                                                   \
-    __device__ void nvshmemx_##NAME##_signal(TYPE *dest, const TYPE value, int pe) __attribute__((deprecated)); \
+#define NVSHMEMX_DECL_TYPE_SIGNAL(NAME, TYPE)                                      \
+    __device__ void nvshmemx_##NAME##_signal(TYPE *dest, const TYPE value, int pe) \
+        __attribute__((deprecated));
 
 NVSHMEMX_REPT_FOR_SIGNAL_TYPES(NVSHMEMX_DECL_TYPE_SIGNAL)
 #undef NVSHMEMX_DECL_TYPE_SIGNAL
 
-NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, \
-                                                   int sig_op, int pe);
-
+NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op,
+                                                   int pe);
 
 #ifdef __cplusplus
 }

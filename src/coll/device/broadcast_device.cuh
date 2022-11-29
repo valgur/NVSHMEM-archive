@@ -49,34 +49,33 @@ __device__ inline void nvshmemi_bcast_tree_threadgroup(nvshmem_team_t team, T *d
     }
     for (int i = 0; i < k; i++) {
         int child_in_team = (my_pe_in_team * k + i + 1);
-        if (child_in_team >= teami->size)
-            break;
-        int child =
-            nvshmemi_team_translate_pe(teami, child_in_team, nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_WORLD_INDEX]);
+        if (child_in_team >= teami->size) break;
+        int child = nvshmemi_team_translate_pe(
+            teami, child_in_team, nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_WORLD_INDEX]);
 
         nvshmemi_put_nbi_threadgroup<uint64_t, SCOPE>((uint64_t *)(pWrk + recv_offset),
-                                               (uint64_t *)(pWrk + recv_offset),
-                                               nelems * sizeof(T) / sizeof(uint32_t), child);
+                                                      (uint64_t *)(pWrk + recv_offset),
+                                                      nelems * sizeof(T) / sizeof(uint32_t), child);
     }
     if (PE_root == my_pe_in_team)
         nvshmemi_memcpy_threadgroup<SCOPE>(dest, source, nelems * sizeof(T));
     nvshmemi_threadgroup_sync<SCOPE>();
-    if(!myIdx)
-        __threadfence();
+    if (!myIdx) __threadfence();
     nvshmemi_threadgroup_sync<SCOPE>();
 }
 
 template <typename T, threadgroup_t SCOPE>
 __device__ inline void nvshmemi_bcast_put2all_threadgroup(nvshmem_team_t team, T *dest,
-                                                         const T *source, size_t nelems,
-                                                         int PE_root) {
+                                                          const T *source, size_t nelems,
+                                                          int PE_root) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int i;
     int PE_start = teami->start;
     int PE_stride = teami->stride;
     int PE_size = teami->size;
     int stride = PE_stride;
-    int root = nvshmemi_team_translate_pe(teami, PE_root, nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_WORLD_INDEX]);
+    int root = nvshmemi_team_translate_pe(
+        teami, PE_root, nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_WORLD_INDEX]);
     int PE_end = PE_start + (stride * PE_size);
     if (root == nvshmemi_device_state_d.mype) {
         for (i = PE_start; i < PE_end; i += stride) {
@@ -88,15 +87,16 @@ __device__ inline void nvshmemi_bcast_put2all_threadgroup(nvshmem_team_t team, T
 
 template <typename T, threadgroup_t SCOPE>
 __device__ inline void nvshmemi_bcast_put2all_direct_threadgroup(nvshmem_team_t team, T *dest,
-                                                                const T *source, size_t nelems,
-                                                                int PE_root) {
+                                                                 const T *source, size_t nelems,
+                                                                 int PE_root) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int i;
     int PE_start = teami->start;
     int PE_stride = teami->stride;
     int PE_size = teami->size;
     int stride = PE_stride;
-    int root = nvshmemi_team_translate_pe(teami, PE_root, nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_WORLD_INDEX]);
+    int root = nvshmemi_team_translate_pe(
+        teami, PE_root, nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_WORLD_INDEX]);
     int PE_end = PE_start + (stride * PE_size);
     T *dst_ptr;
     if (root == nvshmemi_device_state_d.mype) {
@@ -115,15 +115,12 @@ __device__ inline void nvshmemi_broadcast_threadgroup(nvshmem_team_t team, T *de
     if (!myIdx) /* Only one thread should increment bcast_count */
         nvshmemi_device_state_d.team_pool[team]->bcast_count += 1;
     nvshmemi_threadgroup_sync<SCOPE>();
-    if (nvshmemi_device_state_d.bcast_ll_threshold >= nelems &&
-        sizeof(T) >= sizeof(uint32_t) &&
+    if (nvshmemi_device_state_d.bcast_ll_threshold >= nelems && sizeof(T) >= sizeof(uint32_t) &&
         nelems % 2 == 0) {
         nvshmemi_bcast_tree_threadgroup<T, SCOPE>(team, dest, source, nelems, PE_root);
-    }
-    else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
+    } else if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS) {
         nvshmemi_bcast_put2all_direct_threadgroup<T, SCOPE>(team, dest, source, nelems, PE_root);
-    }
-    else {
+    } else {
         nvshmemi_bcast_put2all_threadgroup<T, SCOPE>(team, dest, source, nelems, PE_root);
     }
 }

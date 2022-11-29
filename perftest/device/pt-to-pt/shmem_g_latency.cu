@@ -28,7 +28,6 @@ __global__ void pull(int *data_d, int len, int pe, int iter) {
     tid = threadIdx.x;
 
     for (i = 0; i < iter; i++) {
-
         if (!pe) {
             for (j = 0; j < len; j += THREADS) {
                 if (j + tid < len) *(data_d + j + tid) = nvshmem_int_g(data_d + j + tid, peer);
@@ -101,7 +100,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_g_latency", "None", "size (Bytes)", "latency", "us", '-', h_size_arr, h_lat, i);
+        print_table("shmem_g_latency", "None", "size (Bytes)", "latency", "us", '-', h_size_arr,
+                    h_lat, i);
     }
 
 finalize:

@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
 
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
-    (void)npes; // Silence unused variable warning
+    (void)npes;  // Silence unused variable warning
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     num_elems = MAX_ELEMS / 2;
@@ -64,15 +64,19 @@ int main(int argc, char **argv) {
     d_source = (DATATYPE *)buffer;
     d_dest = (DATATYPE *)&d_source[num_elems];
 
-    RUN_COLL_ON_STREAM(broadcast, BCAST, int32, int32_t, (int32_t *)d_source, (int32_t *)h_source, 
-                       (int32_t *)d_dest, (int32_t *)h_dest, npes, PE_root, stream, size_array, latency_array);
+    RUN_COLL_ON_STREAM(broadcast, BCAST, int32, int32_t, (int32_t *)d_source, (int32_t *)h_source,
+                       (int32_t *)d_dest, (int32_t *)h_dest, npes, PE_root, stream, size_array,
+                       latency_array);
     if (!mype) {
-        print_table("broadcast_on_stream", "32-bit", "size (bytes)", "latency", "us", '-', size_array, latency_array, MAX_ELEMS_LOG + 1);
+        print_table("broadcast_on_stream", "32-bit", "size (bytes)", "latency", "us", '-',
+                    size_array, latency_array, MAX_ELEMS_LOG + 1);
     }
 
-    RUN_COLL_ON_STREAM(broadcast, BCAST, int64, int64_t, d_source, h_source, d_dest, h_dest, npes, PE_root, stream, size_array, latency_array);
+    RUN_COLL_ON_STREAM(broadcast, BCAST, int64, int64_t, d_source, h_source, d_dest, h_dest, npes,
+                       PE_root, stream, size_array, latency_array);
     if (!mype) {
-        print_table("broadcast_on_stream", "64-bit", "size (bytes)", "latency", "us", '-', size_array, latency_array, MAX_ELEMS_LOG + 1);
+        print_table("broadcast_on_stream", "64-bit", "size (bytes)", "latency", "us", '-',
+                    size_array, latency_array, MAX_ELEMS_LOG + 1);
     }
 
     CUDA_CHECK(cudaFreeHost(h_buffer));

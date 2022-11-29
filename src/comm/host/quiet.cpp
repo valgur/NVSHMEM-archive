@@ -35,14 +35,14 @@ void nvshmem_quiet(void) {
 
     for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
         if (tbitmap & 1) {
-                struct nvshmem_transport *tcurr =
-                    ((nvshmem_transport_t *)nvshmemi_state->transports)[j];
-                for (int k = 0; k < nvshmemi_state->npes; k++) {
-                    if (nvshmemi_state->quiet[j]) {
-                        status = nvshmemi_state->quiet[j](tcurr, k, 0);
-                    }
-                    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_quiet() failed \n");
+            struct nvshmem_transport *tcurr =
+                ((nvshmem_transport_t *)nvshmemi_state->transports)[j];
+            for (int k = 0; k < nvshmemi_state->npes; k++) {
+                if (nvshmemi_state->quiet[j]) {
+                    status = nvshmemi_state->quiet[j](tcurr, k, 0);
                 }
+                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_quiet() failed \n");
+            }
         }
         tbitmap >>= 1;
     }
@@ -71,11 +71,8 @@ void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {
 
     for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
         if (tbitmap & 1) {
-            if (j == NVSHMEM_TRANSPORT_ID_IBRC ||
-                j == NVSHMEM_TRANSPORT_ID_UCX ||
-                j == NVSHMEM_TRANSPORT_ID_IBDEVX ||
-                j == NVSHMEM_TRANSPORT_ID_FABRIC)
-            {
+            if (j == NVSHMEM_TRANSPORT_ID_IBRC || j == NVSHMEM_TRANSPORT_ID_UCX ||
+                j == NVSHMEM_TRANSPORT_ID_IBDEVX || j == NVSHMEM_TRANSPORT_ID_FABRIC) {
                 nvshmemi_call_proxy_quiet_entrypoint(cstrm);
             }
         }

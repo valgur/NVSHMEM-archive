@@ -8,11 +8,11 @@
 #define _GPU_COMMON_H_
 
 #define GPU_BITS_COPY_THREADGROUP_DIRECT(TYPENAME, TYPE, dest, src, nelems, myIdx, groupSize) \
-    do {                                                                              \
-        int i;                                                                        \
-        for (i = myIdx; i < nelems; i += groupSize) {                                 \
-            *((TYPE *)dest + i) = *((TYPE *)src + i);                                 \
-        }                                                                             \
+    do {                                                                                      \
+        int i;                                                                                \
+        for (i = myIdx; i < nelems; i += groupSize) {                                         \
+            *((TYPE *)dest + i) = *((TYPE *)src + i);                                         \
+        }                                                                                     \
     } while (0)
 
 template <typename T, rdxn_ops_t op>

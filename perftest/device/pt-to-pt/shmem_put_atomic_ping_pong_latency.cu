@@ -70,7 +70,6 @@ int main(int c, char *v[]) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-
     mype = nvshmem_my_pe();
     npes = nvshmem_n_pes();
 
@@ -137,7 +136,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_at_ping_lat", "None", "size (Bytes)", "latency", "us", '-', h_size_arr, h_lat, i);
+        print_table("shmem_at_ping_lat", "None", "size (Bytes)", "latency", "us", '-', h_size_arr,
+                    h_lat, i);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());

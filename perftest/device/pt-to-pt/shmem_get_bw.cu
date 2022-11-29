@@ -152,7 +152,8 @@ int main(int argc, char *argv[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_get_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw, i);
+        print_table("shmem_get_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
+                    i);
     }
 
 finalize:

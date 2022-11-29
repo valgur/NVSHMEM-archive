@@ -39,8 +39,9 @@ __global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, in
                 int idx = j + u * threads + tid;
                 *(data_d + idx) = nvshmem_double_g(data_d + idx, peer);
             }
-            __syncthreads(); /* This is required for performance over PCIe. PCIe has a P2P mailbox protocol
-                                that has a window of 64KB for device BAR addresses. Not synchronizing
+            __syncthreads(); /* This is required for performance over PCIe. PCIe has a P2P mailbox
+                                protocol that has a window of 64KB for device BAR addresses. Not
+                                synchronizing
                                 across threads will lead to jumping in and out of the 64K window */
         }
 

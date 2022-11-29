@@ -32,21 +32,20 @@ __global__ void latency(int *data_d, int len, int pe, int iter) {
     }
 }
 
-#define LATENCY_THREADGROUP(group)                                                    \
-    __global__ void latency_##group(int *data_d, int len, int pe, int iter) {         \
-        int i, tid, peer;                                                             \
-                                                                                      \
-        peer = !pe;                                                                   \
-        tid = threadIdx.x;                                                            \
-                                                                                      \
-        for (i = 0; i < iter; i++) {                                                  \
-            nvshmemx_int_get_nbi_##group(data_d, data_d, len, peer);                  \
-                                                                                      \
-            __syncthreads();                                                          \
-            if (!tid) nvshmem_quiet();                                                \
-            __syncthreads();                                                          \
-        }                                                                             \
-                                                                                      \
+#define LATENCY_THREADGROUP(group)                                            \
+    __global__ void latency_##group(int *data_d, int len, int pe, int iter) { \
+        int i, tid, peer;                                                     \
+                                                                              \
+        peer = !pe;                                                           \
+        tid = threadIdx.x;                                                    \
+                                                                              \
+        for (i = 0; i < iter; i++) {                                          \
+            nvshmemx_int_get_nbi_##group(data_d, data_d, len, peer);          \
+                                                                              \
+            __syncthreads();                                                  \
+            if (!tid) nvshmem_quiet();                                        \
+            __syncthreads();                                                  \
+        }                                                                     \
     }
 
 LATENCY_THREADGROUP(warp)
@@ -118,7 +117,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_g_latency", "Thread", "size (Bytes)", "latency", "us", '-', h_size_arr, h_lat, i);
+        print_table("shmem_g_latency", "Thread", "size (Bytes)", "latency", "us", '-', h_size_arr,
+                    h_lat, i);
     }
 
     i = 0;
@@ -146,7 +146,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_get_latency", "Warp", "size (Bytes)", "latency", "us", '-', h_size_arr, h_lat, i);
+        print_table("shmem_get_latency", "Warp", "size (Bytes)", "latency", "us", '-', h_size_arr,
+                    h_lat, i);
     }
 
     i = 0;
@@ -174,7 +175,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_get_latency", "Block", "size (Bytes)", "latency", "us", '-', h_size_arr, h_lat, i);
+        print_table("shmem_get_latency", "Block", "size (Bytes)", "latency", "us", '-', h_size_arr,
+                    h_lat, i);
     }
 
 finalize:

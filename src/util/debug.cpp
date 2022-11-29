@@ -23,8 +23,8 @@
 #include "util.h"
 
 extern "C" {
-void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags,
-                       const char *filefunc, int line, const char *fmt, ...) {
+void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const char *filefunc,
+                       int line, const char *fmt, ...) {
     if (nvshmem_debug_level <= NVSHMEM_LOG_NONE) {
         return;
     }
