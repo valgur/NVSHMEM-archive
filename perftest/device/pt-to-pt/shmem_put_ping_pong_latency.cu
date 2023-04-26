@@ -82,7 +82,7 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
     CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(int)));
 
-    array_size = floor(log2((float)max_msg_size)) + 1;
+    array_size = floor(std::log2((float)max_msg_size)) + 1;
     alloc_tables(&h_tables, 2, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_lat = (double *)h_tables[1];
@@ -110,7 +110,7 @@ int main(int c, char *v[]) {
         CUDA_CHECK(cudaDeviceSynchronize());
         nvshmem_barrier_all();
 
-        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, args_1, 0, stream);
+        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1024, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);

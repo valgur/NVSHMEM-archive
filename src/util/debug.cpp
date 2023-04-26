@@ -44,7 +44,7 @@ void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const
              (flags & nvshmem_debug_mask))
         len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] NVSHMEM INFO ", hostname, getpid(),
                        gettid(), cudaDev);
-#ifdef ENABLE_TRACE
+#ifdef NVSHMEM_TRACE
     else if (level == NVSHMEM_LOG_TRACE && nvshmem_debug_level >= NVSHMEM_LOG_TRACE &&
              (flags & nvshmem_debug_mask)) {
         auto delta = std::chrono::high_resolution_clock::now() - nvshmem_epoch;

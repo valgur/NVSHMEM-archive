@@ -26,7 +26,6 @@ int nccl_version;
 
 int nvshmemi_coll_common_cpu_read_env() {
     int status = 0;
-    nvshmemi_device_state.bcast_ll_threshold = nvshmemi_options.BCAST_LL_THRESHOLD;
     nvshmemi_device_state.fcollect_ll_threshold = nvshmemi_options.FCOLLECT_LL_THRESHOLD;
     return status;
 }
@@ -53,7 +52,7 @@ int nvshmemi_coll_common_cpu_init() {
 
     nccl_handle = dlopen("libnccl.so.2", RTLD_LAZY);
     if (!nccl_handle) {
-        WARN_PRINT("NCCL library not found...\n");
+        NVSHMEMI_WARN_PRINT("NCCL library not found...\n");
         nvshmemi_use_nccl = 0;
         goto fn_out;
     }
@@ -72,7 +71,7 @@ int nvshmemi_coll_common_cpu_init() {
         nccl_build_major = nccl_build_version / 1000;
     }
     if (nccl_major != nccl_build_major) {
-        WARN_PRINT(
+        NVSHMEMI_WARN_PRINT(
             "NCCL library major version (%d) is different than the"
             " version (%d) with which NVSHMEM was built, skipping use...\n",
             nccl_major, nccl_build_major);

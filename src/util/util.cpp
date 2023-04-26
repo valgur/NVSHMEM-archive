@@ -39,7 +39,7 @@ uint64_t getHostHash() {
     int status = 0;
 
     status = gethostname(hostname, 1024);
-    if (status) ERROR_EXIT("gethostname failed \n");
+    if (status) NVSHMEMI_ERROR_EXIT("gethostname failed \n");
 
     for (int c = 0; c < 1024 && hostname[c] != '\0'; c++) {
         result = ((result << 5) + result) + hostname[c];

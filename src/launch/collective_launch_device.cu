@@ -43,8 +43,8 @@ int nvshmemi_collective_launch_query_gridsize(const void *func, dim3 blockDims, 
     // get min blocks per SM, error out if 0 for any GPU
     status =
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxBlocksSM, func, blockSize, sharedMem);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cudaOccupancyMaxActiveBlocksPerMultiprocessor failed \n");
+    NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                          "cudaOccupancyMaxActiveBlocksPerMultiprocessor failed \n");
 
     // XXX: Returns maximum supported grid (including 0) on associated GPU
     *gridsize = maxBlocksSM * multiProcessorCount;  // XXX:caller chooses dimension of grid
@@ -74,8 +74,8 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
     // get min blocks per SM, error out if 0 for any GPU
     status =
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxBlocksSM, func, blockSize, sharedMem);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cudaOccupancyMaxActiveBlocksPerMultiprocessor failed \n");
+    NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                          "cudaOccupancyMaxActiveBlocksPerMultiprocessor failed \n");
 
     multiProcessorCount = nvshmemi_state->cu_dev_attrib.multi_processor_count;
     INFO(NVSHMEM_COLL, "[%d] SM count %d  CTA/SM count %d", nvshmemi_state->mype,
@@ -100,15 +100,15 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
          nvshmemi_state->scratch, sizeof(int));
     status = nvshmemi_boot_handle.allgather((void *)&launchFailed, (void *)nvshmemi_state->scratch,
                                             sizeof(int), &nvshmemi_boot_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
-                 "allgather of launch capability failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
+                          "allgather of launch capability failed \n");
 
     launchFailed = nvshmemi_maxv(nvshmemi_state->scratch, nvshmemi_state->npes);
 #endif
     /* TODO: make it obvious we aren't going to complete this call from this thread. Possibly global
      * exit? */
-    NZ_ERROR_JMP(launchFailed, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
-                 "One or more PEs cannot launch \n");
+    NVSHMEMI_NZ_ERROR_JMP(launchFailed, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
+                          "One or more PEs cannot launch \n");
 
     CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(nvshmemi_state->claunch_params.begin_event, stream),
                             status, out);
@@ -119,13 +119,13 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
     if (nvshmemi_state->cu_dev_attrib.cooperative_launch) {
         status = cudaLaunchCooperativeKernel(func, gridDims, blockDims, args, sharedMem,
                                              nvshmemi_state->claunch_params.stream);
-        NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
-                     "Cooperative kernel launch failed \n");
+        NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
+                              "Cooperative kernel launch failed \n");
     } else {
         status = cudaLaunchKernel(func, gridDims, blockDims, args, sharedMem,
                                   nvshmemi_state->claunch_params.stream);
-        NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
-                     "Kernel launch failed \n");
+        NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_COLLECTIVE_LAUNCH_FAILED, out,
+                              "Kernel launch failed \n");
     }
 
     CUDA_RUNTIME_CHECK_GOTO(cudaEventRecord(nvshmemi_state->claunch_params.end_event,

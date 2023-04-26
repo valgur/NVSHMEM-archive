@@ -142,6 +142,11 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_FCOLLECT_
 DECL_NVSHMEMX_TYPENAME_OP_REDUCE(warp);
 DECL_NVSHMEMX_TYPENAME_OP_REDUCE(block);
 
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_double2_maxloc_reduce_block(nvshmem_team_t team,
+                                                                    double2 *dest,
+                                                                    const double2 *src,
+                                                                    size_t nreduce);
+
 #ifdef __cplusplus
 }
 #endif

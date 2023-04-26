@@ -1,6 +1,10 @@
 NVSHMEM-SLA.txt /usr/share/doc/libnvshmem
 include/*.cuh /usr/include
 include/*.h /usr/include
+include/device/pt-to-pt/* include/device/pt-to-pt
+include/device/coll/* include/device/coll
+include/device/team/* include/device/team
+include/device/init/* include/device/init
 lib/libnvshmem.a /usr/lib/${pkg:MultiArch}
 lib/libnvshmem_device.a /usr/lib/${pkg:MultiArch}
 lib/*.so* /usr/lib/${pkg:MultiArch}

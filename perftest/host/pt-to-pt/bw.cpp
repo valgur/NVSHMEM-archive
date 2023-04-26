@@ -17,6 +17,7 @@
 #include <sys/time.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <cmath>
 #include "utils.h"
 
 #define DEFAULT_SKIP 10

@@ -95,8 +95,4 @@ __device__ static inline uint16_t BSWAP16(uint16_t x) {
 #define HTOBE32(x) BSWAP32(x)
 #define HTOBE16(x) BSWAP16(x)
 
-#ifndef MIN
-#define MIN(x, y) ((x) < (y) ? (x) : (y))
-#endif
-
 #endif /* _COMM_DEVICE_UTILS_H */

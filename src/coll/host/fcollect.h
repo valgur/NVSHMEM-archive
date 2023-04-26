@@ -20,7 +20,7 @@ int nvshmemi_fcollect_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *sou
     nvshmemi_team_t *teami = nvshmemi_team_pool[team];
     if (nvshmemi_use_nccl && nvshmemi_get_nccl_dt<TYPE>() != ncclNumTypes) {
         NCCL_CHECK(nccl_ftable.AllGather(source, dest, nelems, nvshmemi_get_nccl_dt<TYPE>(),
-                                         teami->nccl_comm, stream));
+                                         (ncclComm_t)teami->nccl_comm, stream));
     } else
 #endif
     {

@@ -63,7 +63,7 @@ void nvshmemi_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_o
         NVSHMEMU_MAPPED_PTR_TRANSLATE(peer_addr, sig_addr, pe)
         status = cudaMemcpyAsync(peer_addr, (const void *)&signal, sizeof(uint64_t),
                                  cudaMemcpyHostToDevice, cstrm);
-        NZ_EXIT(status, "cudaMemcpyAsync() failed\n");
+        NVSHMEMI_NZ_EXIT(status, "cudaMemcpyAsync() failed\n");
     } else {
         call_nvshmemi_signal_op_kernel(sig_addr, signal, sig_op, pe, cstrm);
     }

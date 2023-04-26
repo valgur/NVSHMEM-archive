@@ -12,6 +12,11 @@
 #include "topo.h"
 #include <list>
 
+#define MAX_BUSID_SIZE 16
+#define MAXPATHSIZE 1024
+
+bool nvshmemi_is_mpg_run = 0;
+
 /* Enumeration of possible PCIe paths and sister arrays for perf characteristics and string
  * representations */
 enum pci_distance {
@@ -25,153 +30,36 @@ enum pci_distance {
 static const int pci_distance_perf[PATH_COUNT] = {4, 4, 3, 2, 1};
 static const char *pci_distance_string[PATH_COUNT] = {"PIX", "PXB", "PHB", "NODE", "SYS"};
 
-bool nvshmemi_is_mpg_run = 0;
-
-int nvshmemi_build_transport_map(nvshmemi_state_t *state) {
-    int status = 0;
-    int *local_map = NULL;
-
-    state->transport_map = (int *)calloc(state->npes * state->npes, sizeof(int));
-    NULL_ERROR_JMP(state->transport_map, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "access map allocation failed \n");
-
-    local_map = (int *)calloc(state->npes, sizeof(int));
-    NULL_ERROR_JMP(local_map, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "access map allocation failed \n");
-
-    state->transport_bitmap = 0;
-
-    for (int i = 0; i < state->npes; i++) {
-        int reach_any = 0;
-
-        for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
-            int reach = 0;
-
-            if (!state->transports[j]) {
-                continue;
-            }
-
-            status = state->transports[j]->host_ops.can_reach_peer(&reach, &state->pe_info[i],
-                                                                   state->transports[j]);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "can reach peer failed \n");
-            INFO(NVSHMEM_TOPO, "[%d] reach %d to peer %d over transport %d", state->mype, reach, i,
-                 j);
-
-            state->transports[j]->cap[i] = reach;
-            reach_any |= reach;
-
-            if (reach) {
-                int m = 1 << j;
-                local_map[i] |= m;
-                /* Add transport to the bitmap if this is the first PE to use it. */
-                if ((state->transport_bitmap & m) == 0) {
-                    state->transport_bitmap |= m;
-                }
-            }
-        }
-
-        if ((!reach_any) && (!nvshmemi_options.BYPASS_ACCESSIBILITY_CHECK)) {
-            status = NVSHMEMX_ERROR_NOT_SUPPORTED;
-            fprintf(stderr, "%s:%d: [GPU %d] Peer GPU %d is not accessible, exiting ... \n",
-                    __FILE__, __LINE__, state->mype, i);
-            goto out;
-        }
-    }
-    INFO(NVSHMEM_TOPO, "[%d] transport bitmap: %x", state->mype, state->transport_bitmap);
-
-    status = nvshmemi_boot_handle.allgather((void *)local_map, (void *)state->transport_map,
-                                            sizeof(int) * state->npes, &nvshmemi_boot_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of ipc handles failed \n");
-
-out:
-    if (local_map) free(local_map);
-    if (status) {
-        if (state->transport_map) free(state->transport_map);
-    }
-    return status;
-}
-
-int nvshmemi_get_pcie_attrs(pcie_id_t *pcie_id, int devid) {
-    int status = 0;
-    cudaDeviceProp prop;
-
-    status = cudaGetDeviceProperties(&prop, devid);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                 "cudaDeviceGetAttribute failed \n");
-    pcie_id->dev_id = prop.pciDeviceID;
-    pcie_id->bus_id = prop.pciBusID;
-    pcie_id->domain_id = prop.pciDomainID;
-
-out:
-    return status;
-}
-
-int nvshmemi_detect_same_device(nvshmemi_state_t *state) {
-    int status = 0;
-    nvshmem_transport_pe_info_t my_info;
-
-    my_info.pe = state->mype;
-    status = nvshmemi_get_pcie_attrs(&my_info.pcie_id, state->device_id);
-    NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out, "getPcieAttrs failed \n");
-
-    my_info.hostHash = getHostHash();
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, state->device_id);
-    my_info.gpu_uuid = prop.uuid;
-
-    // TODO: move this to a topo init function as it is reused in other functions in topo that
-    // follow
-    state->pe_info =
-        (nvshmem_transport_pe_info_t *)malloc(sizeof(nvshmem_transport_pe_info_t) * state->npes);
-    NULL_ERROR_JMP(state->pe_info, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "topo init info allocation failed \n");
-
-    status =
-        nvshmemi_boot_handle.allgather((void *)&my_info, (void *)state->pe_info,
-                                       sizeof(nvshmem_transport_pe_info_t), &nvshmemi_boot_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of ipc handles failed \n");
-
-    for (int i = 0; i < state->npes; i++) {
-        (state->pe_info + i)->pe = i;
-        if (i == state->mype) continue;
-
-        status = (((state->pe_info + i)->hostHash == my_info.hostHash) &&
-                  ((state->pe_info + i)->pcie_id.dev_id == my_info.pcie_id.dev_id) &&
-                  ((state->pe_info + i)->pcie_id.bus_id == my_info.pcie_id.bus_id) &&
-                  ((state->pe_info + i)->pcie_id.domain_id == my_info.pcie_id.domain_id));
-        if (status) {
-            INFO(NVSHMEM_INIT, "More than 1 PE per GPU detected. This is an MPG run.\n");
-#if defined(NVSHMEM_PPC64LE)
-            ERROR_EXIT("MPG support is currently not available on P9 platforms");
-#endif
-            nvshmemi_is_mpg_run = 1;
-            status = 0;
-        }
-        /*NZ_ERROR_JMP(status, NVSHMEMX_ERROR_NOT_SUPPORTED, out,
-                     "two PEs sharing a GPU is not supported \n");*/
-    }
-
-out:
-    if (status) {
-        state->cucontext = NULL;
-        if (!state->pe_info) free(state->pe_info);
-    }
-    return status;
-}
-
 static int get_cuda_bus_id(int cuda_dev, char *bus_id) {
     int status = NVSHMEMX_SUCCESS;
     cudaError_t err;
 
     err = cudaDeviceGetPCIBusId(bus_id, MAX_BUSID_SIZE, cuda_dev);
     if (err != cudaSuccess) {
-        ERROR_PRINT("cudaDeviceGetPCIBusId failed with error: %d \n", err);
+        NVSHMEMI_ERROR_PRINT("cudaDeviceGetPCIBusId failed with error: %d \n", err);
         status = NVSHMEMX_ERROR_INTERNAL;
         goto out;
     }
 
 out:
     return status;
+}
+
+static int get_numa_id(char *path) {
+    char npath[PATH_MAX];
+    snprintf(npath, PATH_MAX, "%s/numa_node", path);
+    npath[PATH_MAX - 1] = '\0';
+
+    int numaId = -1;
+    FILE *file = fopen(npath, "r");
+    if (file == NULL) return -1;
+    if (fscanf(file, "%d", &numaId) == EOF) {
+        fclose(file);
+        return -1;
+    }
+    fclose(file);
+
+    return numaId;
 }
 
 static int get_device_path(char *bus_id, char **path) {
@@ -184,7 +72,8 @@ static int get_device_path(char *bus_id, char **path) {
     memcpy(bus_path + sizeof("/sys/class/pci_bus/") - 1, bus_id, sizeof("0000:00") - 1);
 
     cuda_rpath = realpath(bus_path, NULL);
-    NULL_ERROR_JMP(cuda_rpath, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
+    NVSHMEMI_NULL_ERROR_JMP(cuda_rpath, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "realpath failed \n");
 
     strncpy(pathname, cuda_rpath, MAXPATHSIZE);
     strncpy(pathname + strlen(pathname), "/", MAXPATHSIZE - strlen(pathname));
@@ -192,7 +81,7 @@ static int get_device_path(char *bus_id, char **path) {
     free(cuda_rpath);
 
     *path = realpath(pathname, NULL);
-    NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
+    NVSHMEMI_NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
 
 out:
     return status;
@@ -212,8 +101,8 @@ static enum pci_distance get_pci_distance(char *cuda_path, char *mlx_path) {
     }
     if (score <= 3) {
         /* Split the former PATH_SOC distance into PATH_NODE and PATH_SYS based on numaId */
-        int numaId1 = getNumaId(cuda_path);
-        int numaId2 = getNumaId(mlx_path);
+        int numaId1 = get_numa_id(cuda_path);
+        int numaId2 = get_numa_id(mlx_path);
         return ((numaId1 == numaId2) ? PATH_NODE : PATH_SYS);
     }
     if (score == 4) return PATH_PHB;
@@ -227,7 +116,7 @@ typedef struct nvshmemi_path_pair_info {
     enum pci_distance pcie_distance;
 } nvshmemi_path_pair_info_t;
 
-int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_transport *tcurr) {
+int nvshmemi_get_device_by_distance(int *device, struct nvshmem_transport *tcurr) {
     struct dev_info {
         char *dev_path;
         int use_count;
@@ -240,89 +129,104 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
     std::list<nvshmemi_path_pair_info_t> pe_dev_pairs;
     std::list<nvshmemi_path_pair_info_t>::iterator pairs_iter;
 
+    int ndev = tcurr->n_devices;
+    int mype = nvshmemi_state->mype;
+    int n_pes = nvshmemi_state->npes;
+    int n_pes_node = nvshmemi_state->npes_node;
+    CUdevice gpu_device_id;
+
     char **cuda_device_paths = NULL;
     int *pe_selected_devices = NULL;
     enum pci_distance *pe_device_distance = NULL;
     int *used_devs = NULL;
 
-    int ndev;
     int mype_index = -1, mydev_index = -1;
     int i, dev_id, pe_id;
     int devices_assigned = 0;
     int status = NVSHMEMX_ERROR_INTERNAL;
 
-    status = tcurr->host_ops.get_device_count(&ndev, tcurr);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                 "transport devices (setup_connections) failed \n");
+    if (ndev <= 0) {
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "transport devices (setup_connections) failed \n");
+        goto out;
+    }
+
+    status = CUPFN(nvshmemi_cuda_syms, cuCtxGetDevice(&gpu_device_id));
+    if (status != CUDA_SUCCESS) {
+        status = NVSHMEMX_ERROR_INTERNAL;
+        goto out;
+    }
 
     /* Allocate data structures start */
     dev_info_all = (struct dev_info *)calloc(ndev, sizeof(struct dev_info));
-    NULL_ERROR_JMP(dev_info_all, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "dev_info_all allocation failed \n");
+    NVSHMEMI_NULL_ERROR_JMP(dev_info_all, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "dev_info_all allocation failed \n");
 
     // TODO: we only need to exchange info among intra-node ranks,
-    gpu_info_all = (struct gpu_info *)calloc(state->npes, sizeof(struct gpu_info));
-    NULL_ERROR_JMP(gpu_info_all, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "gpu_info_all allocation failed \n");
+    gpu_info_all = (struct gpu_info *)calloc(n_pes, sizeof(struct gpu_info));
+    NVSHMEMI_NULL_ERROR_JMP(gpu_info_all, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "gpu_info_all allocation failed \n");
 
-    cuda_device_paths = (char **)calloc(state->npes_node, sizeof(char *));
-    NULL_ERROR_JMP(cuda_device_paths, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "Unable to allocate memory for PE/NIC Mapping.\n");
+    cuda_device_paths = (char **)calloc(n_pes_node, sizeof(char *));
+    NVSHMEMI_NULL_ERROR_JMP(cuda_device_paths, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "Unable to allocate memory for PE/NIC Mapping.\n");
 
-    pe_selected_devices = (int *)calloc(state->npes_node, sizeof(int));
-    NULL_ERROR_JMP(pe_selected_devices, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "Unable to allocate memory for PE/NIC Mapping.\n");
-    for (pe_id = 0; pe_id < state->npes_node; pe_id++) {
+    pe_selected_devices = (int *)calloc(n_pes_node, sizeof(int));
+    NVSHMEMI_NULL_ERROR_JMP(pe_selected_devices, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "Unable to allocate memory for PE/NIC Mapping.\n");
+    for (pe_id = 0; pe_id < n_pes_node; pe_id++) {
         pe_selected_devices[pe_id] = -1;
     }
 
-    pe_device_distance = (enum pci_distance *)calloc(state->npes_node, sizeof(enum pci_distance));
-    NULL_ERROR_JMP(pe_device_distance, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "Unable to allocate memory for PE/NIC Mapping.\n");
+    pe_device_distance = (enum pci_distance *)calloc(n_pes_node, sizeof(enum pci_distance));
+    NVSHMEMI_NULL_ERROR_JMP(pe_device_distance, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "Unable to allocate memory for PE/NIC Mapping.\n");
 
     used_devs = (int *)calloc(ndev, sizeof(int));
-    NULL_ERROR_JMP(used_devs, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "Unable to allocate memory for PE/NIC Mapping.\n");
+    NVSHMEMI_NULL_ERROR_JMP(used_devs, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "Unable to allocate memory for PE/NIC Mapping.\n");
     /* Allocate data structures end */
 
     /* Gather GPU and NIC paths start */
-    status = get_cuda_bus_id(state->device_id, gpu_info.gpu_bus_id);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda busid failed \n");
+    status = get_cuda_bus_id(gpu_device_id, gpu_info.gpu_bus_id);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda busid failed \n");
 
     status = nvshmemi_boot_handle.allgather((void *)&gpu_info, (void *)gpu_info_all,
                                             sizeof(struct gpu_info), &nvshmemi_boot_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of gpu_info failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of gpu_info failed \n");
 
     pe_id = 0;
-    for (i = 0; i < state->npes; i++) {
-        if (state->pe_info[i].hostHash != state->pe_info[state->mype].hostHash) continue;
+    for (i = 0; i < n_pes; i++) {
+        if (nvshmemi_state->pe_info[i].hostHash != nvshmemi_state->pe_info[mype].hostHash) {
+            continue;
+        }
 
         status = get_device_path(gpu_info_all[i].gpu_bus_id, &cuda_device_paths[pe_id]);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda path failed \n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get cuda path failed \n");
         /* to get back to our PE after the algorithm finishes. */
-        if (i == state->mype) {
+        if (i == mype) {
             mype_index = pe_id;
         }
 
         pe_id++;
-        if (pe_id == state->npes_node) {
+        if (pe_id == n_pes_node) {
             break;
         }
     }
 
-    if (pe_id != state->npes_node || mype_index == -1) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                  "Number of PEs found doesn't match the PE node count.\n");
+    if (pe_id != n_pes_node || mype_index == -1) {
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                           "Number of PEs found doesn't match the PE node count.\n");
     }
 
     for (i = 0; i < ndev; i++) {
-        status = tcurr->host_ops.get_pci_path(i, &dev_info_all[i].dev_path, tcurr);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get device path failed \n");
+        dev_info_all[i].dev_path = tcurr->device_pci_paths[i];
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get device path failed \n");
     }
     /* Gather GPU and NIC paths end */
 
     /* Get path distances start */
-    for (pe_id = 0; pe_id < state->npes_node; pe_id++) {
+    for (pe_id = 0; pe_id < n_pes_node; pe_id++) {
         for (dev_id = 0; dev_id < ndev; dev_id++) {
             enum pci_distance distance_compare;
             distance_compare =
@@ -359,13 +263,13 @@ int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_
         used_devs[(*pairs_iter).dev_idx]++;
         devices_assigned++;
 
-        if (devices_assigned == state->npes_node) {
+        if (devices_assigned == n_pes_node) {
             break;
         }
     }
 
     /* loop two, load balance the NICs. */
-    for (pe_id = 0; pe_id < state->npes_node; pe_id++) {
+    for (pe_id = 0; pe_id < n_pes_node; pe_id++) {
         int nic_density = used_devs[pe_selected_devices[pe_id]];
 
         /* Can't find a less populated NIC if ours is only assigned to 1 gpu. */
@@ -423,7 +327,7 @@ out:
     }
 
     if (cuda_device_paths) {
-        for (i = 0; i < state->npes_node; i++) {
+        for (i = 0; i < n_pes_node; i++) {
             if (cuda_device_paths[i]) {
                 free(cuda_device_paths[i]);
             }
@@ -450,5 +354,140 @@ out:
         return 0;
     }
 
+    return status;
+}
+
+int nvshmemi_build_transport_map(nvshmemi_state_t *state) {
+    int status = 0;
+    int *local_map = NULL;
+
+    state->transport_map = (int *)calloc(state->npes * state->npes, sizeof(int));
+    NVSHMEMI_NULL_ERROR_JMP(state->transport_map, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "access map allocation failed \n");
+
+    local_map = (int *)calloc(state->npes, sizeof(int));
+    NVSHMEMI_NULL_ERROR_JMP(local_map, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "access map allocation failed \n");
+
+    state->transport_bitmap = 0;
+
+    for (int i = 0; i < state->npes; i++) {
+        int reach_any = 0;
+
+        for (int j = 0; j < state->num_initialized_transports; j++) {
+            int reach = 0;
+
+            if (!state->transports[j]) {
+                continue;
+            }
+
+            status = state->transports[j]->host_ops.can_reach_peer(&reach, &state->pe_info[i],
+                                                                   state->transports[j]);
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "can reach peer failed \n");
+            INFO(NVSHMEM_TOPO, "[%d] reach %d to peer %d over transport %d", state->mype, reach, i,
+                 j);
+
+            state->transports[j]->cap[i] = reach;
+            reach_any |= reach;
+
+            if (reach) {
+                int m = 1 << j;
+                local_map[i] |= m;
+                /* Add transport to the bitmap if this is the first PE to use it. */
+                if ((state->transport_bitmap & m) == 0) {
+                    state->transport_bitmap |= m;
+                }
+            }
+        }
+
+        if ((!reach_any) && (!nvshmemi_options.BYPASS_ACCESSIBILITY_CHECK)) {
+            status = NVSHMEMX_ERROR_NOT_SUPPORTED;
+            fprintf(stderr, "%s:%d: [GPU %d] Peer GPU %d is not accessible, exiting ... \n",
+                    __FILE__, __LINE__, state->mype, i);
+            goto out;
+        }
+    }
+    INFO(NVSHMEM_TOPO, "[%d] transport bitmap: %x", state->mype, state->transport_bitmap);
+
+    status = nvshmemi_boot_handle.allgather((void *)local_map, (void *)state->transport_map,
+                                            sizeof(int) * state->npes, &nvshmemi_boot_handle);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "allgather of ipc handles failed \n");
+
+out:
+    if (local_map) free(local_map);
+    if (status) {
+        if (state->transport_map) free(state->transport_map);
+    }
+    return status;
+}
+
+int nvshmemi_get_pcie_attrs(pcie_id_t *pcie_id, int devid) {
+    int status = 0;
+    cudaDeviceProp prop;
+
+    status = cudaGetDeviceProperties(&prop, devid);
+    NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                          "cudaDeviceGetAttribute failed \n");
+    pcie_id->dev_id = prop.pciDeviceID;
+    pcie_id->bus_id = prop.pciBusID;
+    pcie_id->domain_id = prop.pciDomainID;
+
+out:
+    return status;
+}
+
+int nvshmemi_detect_same_device(nvshmemi_state_t *state) {
+    int status = 0;
+    nvshmem_transport_pe_info_t my_info;
+
+    my_info.pe = state->mype;
+    status = nvshmemi_get_pcie_attrs(&my_info.pcie_id, state->device_id);
+    NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                          "getPcieAttrs failed \n");
+
+    my_info.hostHash = getHostHash();
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, state->device_id);
+    my_info.gpu_uuid = prop.uuid;
+
+    // TODO: move this to a topo init function as it is reused in other functions in topo that
+    // follow
+    state->pe_info =
+        (nvshmem_transport_pe_info_t *)malloc(sizeof(nvshmem_transport_pe_info_t) * state->npes);
+    NVSHMEMI_NULL_ERROR_JMP(state->pe_info, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "topo init info allocation failed \n");
+
+    status =
+        nvshmemi_boot_handle.allgather((void *)&my_info, (void *)state->pe_info,
+                                       sizeof(nvshmem_transport_pe_info_t), &nvshmemi_boot_handle);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "allgather of ipc handles failed \n");
+
+    for (int i = 0; i < state->npes; i++) {
+        (state->pe_info + i)->pe = i;
+        if (i == state->mype) continue;
+
+        status = (((state->pe_info + i)->hostHash == my_info.hostHash) &&
+                  ((state->pe_info + i)->pcie_id.dev_id == my_info.pcie_id.dev_id) &&
+                  ((state->pe_info + i)->pcie_id.bus_id == my_info.pcie_id.bus_id) &&
+                  ((state->pe_info + i)->pcie_id.domain_id == my_info.pcie_id.domain_id));
+        if (status) {
+            INFO(NVSHMEM_INIT, "More than 1 PE per GPU detected. This is an MPG run.\n");
+#if defined(NVSHMEM_PPC64LE)
+            NVSHMEMI_ERROR_EXIT("MPG support is currently not available on P9 platforms");
+#endif
+            nvshmemi_is_mpg_run = 1;
+            status = 0;
+        }
+        /*NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_NOT_SUPPORTED, out,
+                     "two PEs sharing a GPU is not supported \n");*/
+    }
+
+out:
+    if (status) {
+        state->cucontext = NULL;
+        if (!state->pe_info) free(state->pe_info);
+    }
     return status;
 }

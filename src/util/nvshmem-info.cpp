@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
     }
 
     if (opt_build) {
-        int runtimeVersion, driverVersion;
+        int driverVersion;
         cudaError_t err;
 
         printf("Build Information:\n");

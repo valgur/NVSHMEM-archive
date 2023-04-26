@@ -17,7 +17,13 @@
 #include "nvshmemi_util.h"
 #include "nvshmemi_constants.h"
 #include "nvshmemx_api.h"
-#include "nvshmemi_transfer.h"
+#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#include "device/pt-to-pt/transfer_device.cuh"
+#else
+#include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
+#endif
+#include "device/team/team_device.cuh"
+#include "device/init/query_device.cuh"
 
 #ifdef __CUDA_ARCH__
 template <typename T>
@@ -64,10 +70,9 @@ __device__ inline void nvshmemi_put_threadgroup(T *dest, const T *source, size_t
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_put_signal_threadgroup(T *dest, const T *source, size_t nelems,
-                                                       uint64_t *sig_addr, uint64_t signal,
-                                                       int sig_op, int pe, bool is_nbi) {
-    nvshmemi_threadgroup_sync<SCOPE>();
+__device__ inline void nvshmemii_put_signal_threadgroup(T *dest, const T *source, size_t nelems,
+                                                        uint64_t *sig_addr, uint64_t signal,
+                                                        int sig_op, int pe, bool is_nbi) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
@@ -86,6 +91,15 @@ __device__ inline void nvshmemi_put_signal_threadgroup(T *dest, const T *source,
                                             (void *)sig_addr, signal, (nvshmemi_amo_t)sig_op, pe,
                                             is_nbi);
     }
+}
+
+template <typename T, threadgroup_t SCOPE>
+__device__ inline void nvshmemi_put_signal_threadgroup(T *dest, const T *source, size_t nelems,
+                                                       uint64_t *sig_addr, uint64_t signal,
+                                                       int sig_op, int pe, bool is_nbi) {
+    nvshmemi_threadgroup_sync<SCOPE>();
+    nvshmemii_put_signal_threadgroup<T, SCOPE>(dest, source, nelems, sig_addr, signal, sig_op, pe,
+                                               is_nbi);
     nvshmemi_threadgroup_sync<SCOPE>();
 }
 
@@ -107,9 +121,8 @@ __device__ inline void nvshmemi_get_threadgroup(T *dest, const T *source, size_t
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_put_nbi_threadgroup(T *dest, const T *source, size_t nelems,
-                                                    int pe) {
-    nvshmemi_threadgroup_sync<SCOPE>();
+__device__ inline void nvshmemii_put_nbi_threadgroup(T *dest, const T *source, size_t nelems,
+                                                     int pe) {
     void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
     if (peer_base_addr) {
@@ -121,6 +134,13 @@ __device__ inline void nvshmemi_put_nbi_threadgroup(T *dest, const T *source, si
         nvshmemi_transfer_rma_nbi<SCOPE, NVSHMEMI_OP_PUT>((void *)dest, (void *)source,
                                                           nelems * sizeof(T), pe);
     }
+}
+
+template <typename T, threadgroup_t SCOPE>
+__device__ inline void nvshmemi_put_nbi_threadgroup(T *dest, const T *source, size_t nelems,
+                                                    int pe) {
+    nvshmemi_threadgroup_sync<SCOPE>();
+    nvshmemii_put_nbi_threadgroup<T, SCOPE>(dest, source, nelems, pe);
     nvshmemi_threadgroup_sync<SCOPE>();
 }
 
@@ -140,6 +160,40 @@ __device__ inline void nvshmemi_get_nbi_threadgroup(T *dest, const T *source, si
                                                           nelems * sizeof(T), pe);
     }
     nvshmemi_threadgroup_sync<SCOPE>();
+}
+
+template <typename T, threadgroup_t SCOPE>
+__device__ inline void nvshmemi_recvLL(T *dest, const uint64_t *src, size_t nelems, uint32_t flag) {
+    // Assumptions: sizeof(T) >= 4 bytes, num_subelems is a multiple of 2
+    int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+    size_t num_subelems = nelems * (sizeof(T) / sizeof(uint32_t));
+
+    uint32_t flag1, flag2, data1, data2;
+    for (int i = 2 * myIdx; i < num_subelems; i += 2 * groupSize) {
+        do {
+            asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
+                : "=r"(data1), "=r"(flag1), "=r"(data2), "=r"(flag2)
+                : "l"(&src[i]));
+        } while ((flag1 != flag) || (flag2 != flag));
+        // printf("received: %d %d\n", data1, data2);
+        *(uint32_t *)((char *)dest + i * sizeof(uint32_t)) = data1;
+        *(uint32_t *)((char *)dest + (i + 1) * sizeof(uint32_t)) = data2;
+    }
+}
+
+template <typename T, threadgroup_t SCOPE>
+__device__ inline void nvshmemi_packLL(uint64_t *dest, const T *source, size_t nelems,
+                                       uint32_t ll_flag) {
+    int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+    size_t num_subelems = nelems * (sizeof(T) / sizeof(uint32_t));
+    for (int i = myIdx; i < num_subelems; i += groupSize) {
+        size_t dst_offset = 2 * i * sizeof(uint32_t);
+        size_t src_offset = i * sizeof(uint32_t);
+        *(uint32_t *)((char *)dest + dst_offset) = *(uint32_t *)((char *)source + src_offset);
+        *(uint32_t *)((char *)dest + dst_offset + sizeof(uint32_t)) = ll_flag;
+    }
 }
 
 __device__ inline uint64_t nvshmem_signal_fetch(uint64_t *sig_addr) {
@@ -386,7 +440,7 @@ __device__ inline void nvshmem_getmem_nbi(void *dest, const void *source, size_t
                 *(dest_actual + i * dst) = *(source + i * sst);                                   \
             }                                                                                     \
         } else {                                                                                  \
-            printf("nvshmem_" #NAME "_iput not implemented over IB\n");                           \
+            printf("nvshmem_" #NAME "_iput not implemented over remote network transports\n");    \
             assert(0);                                                                            \
         }                                                                                         \
     }
@@ -394,23 +448,23 @@ __device__ inline void nvshmem_getmem_nbi(void *dest, const void *source, size_t
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IPUT)
 #undef NVSHMEM_TYPE_IPUT
 
-#define NVSHMEM_IPUTSIZE(NAME, type)                                                         \
-    __device__ inline void nvshmem_iput##NAME(void *dest, const void *source, ptrdiff_t dst, \
-                                              ptrdiff_t sst, size_t nelems, int pe) {        \
-        void *peer_base_addr = (void *)__ldg(                                                \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);        \
-        if (peer_base_addr) {                                                                \
-            char *dest_actual;                                                               \
-            dest_actual = ((char *)(peer_base_addr) +                                        \
-                           ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));    \
-            int i;                                                                           \
-            for (i = 0; i < nelems; i++) {                                                   \
-                *((type *)dest_actual + i * dst) = *((type *)source + i * sst);              \
-            }                                                                                \
-        } else {                                                                             \
-            printf("nvshmem_iput" #NAME " not implemented over IB\n");                       \
-            assert(0);                                                                       \
-        }                                                                                    \
+#define NVSHMEM_IPUTSIZE(NAME, type)                                                          \
+    __device__ inline void nvshmem_iput##NAME(void *dest, const void *source, ptrdiff_t dst,  \
+                                              ptrdiff_t sst, size_t nelems, int pe) {         \
+        void *peer_base_addr = (void *)__ldg(                                                 \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);         \
+        if (peer_base_addr) {                                                                 \
+            char *dest_actual;                                                                \
+            dest_actual = ((char *)(peer_base_addr) +                                         \
+                           ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));     \
+            int i;                                                                            \
+            for (i = 0; i < nelems; i++) {                                                    \
+                *((type *)dest_actual + i * dst) = *((type *)source + i * sst);               \
+            }                                                                                 \
+        } else {                                                                              \
+            printf("nvshmem_iput" #NAME " not implemented over remote network transports\n"); \
+            assert(0);                                                                        \
+        }                                                                                     \
     }
 
 NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_IPUTSIZE)
@@ -431,7 +485,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_IPUTSIZE)
                 *(dest + i * dst) = *(source_actual + i * sst);                                 \
             }                                                                                   \
         } else {                                                                                \
-            printf("nvshmem_" #Name "_iget not implemented over IB\n");                         \
+            printf("nvshmem_" #Name "_iget not implemented over remote network transports\n");  \
             assert(0);                                                                          \
         }                                                                                       \
     }
@@ -453,7 +507,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IGET)
                 *((TYPE *)dest + i * dst) = *((TYPE *)source_actual + i * sst);               \
             }                                                                                 \
         } else {                                                                              \
-            printf("nvshmem_iget" #Name " not implemented over IB\n");                        \
+            printf("nvshmem_iget" #Name " not implemented over remote network transports\n"); \
             assert(0);                                                                        \
         }                                                                                     \
     }

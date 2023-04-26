@@ -26,11 +26,11 @@ int nvshmemi_alltoall_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *sou
         NCCL_CHECK(nccl_ftable.GroupStart());
         for (int pe = 0; pe < team_n_pes; pe++) {
             NCCL_CHECK(nccl_ftable.Send(((char *)source) + pe * rank_offset, nelems,
-                                        nvshmemi_get_nccl_dt<TYPE>(), pe, teami->nccl_comm,
-                                        stream));
+                                        nvshmemi_get_nccl_dt<TYPE>(), pe,
+                                        (ncclComm_t)teami->nccl_comm, stream));
             NCCL_CHECK(nccl_ftable.Recv(((char *)dest) + pe * rank_offset, nelems,
-                                        nvshmemi_get_nccl_dt<TYPE>(), pe, teami->nccl_comm,
-                                        stream));
+                                        nvshmemi_get_nccl_dt<TYPE>(), pe,
+                                        (ncclComm_t)teami->nccl_comm, stream));
         }
         NCCL_CHECK(nccl_ftable.GroupEnd());
     } else

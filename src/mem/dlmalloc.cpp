@@ -2490,7 +2490,7 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
     do {                                                                                          \
         int ret = posix_memalign((void**)&r, MALLOC_ALIGNMENT, sizeof(struct malloc_tree_chunk)); \
         if (ret)                                                                                  \
-            ERROR_EXIT("Out of memory in nvshmem_allocate_chunk\n");                              \
+            NVSHMEMI_ERROR_EXIT("Out of memory in nvshmem_allocate_chunk\n");                     \
         else                                                                                      \
             memset(r, 0, sizeof(struct malloc_tree_chunk));                                       \
     } while (0)
@@ -2752,7 +2752,7 @@ typedef struct malloc_state* mstate;
     do {                                                                                     \
         int ret = posix_memalign((void**)&r, MALLOC_ALIGNMENT, sizeof(struct malloc_state)); \
         if (ret)                                                                             \
-            ERROR_EXIT("Out of memory in nvshmem_allocate_mstate\n");                        \
+            NVSHMEMI_ERROR_EXIT("Out of memory in nvshmem_allocate_mstate\n");               \
         else                                                                                 \
             memset(r, 0, sizeof(struct malloc_state));                                       \
     } while (0)

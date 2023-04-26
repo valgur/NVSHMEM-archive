@@ -6,12 +6,12 @@
 
 #ifndef FCOLLECT_DEVICE_CUH
 #define FCOLLECT_DEVICE_CUH
-#include "nvshmem.h"
-#include "nvshmemx.h"
-#include "gpu_coll.h"
-#include "nvshmemi_coll.h"
-#include <cstdio>
-#include <cassert>
+#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#include "device/pt-to-pt/transfer_device.cuh"
+#else
+#include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
+#endif
+#include "utils.cuh"
 
 #ifdef __CUDA_ARCH__
 template <typename T, threadgroup_t SCOPE>
@@ -142,5 +142,22 @@ __device__ inline void nvshmemi_fcollect_threadgroup(nvshmem_team_t team, T *des
     }
 }
 
-#endif
+#define DEFN_NVSHMEMX_TYPENAME_FCOLLECT_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE)      \
+    static __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
+        nvshmem##SC_PREFIX##_##TYPENAME##_fcollect##SC_SUFFIX(nvshmem_team_t team, TYPE *dest,     \
+                                                              const TYPE *source, size_t nelems) { \
+        nvshmemi_fcollect_threadgroup<TYPE, nvshmemi_threadgroup_##SC>(team, dest, source,         \
+                                                                       nelems);                    \
+        return 0;                                                                                  \
+    }
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_FCOLLECT_THREADGROUP,
+                                                 thread, , )
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_FCOLLECT_THREADGROUP, warp,
+                                                 _warp, x)
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_FCOLLECT_THREADGROUP, block,
+                                                 _block, x)
+#undef DEFN_NVSHMEMX_TYPENAME_FCOLLECT_THREADGROUP
+
+#endif /* __CUDA_ARCH__ */
 #endif /* FCOLLECT_DEVICE_CUH */

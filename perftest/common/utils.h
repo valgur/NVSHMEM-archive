@@ -18,15 +18,17 @@
 #include <math.h>
 #include <cuda_runtime.h>
 #include <cuda.h>
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
 #include "mpi.h"
 #endif
-#ifdef NVSHMEM_SHMEM_SUPPORT
+#ifdef NVSHMEMTEST_SHMEM_SUPPORT
 #include "shmem.h"
 #include "shmemx.h"
 #endif
 #include "nvshmem.h"
 #include "nvshmemx.h"
+
+using namespace std;
 
 #undef CUDA_CHECK
 #define CUDA_CHECK(stmt)                                                          \

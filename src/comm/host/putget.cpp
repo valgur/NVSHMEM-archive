@@ -31,7 +31,6 @@ static int nvshmemi_p2p_rma_optimized(cudaStream_t custrm /* internal stream */,
                     status, out);
                 if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)
                     nvshmemi_signal_op_on_stream(sig_addr, signal, sig_op, pe, custrm);
-                nvshmemi_state->used_internal_streams = 1;
             }
         } else { /*!is_nbi*/
             if (is_contig) {
@@ -133,17 +132,15 @@ static int nvshmemi_p2p_rma_registered(cudaStream_t custrm /* internal stream */
     if ((bytesdesc.srcstride == 1) && (bytesdesc.deststride == 1)) {
         status = cudaMemcpyAsync(dest->ptr, src->ptr, bytesdesc.nelems * bytesdesc.elembytes,
                                  cudaMemcpyDefault, stream_for_op);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyAsync() failed\n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cuMemcpyAsync() failed\n");
         if (verb.desc == NVSHMEMI_OP_PUT_SIGNAL) {
             nvshmemi_signal_op_on_stream(sig_addr, signal, sig_op, pe, stream_for_op);
         }
-        if (verb.is_nbi) nvshmemi_state->used_internal_streams = 1;
     } else {
         status = cudaMemcpy2DAsync(dest->ptr, bytesdesc.deststride * bytesdesc.elembytes, src->ptr,
                                    bytesdesc.srcstride * bytesdesc.elembytes, bytesdesc.elembytes,
                                    bytesdesc.nelems, cudaMemcpyDefault, stream_for_op);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cudaMemcpy2DAsync() failed\n");
-        if (verb.is_nbi) nvshmemi_state->used_internal_streams = 1;
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cudaMemcpy2DAsync() failed\n");
     }
 
     if (!verb.is_stream && !verb.is_nbi) {
@@ -164,6 +161,11 @@ static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, size_t n
     void *destptr_actual, *srcptr_actual;
     rma_memdesc_t dest, src;
     rma_bytesdesc_t bytesdesc = {(size_t)nelems, (int)elembytes, lstride, rstride};
+
+    if (verb.is_nbi) {
+        nvshmemi_state->active_internal_streams[pe % MAX_PEER_STREAMS] = 1;
+        nvshmemi_state->used_internal_streams = 1;
+    }
 
     if ((verb.desc == NVSHMEMI_OP_P) || (verb.desc == NVSHMEMI_OP_PUT) ||
         (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)) {
@@ -214,12 +216,13 @@ static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t des
     if ((lstride > 1) || (rstride > 1) || desc == NVSHMEMI_OP_G ||
         (verb.desc == NVSHMEMI_OP_PUT_SIGNAL && !is_stream)) {
         status = NVSHMEMX_ERROR_INTERNAL;
-        ERROR_PRINT("NOT IMPLEMENTED %s \n", apiname);
+        NVSHMEMI_ERROR_PRINT("NOT IMPLEMENTED %s \n", apiname);
         goto out;
     }
 
     if (t < 0) {
-        ERROR_EXIT("[%d] rma not supported on transport to pe: %d \n", nvshmemi_state->mype, pe);
+        NVSHMEMI_ERROR_EXIT("[%d] rma not supported on transport to pe: %d \n",
+                            nvshmemi_state->mype, pe);
     }
 
     /* off stream */
@@ -233,7 +236,7 @@ static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t des
             nvshmemi_get_remote_mem_handle(&remotedesc.handle, NULL, rptr, pe, t);
             status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytesdesc, 0);
             if (unlikely(status)) {
-                ERROR_PRINT("aborting due to error in process_channel_dma\n");
+                NVSHMEMI_ERROR_PRINT("aborting due to error in process_channel_dma\n");
                 exit(-1);
             }
         } else {
@@ -254,7 +257,7 @@ static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t des
 
 out:
     if (status) {
-        ERROR_PRINT("aborting due to error in %s \n", apiname);
+        NVSHMEMI_ERROR_PRINT("aborting due to error in %s \n", apiname);
         exit(-1);
     }
 }

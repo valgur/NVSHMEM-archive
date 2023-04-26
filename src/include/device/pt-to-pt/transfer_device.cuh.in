@@ -4,15 +4,19 @@
  * See COPYRIGHT for license information
  */
 
+#ifndef TRANSFER_DEVICE_CUH
+#define TRANSFER_DEVICE_CUH
+
+#include "nvshmem_build_options.h"
 #include "nvshmem_common.cuh"
 #include "nvshmemi_util.h"
 #include "nvshmemi_constants.h"
 #include "nvshmemx_api.h"
-#include "nvshmemi_proxy.h"
+#include "device/pt-to-pt/proxy_device.cuh"
 
 #ifdef NVSHMEM_IBGDA_SUPPORT
 #include "nvshmemi_ibgda.h"
-#include "ibgda_device.cuh"
+#include "device/pt-to-pt/ibgda_device.cuh"
 #endif
 
 #define TRANSFER_REPT_FOR_STANDARD_RMA_TYPES(FN_TEMPLATE) \
@@ -48,9 +52,16 @@
     FN_TEMPLATE(NVSHMEMI_THREADGROUP_WARP)        \
     FN_TEMPLATE(NVSHMEMI_THREADGROUP_BLOCK)
 
+#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#define NVSHMEMI_STATIC static
+#else
+#define NVSHMEMI_STATIC 
+#endif
+
 #ifdef __CUDA_ARCH__
 template <typename T>
-__device__ void nvshmemi_transfer_rma_p(void *rptr, const T value, int pe) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_rma_p(void *rptr, const T value,
+                                                                      int pe) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_rma_p<T>(rptr, value, pe);
@@ -67,7 +78,7 @@ __device__ void nvshmemi_transfer_rma_p(void *rptr, const T value, int pe) {
 TRANSFER_REPT_FOR_STANDARD_RMA_TYPES(TRANSFER_DECL_RMA_P)
 
 template <typename T>
-__device__ T nvshmemi_transfer_rma_g(void *rptr, int pe) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE T nvshmemi_transfer_rma_g(void *rptr, int pe) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         return nvshmemi_gic_rma_g<T>(rptr, pe);
@@ -83,8 +94,10 @@ __device__ T nvshmemi_transfer_rma_g(void *rptr, int pe) {
 
 TRANSFER_REPT_FOR_STANDARD_RMA_TYPES(TRANSFER_DECL_RMA_G)
 
+
 template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
-__device__ void nvshmemi_transfer_rma(void *rptr, void *lptr, size_t bytes, int pe) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_rma(void *rptr, void *lptr,
+                                                                    size_t bytes, int pe) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_rma<SCOPE, channel_op>(rptr, lptr, bytes, pe);
@@ -111,9 +124,9 @@ __device__ void nvshmemi_transfer_rma(void *rptr, void *lptr, size_t bytes, int 
 TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_RMA)
 
 template <threadgroup_t SCOPE>
-__device__ void nvshmemi_transfer_put_signal(void *rptr, void *lptr, size_t bytes, void *sig_addr,
-                                             uint64_t signal, nvshmemi_amo_t sig_op, int pe,
-                                             bool is_nbi) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_put_signal(
+    void *rptr, void *lptr, size_t bytes, void *sig_addr, uint64_t signal, nvshmemi_amo_t sig_op,
+    int pe, bool is_nbi) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_put_signal<SCOPE>(rptr, lptr, bytes, sig_addr, signal, sig_op, pe, is_nbi);
@@ -143,8 +156,10 @@ __device__ void nvshmemi_transfer_put_signal(void *rptr, void *lptr, size_t byte
 
 TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_PUT_SIGNAL)
 
+
 template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
-__device__ void nvshmemi_transfer_rma_nbi(void *rptr, void *lptr, size_t bytes, int pe) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_rma_nbi(void *rptr, void *lptr,
+                                                                        size_t bytes, int pe) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_rma_nbi<SCOPE, channel_op>(rptr, lptr, bytes, pe);
@@ -164,9 +179,11 @@ __device__ void nvshmemi_transfer_rma_nbi(void *rptr, void *lptr, size_t bytes, 
 
 TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_RMA_NBI)
 
+
 template <typename T>
-__device__ T nvshmemi_transfer_amo_fetch(void *rptr, T value, T compare, int pe,
-                                         nvshmemi_amo_t op) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE T nvshmemi_transfer_amo_fetch(void *rptr, T value,
+                                                                       T compare, int pe,
+                                                                       nvshmemi_amo_t op) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         return nvshmemi_gic_amo_fetch<T>(rptr, value, compare, pe, op);
@@ -186,8 +203,11 @@ __device__ T nvshmemi_transfer_amo_fetch(void *rptr, T value, T compare, int pe,
 TRANSFER_REPT_FOR_STANDARD_AMO_TYPES(TRANSFER_DECL_AMO_FETCH);
 TRANSFER_REPT_FOR_EXTENDED_AMO_TYPES(TRANSFER_DECL_AMO_FETCH);
 
+
 template <typename T>
-__device__ void nvshmemi_transfer_amo_nonfetch(void *rptr, T value, int pe, nvshmemi_amo_t op) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_amo_nonfetch(void *rptr, T value,
+                                                                             int pe,
+                                                                             nvshmemi_amo_t op) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_amo_nonfetch<T>(rptr, value, pe, op);
@@ -205,8 +225,9 @@ __device__ void nvshmemi_transfer_amo_nonfetch(void *rptr, T value, int pe, nvsh
 TRANSFER_REPT_FOR_STANDARD_AMO_TYPES(TRANSFER_DECL_AMO_NONFETCH);
 TRANSFER_REPT_FOR_EXTENDED_AMO_TYPES(TRANSFER_DECL_AMO_NONFETCH);
 
+
 template <threadgroup_t SCOPE>
-__device__ void nvshmemi_transfer_quiet(bool use_membar) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_quiet(bool use_membar) {
     // quiet_on_stream also shares this code path.
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
 #ifdef NVSHMEM_IBGDA_SUPPORT
@@ -233,8 +254,9 @@ __device__ void nvshmemi_transfer_quiet(bool use_membar) {
 TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_QUIET);
 #undef TRANSFER_DECL_QUIET
 
+
 template <threadgroup_t SCOPE>
-__device__ void nvshmemi_transfer_fence() {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_fence() {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_fence<SCOPE>();
@@ -255,7 +277,9 @@ __device__ void nvshmemi_transfer_fence() {
 TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_FENCE);
 #undef TRANSFER_DECL_FENCE
 
-__device__ void nvshmemi_transfer_enforce_consistency_at_target(bool use_membar) {
+
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_enforce_consistency_at_target(
+    bool use_membar) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_device_state_d.gic_is_initialized) {
         nvshmemi_gic_enforce_consistency_at_target(use_membar);
@@ -266,3 +290,5 @@ __device__ void nvshmemi_transfer_enforce_consistency_at_target(bool use_membar)
     }
 }
 #endif /* __CUDA_ARCH__ */
+
+#endif /* TRANSFER_DEVICE_CUH */

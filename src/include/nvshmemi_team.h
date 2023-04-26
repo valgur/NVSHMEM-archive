@@ -2,13 +2,10 @@
 #define NVSHMEMI_TEAM_H
 
 #define N_PSYNCS_PER_TEAM 1
-#ifdef NVSHMEM_USE_NCCL
-#include "nccl.h"
-#endif
 #include "nvshmem_constants.h"
 #include "nvshmem_common.cuh"
 
-#define N_PSYNC_BYTES 8
+#define N_PSYNC_BYTES 16
 #define PSYNC_CHUNK_SIZE (N_PSYNCS_PER_TEAM * 2 * NVSHMEMI_SYNC_SIZE)
 
 extern nvshmemi_team_t nvshmemi_team_world;

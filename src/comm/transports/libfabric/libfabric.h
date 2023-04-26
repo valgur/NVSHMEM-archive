@@ -56,6 +56,7 @@ typedef struct {
 
 typedef struct {
     struct fi_info *prov_info;
+    struct fi_info *all_prov_info;
     struct fid_fabric *fabric;
     struct fid_domain *domain;
     struct fid_av *addresses;
@@ -69,6 +70,8 @@ typedef struct {
     int num_domains;
     int next_key;
     int is_verbs;
+    int log_level;
+    struct nvshmemi_cuda_fn_table *table;
 } nvshmemt_libfabric_state_t;
 
 typedef struct {

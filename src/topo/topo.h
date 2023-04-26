@@ -7,25 +7,8 @@
 #ifndef __TOPO_H
 #define __TOPO_H
 
-static int getNumaId(char *path) {
-    char npath[PATH_MAX];
-    snprintf(npath, PATH_MAX, "%s/numa_node", path);
-    npath[PATH_MAX - 1] = '\0';
-
-    int numaId = -1;
-    FILE *file = fopen(npath, "r");
-    if (file == NULL) return -1;
-    if (fscanf(file, "%d", &numaId) == EOF) {
-        fclose(file);
-        return -1;
-    }
-    fclose(file);
-
-    return numaId;
-}
-
+int nvshmemi_get_device_by_distance(int *device, struct nvshmem_transport *tcurr);
 int nvshmemi_detect_same_device(nvshmemi_state_t *state);
 int nvshmemi_build_transport_map(nvshmemi_state_t *state);
-int get_device_by_distance(int *device, nvshmemi_state_t *state, struct nvshmem_transport *tcurr);
 
 #endif

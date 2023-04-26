@@ -7,14 +7,43 @@
 #ifndef _TRANSPORT_COMMON_H
 #define _TRANSPORT_COMMON_H
 
-#include "nvshmem.h"
-#include "nvshmem_internal.h"
+#include "transport.h"
 
-#ifdef NVSHMEM_USE_GDRCOPY
-#include "gdrapi.h"
-#endif
+#define __STDC_FORMAT_MACROS 1
 
+#include <inttypes.h>
 #include <dlfcn.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <stdio.h>
+#include <strings.h>
+
+#define MAXPATHSIZE 1024
+#define MAX_TRANSPORT_EP_COUNT 1
+
+#define likely(x) __builtin_expect((x), 1)
+#define unlikely(x) __builtin_expect((x), 0)
+
+#define TRANSPORT_LOG_NONE 0
+#define TRANSPORT_LOG_VERSION 1
+#define TRANSPORT_LOG_WARN 2
+#define TRANSPORT_LOG_INFO 3
+#define TRANSPORT_LOG_ABORT 4
+#define TRANSPORT_LOG_TRACE 5
+
+#define INFO(LOG_LEVEL, fmt, ...)                                             \
+    do {                                                                      \
+        if (LOG_LEVEL >= TRANSPORT_LOG_INFO) {                                \
+            fprintf(stderr, "%s %d " fmt, __FILE__, __LINE__, ##__VA_ARGS__); \
+        }                                                                     \
+    } while (0)
+
+#define TRACE(LOG_LEVEL, fmt, ...)                                            \
+    do {                                                                      \
+        if (LOG_LEVEL >= TRANSPORT_LOG_TRACE) {                               \
+            fprintf(stderr, "%s %d " fmt, __FILE__, __LINE__, ##__VA_ARGS__); \
+        }                                                                     \
+    } while (0)
 
 #define LOAD_SYM(handle, symbol, funcptr)  \
     do {                                   \
@@ -23,6 +52,26 @@
         *cast = tmp;                       \
     } while (0)
 
+static inline int nvshmemt_common_get_log_level(struct nvshmemi_options_s *options) {
+    if (!options->DEBUG_provided && !options->DEBUG_SUBSYS_provided) {
+        return TRANSPORT_LOG_NONE;
+    } else if (strncasecmp(options->DEBUG, "VERSION", 8) == 0) {
+        return TRANSPORT_LOG_VERSION;
+    } else if (strncasecmp(options->DEBUG, "WARN", 5) == 0) {
+        return TRANSPORT_LOG_WARN;
+    } else if (strncasecmp(options->DEBUG, "INFO", 5) == 0) {
+        return TRANSPORT_LOG_INFO;
+    } else if (strncasecmp(options->DEBUG, "ABORT", 6) == 0) {
+        return TRANSPORT_LOG_ABORT;
+    } else if (strncasecmp(options->DEBUG, "TRACE", 6) == 0) {
+        return TRANSPORT_LOG_TRACE;
+    }
+
+    return TRANSPORT_LOG_INFO;
+}
+
+struct transport_mem_handle_info_cache;
+
 struct nvshmemt_hca_info {
     char name[64];
     int port;
@@ -30,29 +79,10 @@ struct nvshmemt_hca_info {
     int found;
 };
 
-#ifdef NVSHMEM_USE_GDRCOPY
-struct gdrcopy_function_table {
-    gdr_t (*open)();
-    int (*close)(gdr_t g);
-    int (*pin_buffer)(gdr_t g, unsigned long addr, size_t size, uint64_t p2p_token,
-                      uint32_t va_space, gdr_mh_t *handle);
-    int (*unpin_buffer)(gdr_t g, gdr_mh_t handle);
-    int (*get_info)(gdr_t g, gdr_mh_t handle, gdr_info_t *info);
-    int (*map)(gdr_t g, gdr_mh_t handle, void **va, size_t size);
-    int (*unmap)(gdr_t g, gdr_mh_t handle, void *va, size_t size);
-    int (*copy_from_mapping)(gdr_mh_t handle, void *h_ptr, const void *map_d_ptr, size_t size);
-    int (*copy_to_mapping)(gdr_mh_t handle, const void *map_d_ptr, void *h_ptr, size_t size);
-    void (*runtime_get_version)(int *major, int *minor);
-    int (*driver_get_version)(gdr_t g, int *major, int *minor);
-};
+typedef int (*pci_path_cb)(int dev, char **pcipath, struct nvshmem_transport *transport);
 
-bool nvshmemt_gdrcopy_ftable_init(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc,
-                                  void **gdrcopy_handle);
-void nvshmemt_gdrcopy_ftable_fini(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc,
-                                  void **gdrcopy_handle);
-#endif
-
-int nvshmemt_parse_hca_list(const char *string, struct nvshmemt_hca_info *hca_list, int max_count);
+int nvshmemt_parse_hca_list(const char *string, struct nvshmemt_hca_info *hca_list, int max_count,
+                            int log_level);
 int nvshmemt_ib_iface_get_mlx_path(const char *ib_name, char **path);
 
 struct nvshmemt_ibv_function_table {
@@ -82,7 +112,27 @@ struct nvshmemt_ibv_function_table {
     int (*destroy_ah)(struct ibv_ah *ah);
 };
 
-int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable);
+int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable,
+                             int log_level);
 void nvshmemt_ibv_ftable_fini(void **ibv_handle);
+
+int nvshmemt_mem_handle_cache_init(nvshmem_transport_t t,
+                                   struct transport_mem_handle_info_cache **cache);
+int nvshmemt_mem_handle_cache_add(nvshmem_transport_t t,
+                                  struct transport_mem_handle_info_cache *cache, void *addr,
+                                  void *mem_handle_info);
+void *nvshmemt_mem_handle_cache_get(nvshmem_transport_t t,
+                                    struct transport_mem_handle_info_cache *cache, void *addr);
+void *nvshmemt_mem_handle_cache_get_by_idx(struct transport_mem_handle_info_cache *cache,
+                                           size_t idx);
+size_t nvshmemt_mem_handle_cache_get_size(struct transport_mem_handle_info_cache *cache);
+int nvshmemt_mem_handle_cache_remove(nvshmem_transport_t t,
+                                     struct transport_mem_handle_info_cache *cache, void *addr);
+int nvshmemt_mem_handle_cache_fini(struct transport_mem_handle_info_cache *cache);
+
+extern "C" {
+int nvshmemt_init(nvshmem_transport_t *transport, struct nvshmemi_cuda_fn_table *table,
+                  int api_version);
+}
 
 #endif

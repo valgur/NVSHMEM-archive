@@ -98,7 +98,7 @@ int main(int c, char *v[]) {
         goto finalize;
     }
 
-    array_size = floor(log2((float)max_msg_size)) + 1;
+    array_size = floor(std::log2((float)max_msg_size)) + 1;
     alloc_tables(&h_tables, 2, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_lat = (double *)h_tables[1];

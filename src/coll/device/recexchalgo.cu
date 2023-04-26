@@ -190,3 +190,14 @@ void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami) {
     }
     free(step2_nbrs);
 }
+
+void nvshmemi_recexchalgo_free_mem(nvshmemi_team_t *teami) {
+    CUDA_RUNTIME_CHECK(cudaFree(teami->reduce_recexch.step1_recvfrom));
+    for (int i = 0; i < teami->reduce_recexch.step2_nphases; i++) {
+        void *dev_ptr;
+        CUDA_RUNTIME_CHECK(cudaMemcpy(&dev_ptr, teami->reduce_recexch.step2_nbrs + i, sizeof(int *),
+                                      cudaMemcpyDeviceToHost));
+        CUDA_RUNTIME_CHECK(cudaFree(dev_ptr));
+    }
+    CUDA_RUNTIME_CHECK(cudaFree(teami->reduce_recexch.step2_nbrs));
+}

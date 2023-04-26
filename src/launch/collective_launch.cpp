@@ -26,7 +26,7 @@ int nvshmemi_setup_collective_launch(nvshmemi_state_t *state) {
                             status, out);
 
     if (!state->cu_dev_attrib.cooperative_launch)
-        WARN_PRINT(
+        NVSHMEMI_WARN_PRINT(
             "Cooperative launch not supported on PE %d; GPU-side synchronize may cause hang\n",
             state->mype);
 

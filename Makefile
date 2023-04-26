@@ -47,15 +47,14 @@ NVSHMEM_TIMEOUT_DEVICE_POLLING ?= 0
 # allocator (will work only if not using CUDA VMM)
 NVSHMEM_USE_DLMALLOC ?= 0
 
+BUILD_OPTIONS_STR = "\\n"
 ifeq ($(ARCH), x86_64)
 CXXFLAGS += -fPIC -I$(CUDA_INC) -msse
-CXXFLAGS += -DNVSHMEM_X86_64
-NVCUFLAGS += -DNVSHMEM_X86_64
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_X86_64\\n"
 else
 ifeq ($(ARCH), ppc64le)
 CXXFLAGS   += -fPIC -I$(CUDA_INC) -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS
-CXXFLAGS += -DNVSHMEM_PPC64LE
-NVCUFLAGS += -DNVSHMEM_PPC64LE
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_PPC64LE\\n"
 endif
 endif
 NVCUFLAGS  += -Xcompiler -fPIC -ccbin $(CXX) $(NVCC_GENCODE) -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS
@@ -65,113 +64,116 @@ ifneq ($(NVSHMEM_PMIX_SUPPORT), 1)
 NVSHMEM_DEFAULT_PMIX := 0
 endif
 
+ifeq ($(NVSHMEM_ENV_ALL), 1)
+CXXFLAGS  += -DNVSHMEM_ENV_ALL
+endif
+
 ifeq ($(NVSHMEM_DEFAULT_PMIX), 1)
-CXXFLAGS  += -DNVSHMEM_DEFAULT_PMIX
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_DEFAULT_PMIX\\n"
 else
 ifeq ($(NVSHMEM_DEFAULT_PMI2), 1)
-CXXFLAGS  += -DNVSHMEM_DEFAULT_PMI2
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_DEFAULT_PMI2\\n"
 endif
 endif
 
 ifeq ($(NVSHMEM_DEFAULT_UCX), 1)
-CXXFLAGS  += -DNVSHMEM_DEFAULT_UCX
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_DEFAULT_UCX\\n"
 endif
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
-CXXFLAGS  += -I$(MPI_HOME)/include -DNVSHMEM_MPI_SUPPORT
-NVCUFLAGS += -I$(MPI_HOME)/include -DNVSHMEM_MPI_SUPPORT
+CXXFLAGS  += -I$(MPI_HOME)/include
+NVCUFLAGS += -I$(MPI_HOME)/include
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_MPI_SUPPORT\\n"
 endif
 
 ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
-CXXFLAGS  += -I$(UCX_HOME)/include -DNVSHMEM_UCX_SUPPORT
-NVCUFLAGS += -I$(UCX_HOME)/include -DNVSHMEM_UCX_SUPPORT
+CXXFLAGS  += -I$(UCX_HOME)/include
+NVCUFLAGS += -I$(UCX_HOME)/include
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_UCX_SUPPORT\\n"
 endif
 
 ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
-CXXFLAGS  += -I$(LIBFABRIC_HOME)/include -DNVSHMEM_LIBFABRIC_SUPPORT
-NVCUFLAGS += -I$(LIBFABRIC_HOME)/include -DNVSHMEM_LIBFABRIC_SUPPORT
+CXXFLAGS  += -I$(LIBFABRIC_HOME)/include
+NVCUFLAGS += -I$(LIBFABRIC_HOME)/include
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_LIBFABRIC_SUPPORT\\n"
 endif
 
 ifeq ($(NVSHMEM_IBRC_SUPPORT), 1)
-CXXFLAGS  += -DNVSHMEM_IBRC_SUPPORT
-NVCUFLAGS += -DNVSHMEM_IBRC_SUPPORT
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_IBRC_SUPPORT\\n"
 endif
 
 ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
-CXXFLAGS  += -DNVSHMEM_IBDEVX_SUPPORT
-NVCUFLAGS += -DNVSHMEM_IBDEVX_SUPPORT
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_IBDEVX_SUPPORT\\n"
 endif
 
 ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
-CXXFLAGS  += -DNVSHMEM_IBGDA_SUPPORT
-NVCUFLAGS += -DNVSHMEM_IBGDA_SUPPORT
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_IBGDA_SUPPORT\\n"
 ifeq ($(NVSHMEM_DEBUG), 1)
-CXXFLAGS  += -DNVSHMEM_IBGDA_DEBUG
-NVCUFLAGS += -DNVSHMEM_IBGDA_DEBUG
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_IBGDA_DEBUG\\n"
 endif
 ifeq ($(NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY), 1)
-CXXFLAGS  += -DNVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
-NVCUFLAGS += -DNVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY\\n"
 endif
 endif
 
 ifeq ($(NVSHMEM_USE_GDRCOPY), 1)
 ifneq ("$(wildcard $(mkfile_dir)/include_gdrcopy)","")
-CXXFLAGS  += -I$(mkfile_dir)/include_gdrcopy -DNVSHMEM_USE_GDRCOPY
-NVCUFLAGS += -I$(mkfile_dir)/include_gdrcopy -DNVSHMEM_USE_GDRCOPY
+CXXFLAGS  += -I$(mkfile_dir)/include_gdrcopy
+NVCUFLAGS += -I$(mkfile_dir)/include_gdrcopy
 else
-CXXFLAGS  += -I$(GDRCOPY_HOME)/include -DNVSHMEM_USE_GDRCOPY
-NVCUFLAGS += -I$(GDRCOPY_HOME)/include -DNVSHMEM_USE_GDRCOPY
+CXXFLAGS  += -I$(GDRCOPY_HOME)/include
+NVCUFLAGS += -I$(GDRCOPY_HOME)/include
 endif
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_USE_GDRCOPY\\n"
 endif
 
 ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1)
-CXXFLAGS  += -I$(SHMEM_HOME)/include -DNVSHMEM_SHMEM_SUPPORT
-NVCUFLAGS += -I$(SHMEM_HOME)/include -DNVSHMEM_SHMEM_SUPPORT
+CXXFLAGS  += -I$(SHMEM_HOME)/include
+NVCUFLAGS += -I$(SHMEM_HOME)/include
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_SHMEM_SUPPORT\\n"
 endif
 
 # If we have an internal NCCL header, use it. Otherwise, use the one in NCCL_HOME
 ifeq ($(NVSHMEM_USE_NCCL), 1)
 ifneq ("$(wildcard $(mkfile_dir)/include_nccl)","")
-CXXFLAGS  += -I$(mkfile_dir)/include_nccl -DNVSHMEM_USE_NCCL
-NVCUFLAGS += -I$(mkfile_dir)/include_nccl -DNVSHMEM_USE_NCCL
+CXXFLAGS  += -I$(mkfile_dir)/include_nccl
+NVCUFLAGS += -I$(mkfile_dir)/include_nccl
 else
-CXXFLAGS  += -I$(NCCL_HOME)/include -DNVSHMEM_USE_NCCL
-NVCUFLAGS += -I$(NCCL_HOME)/include -DNVSHMEM_USE_NCCL
+CXXFLAGS  += -I$(NCCL_HOME)/include
+NVCUFLAGS += -I$(NCCL_HOME)/include
 endif
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_USE_NCCL\\n"
 endif
 
 ifeq ($(NVSHMEM_DISABLE_COLL_POLL), 1)
-CXXFLAGS  += -DNVSHMEM_DISABLE_COLL_POLL
-NVCUFLAGS += -DNVSHMEM_DISABLE_COLL_POLL
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_DISABLE_COLL_POLL\\n"
 endif
 
 ifeq ($(NVSHMEM_GPU_COLL_USE_LDST), 1)
-CXXFLAGS  += -DNVSHMEM_GPU_COLL_USE_LDST
-NVCUFLAGS += -DNVSHMEM_GPU_COLL_USE_LDST
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_GPU_COLL_USE_LDST\\n"
 endif
 
 ifeq ($(NVSHMEM_TIMEOUT_DEVICE_POLLING), 1)
-CXXFLAGS  += -DNVSHMEM_TIMEOUT_DEVICE_POLLING
-NVCUFLAGS += -DNVSHMEM_TIMEOUT_DEVICE_POLLING
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_TIMEOUT_DEVICE_POLLING\\n"
 endif
 
 ifeq ($(NVSHMEM_TRACE), 1)
-NVCUFLAGS += -DENABLE_TRACE
-CXXFLAGS  += -DENABLE_TRACE
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_TRACE\\n"
+endif
+
+ifeq ($(NVSHMEM_ENABLE_ALL_DEVICE_INLINING), 1)
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_ENABLE_ALL_DEVICE_INLINING\\n"
 endif
 
 # ignore the following for clean targets
 ifeq (,$(findstring $(MAKECMDGOALS),purge clean))
 ifeq ($(NVSHMEM_NVTX), 0)
-NVCUFLAGS += -DNVTX_DISABLE
-CXXFLAGS  += -DNVTX_DISABLE
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVTX_DISABLE\\n"
 else
 # C++11 is required for NVTX support
 cppver := $(shell sh ./scripts/test_cxx11.sh $(CXX) "$(CXXFLAGS)")
 ifneq ($(cppver),)
-NVCUFLAGS += -DNVTX_DISABLE
-CXXFLAGS  += -DNVTX_DISABLE
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVTX_DISABLE\\n"
 $(info ${cppver})
 endif
 endif
@@ -202,6 +204,7 @@ ${NVSHMEM_BUILDDIR}/%.txt: %.txt
 INCEXPORTS_NVSHMEM  := nvshmem.h nvshmemx.h
 INCEXPORTS := nvshmem.h \
               nvshmem_api.h \
+              nvshmem_bootstrap_defines.h \
               nvshmem_bootstrap.h \
               nvshmem_coll_api.h \
               nvshmem_common.cuh \
@@ -209,13 +212,28 @@ INCEXPORTS := nvshmem.h \
               nvshmem_defines.h \
               nvshmem_types.h \
               nvshmemi_util.h \
-              nvshmemi_transfer.h \
+              nvshmemi_team.h \
               nvshmemx.h \
               nvshmemx_api.h \
               nvshmemx_coll_api.h \
               nvshmemi_constants.h \
+              nvshmemi_transport_defines.h \
               nvshmemx_defines.h \
-              nvshmemx_error.h
+              nvshmemx_error.h \
+              nvshmemi_proxy.h \
+              nvshmemi_ibgda.h \
+              device/pt-to-pt/ibgda_device.cuh \
+              device/pt-to-pt/proxy_device.cuh \
+              device/pt-to-pt/utils_device.h \
+              device/coll/defines.cuh \
+              device/coll/utils.cuh \
+              device/coll/alltoall.cuh \
+              device/coll/broadcast.cuh \
+              device/coll/fcollect.cuh \
+              device/coll/barrier.cuh \
+              device/coll/reduce.cuh \
+              device/team/team_device.cuh \
+              device/init/query_device.cuh
 
 PLUGINEXPORTS := src/bootstrap/bootstrap_pmix.c \
                  src/bootstrap/bootstrap_pmi.cpp \
@@ -223,36 +241,31 @@ PLUGINEXPORTS := src/bootstrap/bootstrap_pmix.c \
                  src/bootstrap/bootstrap_util.h \
                  src/bootstrap/bootstrap_shmem.c
 
+TRANSPORTINCEXPORTS := transport.h \
+                       env_defs.h  \
+                       cudawrap.h  \
+
+TRANSPORTEXPORTS := common/mlx5_ifc.h              \
+                    common/mlx5_prm.h              \
+                    common/transport_common.h      \
+                    common/transport_ib_common.h   \
+                    common/transport_common.cpp    \
+                    common/transport_ib_common.cpp \
+                    ibdevx/ibdevx.cpp              \
+                    ibdevx/ibdevx.h                \
+                    ibgda/ibgda.cpp                \
+                    ibrc/ibrc.cpp                  \
+                    libfabric/libfabric.cpp        \
+                    libfabric/libfabric.h          \
+                    ucx/ucx.cpp                    \
+                    ucx/ucx.h                      \
+
 HOSTLIBSRCFILES := bootstrap/bootstrap.cpp \
                bootstrap/bootstrap_loader.cpp
 
-HOSTLIBSRCFILES += comm/transports/common/transport_common.cpp
-
-ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
-HOSTLIBSRCFILES += comm/transports/ucx/ucx.cpp
-endif
-ifeq ($(NVSHMEM_IBRC_SUPPORT), 1)
-HOSTLIBSRCFILES += comm/transports/ibrc/ibrc.cpp
-HOSTLIBSRCFILES += comm/transports/common/transport_ib_common.cpp
-endif
-ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
-HOSTLIBSRCFILES += comm/transports/ibdevx/ibdevx.cpp
-ifneq ($(NVSHMEM_IBRC_SUPPORT), 1)
-HOSTLIBSRCFILES += comm/transports/common/transport_ib_common.cpp
-endif
-endif
 ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
-HOSTLIBSRCFILES += comm/transports/ibgda/ibgda.cpp \
-                   init/ibgda_init.cu
+HOSTLIBSRCFILES += init/ibgda_init.cu
 DEVICELIBSRCFILES += init/ibgda_init_device.cu
-ifneq ($(NVSHMEM_IBRC_SUPPORT), 1)
-ifneq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
-HOSTLIBSRCFILES += comm/transports/common/transport_ib_common.cpp
-endif
-endif
-endif
-ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
-HOSTLIBSRCFILES += comm/transports/libfabric/libfabric.cpp
 endif
 
 HOSTLIBSRCFILES += coll/host/cpu_coll.cpp \
@@ -289,23 +302,19 @@ HOSTLIBSRCFILES += coll/host/cpu_coll.cpp \
                    util/util.cpp \
                    util/sockets.cpp
 
-DEVICELIBSRCFILES += coll/device/alltoall.cu \
-                     coll/device/barrier.cu \
-                     coll/device/broadcast.cu \
-                     coll/device/fcollect.cu \
-                     coll/device/gpu_coll.cu \
-                     coll/device/gpu_coll_dev.cu \
+DEVICELIBSRCFILES += coll/device/gpu_coll.cu \
                      coll/device/recexchalgo.cu \
-                     coll/device/rdxn_thread.cu \
-                     coll/device/rdxn_warp.cu \
-                     coll/device/rdxn_block.cu \
                      comm/device/proxy_device.cu \
-                     comm/device/transfer_device.cu \
                      launch/collective_launch_device.cu \
-                     init/init_device.cu \
-                     init/query_device.cu \
-                     team/team_device.cu \
-                     team/team_internal_device.cu
+                     init/init_device.cu
+
+ifeq ($(NVSHMEM_ENABLE_ALL_DEVICE_INLINING), 1)
+INCEXPORTS += device/pt-to-pt/transfer_device.cuh
+else
+INCEXPORTS += device/pt-to-pt/nvshmemi_transfer_api.cuh
+DEVICELIBSRCFILES += comm/device/transfer_device.cu
+endif
+
 
 ifeq ($(NVSHMEM_USE_DLMALLOC), 1)
 HOSTLIBSRCFILES += mem/dlmalloc.cpp
@@ -318,7 +327,7 @@ DEVICELIBSRCFILES_NOMAXRREGCOUNT = \
                coll/device/kernels/barrier.cu \
                coll/device/kernels/broadcast.cu \
                coll/device/kernels/fcollect.cu \
-               coll/device/kernels/rdxn.cu \
+               coll/device/kernels/reduce.cu \
                comm/host/cuda_interface_sync.cu \
                comm/host/proxy/rma.cu \
                comm/host/quiet_on_stream.cu
@@ -331,9 +340,13 @@ INCDIR := $(NVSHMEM_BUILDDIR)/include
 LIBDIR := $(NVSHMEM_BUILDDIR)/lib
 BINDIR := $(NVSHMEM_BUILDDIR)/bin
 PLUGINSDIR := $(NVSHMEM_BUILDDIR)/share/nvshmem/src/bootstrap-plugins
+TRANSPORTSDIR := $(NVSHMEM_BUILDDIR)/share/nvshmem/src/transport-plugins
 OBJDIR_NVSHMEM := $(NVSHMEM_BUILDDIR)/obj_nvshmem
 
-BUILT_HEADERS := $(INCDIR)/nvshmem_version.h
+TRANSPORT_INCDIR = src/comm/transports/common
+TRANSPORT_OBJDIR_NVSHMEM := $(NVSHMEM_BUILDDIR)/obj_nvshmem/transport
+
+BUILT_HEADERS := $(INCDIR)/nvshmem_version.h $(INCDIR)/nvshmem_build_options.h
 
 INCTARGETS := $(patsubst %, $(INCDIR)/%, $(INCEXPORTS))
 
@@ -348,44 +361,97 @@ DEVICELIBOBJ    := $(patsubst %.cu, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cu, $(DEVI
 DEVICELIBOBJ_NOMAXRREGCOUNT = $(patsubst %.cu, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cu, $(DEVICELIBSRCFILES_NOMAXRREGCOUNT)))
 DEVICELIBOBJ_NOMAXRREGCOUNT += $(patsubst %.cpp, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cpp, $(DEVICELIBSRCFILES_NOMAXRREGCOUNT)))
 
-LIBINC     := -Isrc/include -Isrc/util -Isrc/bootstrap -Isrc/comm/transports/common -Isrc/coll/host -Isrc/coll/device -Isrc/coll -Isrc/topo
+LIBINC     := -Isrc/include -Isrc/util -Isrc/bootstrap -Isrc/coll/host -Isrc/coll/device -Isrc/coll -Isrc/topo
 LIBINC     += -Isrc/pmi/pmi-2 -Isrc/pmi/simple-pmi -I$(INCDIR)
 
+ifeq ($(NVSHMEM_USE_GDRCOPY), 1)
+TRANSPORT_GDR_HELPER_FILES = src/comm/transports/common/transport_gdr_common.cpp
+TRANSPORT_GDR_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_gdr_common.o
+else 
+TRANSPORT_GDR_HELPER_FILES =
+TRANSPORT_GDR_OUTPUT_FILES =
+endif
+
+TRANSPORTS =
+
+ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
+UCX_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp $(TRANSPORT_GDR_HELPER_FILES)
+UCX_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o $(TRANSPORT_GDR_OUTPUT_FILES)
+UCX_TRANSPORT_REALNAME := nvshmem_transport_ucx.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
+UCX_TRANSPORT_SONAME := nvshmem_transport_ucx.so.$(TRANSPORT_VERSION_MAJOR)
+UCX_TRANSPORT := nvshmem_transport_ucx.so
+TRANSPORTS += $(LIBDIR)/$(UCX_TRANSPORT_REALNAME)
+endif
+ifeq ($(NVSHMEM_IBRC_SUPPORT), 1)
+IBRC_TRANSPORT_REALNAME := nvshmem_transport_ibrc.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
+IBRC_TRANSPORT_SONAME := nvshmem_transport_ibrc.so.$(TRANSPORT_VERSION_MAJOR)
+IBRC_TRANSPORT := nvshmem_transport_ibrc.so
+TRANSPORTS += $(LIBDIR)/$(IBRC_TRANSPORT_REALNAME)
+IBRC_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp $(TRANSPORT_GDR_HELPER_FILES) src/comm/transports/common/transport_ib_common.cpp
+IBRC_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o $(TRANSPORT_GDR_OUTPUT_FILES) $(TRANSPORT_OBJDIR_NVSHMEM)/transport_ib_common.o
+endif
+ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
+IBDEVX_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp src/comm/transports/common/transport_ib_common.cpp src/comm/transports/common/transport_mlx5_common.cpp
+IBDEVX_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o $(TRANSPORT_OBJDIR_NVSHMEM)/transport_ib_common.o $(TRANSPORT_OBJDIR_NVSHMEM)/transport_mlx5_common.o
+IBDEVX_TRANSPORT_REALNAME := nvshmem_transport_ibdevx.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
+IBDEVX_TRANSPORT_SONAME := nvshmem_transport_ibdevx.so.$(TRANSPORT_VERSION_MAJOR)
+IBDEVX_TRANSPORT := nvshmem_transport_ibdevx.so
+TRANSPORTS += $(LIBDIR)/$(IBDEVX_TRANSPORT_REALNAME)
+endif
+ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
+IBGDA_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp src/comm/transports/common/transport_ib_common.cpp src/comm/transports/common/transport_mlx5_common.cpp
+IBGDA_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o $(TRANSPORT_OBJDIR_NVSHMEM)/transport_ib_common.o $(TRANSPORT_OBJDIR_NVSHMEM)/transport_mlx5_common.o
+IBGDA_TRANSPORT_REALNAME := nvshmem_transport_ibgda.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
+IBGDA_TRANSPORT_SONAME := nvshmem_transport_ibgda.so.$(TRANSPORT_VERSION_MAJOR)
+IBGDA_TRANSPORT := nvshmem_transport_ibgda.so
+TRANSPORTS += $(LIBDIR)/$(IBGDA_TRANSPORT_REALNAME)
+endif
+ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
+LIBFABRIC_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp
+LIBFABRIC_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o
+LIBFABRIC_TRANSPORT_REALNAME := nvshmem_transport_libfabric.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
+LIBFABRIC_TRANSPORT_SONAME := nvshmem_transport_libfabric.so.$(TRANSPORT_VERSION_MAJOR)
+LIBFABRIC_TRANSPORT := nvshmem_transport_libfabric.so
+TRANSPORTS += $(LIBDIR)/$(LIBFABRIC_TRANSPORT_REALNAME)
+endif
+
 PLUGINEXPORTTARGETS := $(addprefix $(PLUGINSDIR)/, $(notdir $(PLUGINEXPORTS)))
+TRANSPORTEXPORTTARGETS := $(addprefix $(TRANSPORTSDIR)/, $(TRANSPORTEXPORTS))
+TRANSPORTINCEXPORTTARGETS := $(addprefix $(TRANSPORTSDIR)/common/, $(TRANSPORTINCEXPORTS))
 
 PMI_PLUGIN := nvshmem_bootstrap_pmi.so
-PMI_PLUGIN_SONAME := $(PMI_PLUGIN:%=%.$(NVSHMEM_MAJOR))
-PMI_PLUGIN_TARGET   := $(PMI_PLUGIN:%=%.$(NVSHMEM_MAJOR).$(NVSHMEM_MINOR).$(NVSHMEM_PATCH))
+PMI_PLUGIN_SONAME := $(PMI_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR))
+PMI_PLUGIN_TARGET   := $(PMI_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR).$(BOOTSTRAP_VERSION_MINOR).$(BOOTSTRAP_VERSION_PATCH))
 
 PMI2_PLUGIN := nvshmem_bootstrap_pmi2.so
-PMI2_PLUGIN_SONAME := $(PMI2_PLUGIN:%=%.$(NVSHMEM_MAJOR))
-PMI2_PLUGIN_TARGET   := $(PMI2_PLUGIN:%=%.$(NVSHMEM_MAJOR).$(NVSHMEM_MINOR).$(NVSHMEM_PATCH))
+PMI2_PLUGIN_SONAME := $(PMI2_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR))
+PMI2_PLUGIN_TARGET   := $(PMI2_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR).$(BOOTSTRAP_VERSION_MINOR).$(BOOTSTRAP_VERSION_PATCH))
 
 PLUGINS    := $(LIBDIR)/$(PMI_PLUGIN_TARGET) $(LIBDIR)/$(PMI2_PLUGIN_TARGET)
 ifeq ($(NVSHMEM_PMIX_SUPPORT), 1)
 PMIX_PLUGIN := nvshmem_bootstrap_pmix.so
-PMIX_PLUGIN_SONAME := $(PMIX_PLUGIN:%=%.$(NVSHMEM_MAJOR))
-PMIX_PLUGIN_TARGET   := $(PMIX_PLUGIN:%=%.$(NVSHMEM_MAJOR).$(NVSHMEM_MINOR).$(NVSHMEM_PATCH))
+PMIX_PLUGIN_SONAME := $(PMIX_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR))
+PMIX_PLUGIN_TARGET   := $(PMIX_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR).$(BOOTSTRAP_VERSION_MINOR).$(BOOTSTRAP_VERSION_PATCH))
 PLUGINS    += $(LIBDIR)/$(PMIX_PLUGIN_TARGET)
 endif
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
 MPI_PLUGIN := nvshmem_bootstrap_mpi.so
-MPI_PLUGIN_SONAME := $(MPI_PLUGIN:%=%.$(NVSHMEM_MAJOR))
-MPI_PLUGIN_TARGET   := $(MPI_PLUGIN:%=%.$(NVSHMEM_MAJOR).$(NVSHMEM_MINOR).$(NVSHMEM_PATCH))
+MPI_PLUGIN_SONAME := $(MPI_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR))
+MPI_PLUGIN_TARGET   := $(MPI_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR).$(BOOTSTRAP_VERSION_MINOR).$(BOOTSTRAP_VERSION_PATCH))
 PLUGINS    += $(LIBDIR)/$(MPI_PLUGIN_TARGET)
 endif
 ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1)
 SHMEM_PLUGIN := nvshmem_bootstrap_shmem.so
-SHMEM_PLUGIN_SONAME := $(SHMEM_PLUGIN:%=%.$(NVSHMEM_MAJOR))
-SHMEM_PLUGIN_TARGET   := $(SHMEM_PLUGIN:%=%.$(NVSHMEM_MAJOR).$(NVSHMEM_MINOR).$(NVSHMEM_PATCH))
+SHMEM_PLUGIN_SONAME := $(SHMEM_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR))
+SHMEM_PLUGIN_TARGET   := $(SHMEM_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR).$(BOOTSTRAP_VERSION_MINOR).$(BOOTSTRAP_VERSION_PATCH))
 PLUGINS    += $(LIBDIR)/$(SHMEM_PLUGIN_TARGET)
 endif
 
-.PHONY: lib
-lib : $(INCTARGETS) $(LIBDIR)/$(DEVICELIBTARGET) $(LIBDIR)/$(HOSTLIBTARGET) $(LIBDIR)/$(LIBTARGET) $(PLUGINS) $(PLUGINEXPORTTARGETS) $(BINDIR)/nvshmem-info
+.PHONY: lib 
+lib : $(INCTARGETS) $(LIBDIR)/$(DEVICELIBTARGET) $(LIBDIR)/$(HOSTLIBTARGET) $(LIBDIR)/$(LIBTARGET) $(PLUGINS) $(PLUGINEXPORTTARGETS) $(TRANSPORTEXPORTTARGETS) $(TRANSPORTINCEXPORTTARGETS) $(TRANSPORTS) $(BINDIR)/nvshmem-info
 
 EXTRA_NVCUFLAGS = $(NVCU_MAXRREGCOUNT)
-$(LIBOBJ_NOMAXRREGCOUNT) : EXTRA_NVCUFLAGS =
+$(DEVICELIBOBJ_NOMAXRREGCOUNT) : EXTRA_NVCUFLAGS =
 
 $(LIBDIR)/$(LIBTARGET) : $(HOSTLIBOBJ)  $(DEVICELIBOBJ) $(DEVICELIBOBJ_NOMAXRREGCOUNT)
 	@mkdir -p $(LIBDIR)
@@ -405,15 +471,43 @@ $(PLUGINSDIR)/%: src/bootstrap/%
 	@mkdir -p $(PLUGINSDIR)
 	cp -f $< $@
 
+$(TRANSPORTSDIR)/common/%: src/comm/transports/common/%
+	@mkdir -p $(TRANSPORTSDIR)/common
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/common/%: src/include/%
+	@mkdir -p $(TRANSPORTSDIR)/common
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/ibgda/%: src/comm/transports/ibgda/%
+	@mkdir -p $(TRANSPORTSDIR)/ibgda
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/ibdevx/%: src/comm/transports/ibdevx/%
+	@mkdir -p $(TRANSPORTSDIR)/ibdevx
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/ibrc/%: src/comm/transports/ibrc/%
+	@mkdir -p $(TRANSPORTSDIR)/ibrc
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/libfabric/%: src/comm/transports/libfabric/%
+	@mkdir -p $(TRANSPORTSDIR)/libfabric
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/ucx/%: src/comm/transports/ucx/%
+	@mkdir -p $(TRANSPORTSDIR)/ucx
+	cp -f $< $@
+
 $(LIBDIR)/$(PMI_PLUGIN_TARGET): src/bootstrap/bootstrap_pmi.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmiutil.o
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI_PLUGIN_TARGET) -fpic -I$(INCDIR) -Isrc/pmi/simple-pmi $< -o $@ $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmiutil.o
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI_PLUGIN_TARGET) -fpic -I$(INCDIR) -Isrc/pmi/simple-pmi $< -o $@ $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmiutil.o
 	ln -sf $(PMI_PLUGIN_SONAME) $(LIBDIR)/$(PMI_PLUGIN)
 	ln -sf $(PMI_PLUGIN_TARGET) $(LIBDIR)/$(PMI_PLUGIN_SONAME)
 
 $(LIBDIR)/$(PMI2_PLUGIN_TARGET): src/bootstrap/bootstrap_pmi.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_util.o
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI2_PLUGIN_TARGET) -fpic -Xlinker --version-script=nvshmem_bootstrap.sym -DNVSHMEM_BUILD_PMI2 -I$(INCDIR) -Isrc/pmi/pmi-2 $< -o $@ $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_util.o
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI2_PLUGIN_TARGET) -fpic -Xlinker --version-script=nvshmem_bootstrap.sym -DNVSHMEM_BUILD_PMI2 -I$(INCDIR) -Isrc/pmi/pmi-2 $< -o $@ $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_util.o
 	ln -sf $(PMI2_PLUGIN_SONAME) $(LIBDIR)/$(PMI2_PLUGIN)
 	ln -sf $(PMI2_PLUGIN_TARGET) $(LIBDIR)/$(PMI2_PLUGIN_SONAME)
 
@@ -441,16 +535,56 @@ $(LIBDIR)/$(SHMEM_PLUGIN_TARGET): src/bootstrap/bootstrap_shmem.c $(BUILT_HEADER
 	ln -sf $(SHMEM_PLUGIN_TARGET) $(LIBDIR)/$(SHMEM_PLUGIN_SONAME)
 endif
 
+$(TRANSPORT_OBJDIR_NVSHMEM)/%.o: src/comm/transports/common/%.cpp
+	@mkdir -p $(TRANSPORT_OBJDIR_NVSHMEM)
+	$(CXX) -c -I$(INCDIR) -Isrc/include $(CXXFLAGS) $< -o $@
+
+ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
+$(LIBDIR)/$(UCX_TRANSPORT_REALNAME): src/comm/transports/ucx/ucx.cpp $(UCX_TRANSPORT_OUTPUT_FILES)
+	@mkdir -p $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(UCX_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(UCX_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -L$(UCX_HOME)/lib -lucs -lucp
+	ln -sf $(UCX_TRANSPORT_REALNAME) $(LIBDIR)/$(UCX_TRANSPORT_SONAME)
+	ln -sf $(UCX_TRANSPORT_SONAME) $(LIBDIR)/$(UCX_TRANSPORT)
+endif
+ifeq ($(NVSHMEM_IBRC_SUPPORT), 1)
+$(LIBDIR)/$(IBRC_TRANSPORT_REALNAME): src/comm/transports/ibrc/ibrc.cpp $(IBRC_TRANSPORT_OUTPUT_FILES)
+	@mkdir -p $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBRC_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBRC_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static
+	ln -sf $(IBRC_TRANSPORT_REALNAME) $(LIBDIR)/$(IBRC_TRANSPORT_SONAME)
+	ln -sf $(IBRC_TRANSPORT_SONAME) $(LIBDIR)/$(IBRC_TRANSPORT)
+endif
+ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
+$(LIBDIR)/$(IBDEVX_TRANSPORT_REALNAME): src/comm/transports/ibdevx/ibdevx.cpp $(IBDEVX_TRANSPORT_OUTPUT_FILES)
+	@mkdir -p $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBDEVX_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBDEVX_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -lmlx5
+	ln -sf $(IBDEVX_TRANSPORT_REALNAME) $(LIBDIR)/$(IBDEVX_TRANSPORT_SONAME)
+	ln -sf $(IBDEVX_TRANSPORT_SONAME) $(LIBDIR)/$(IBDEVX_TRANSPORT)
+endif
+ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
+$(LIBDIR)/$(IBGDA_TRANSPORT_REALNAME): src/comm/transports/ibgda/ibgda.cpp $(IBGDA_TRANSPORT_OUTPUT_FILES)
+	@mkdir -p $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBGDA_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBGDA_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -lmlx5
+	ln -sf $(IBGDA_TRANSPORT_REALNAME) $(LIBDIR)/$(IBGDA_TRANSPORT_SONAME)
+	ln -sf $(IBGDA_TRANSPORT_SONAME) $(LIBDIR)/$(IBGDA_TRANSPORT)
+endif
+ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
+$(LIBDIR)/$(LIBFABRIC_TRANSPORT_REALNAME): src/comm/transports/libfabric/libfabric.cpp $(LIBFABRIC_TRANSPORT_OUTPUT_FILES)
+	@mkdir -p $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(LIBFABRIC_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(LIBFABRIC_TRANSPORT_OUTPUT_FILES) -L$(LIBFABRIC_LIBDIR) -lfabric -L$(CUDA_LIB) -lcudart_static
+	ln -sf $(LIBFABRIC_TRANSPORT_REALNAME) $(LIBDIR)/$(LIBFABRIC_TRANSPORT_SONAME)
+	ln -sf $(LIBFABRIC_TRANSPORT_SONAME) $(LIBDIR)/$(LIBFABRIC_TRANSPORT)
+endif
+
 $(BINDIR)/nvshmem-info: src/util/nvshmem-info.cpp $(LIBDIR)/$(LIBTARGET)
 	@mkdir -p $(BINDIR)
-	$(NVCC) $(NVCCFLAGS) -ccbin $(CXX) -std=c++11 -Isrc/include -I$(INCDIR) $< -o $@ $(LDFLAGS) -L$(LIBDIR) -lnvshmem
+	$(NVCC) $(NVCUFLAGS) -Isrc/include -I$(INCDIR) $< -o $@ $(LDFLAGS) -L$(LIBDIR) -lnvshmem
 
 $(INCDIR)/%.h : src/include/%.h
-	@mkdir -p $(INCDIR)
+	@mkdir -p `dirname $@`
 	cp -f $< $@
 
 $(INCDIR)/%.cuh : src/include/%.cuh
-	@mkdir -p $(INCDIR)
+	@mkdir -p `dirname $@`
 	cp -f $< $@
 
 $(INCDIR)/nvshmem_version.h :
@@ -460,8 +594,29 @@ $(INCDIR)/nvshmem_version.h :
 	@echo "#define NVSHMEM_VENDOR_MAJOR_VERSION $(NVSHMEM_MAJOR)" >> $@
 	@echo "#define NVSHMEM_VENDOR_MINOR_VERSION $(NVSHMEM_MINOR)" >> $@
 	@echo "#define NVSHMEM_VENDOR_PATCH_VERSION $(NVSHMEM_PATCH)" >> $@
+	@echo "#define NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION $(TRANSPORT_VERSION_MAJOR)" >> $@
+	@echo "#define NVSHMEM_TRANSPORT_PLUGIN_MINOR_VERSION $(TRANSPORT_VERSION_MINOR)" >> $@
+	@echo "#define NVSHMEM_TRANSPORT_PLUGIN_PATCH_VERSION $(TRANSPORT_VERSION_PATCH)" >> $@
+	@echo "#define NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION $(BOOTSTRAP_VERSION_MAJOR)" >> $@
+	@echo "#define NVSHMEM_BOOTSTRAP_PLUGIN_MINOR_VERSION $(BOOTSTRAP_VERSION_MINOR)" >> $@
+	@echo "#define NVSHMEM_BOOTSTRAP_PLUGIN_PATCH_VERSION $(BOOTSTRAP_VERSION_PATCH)" >> $@
 	@echo "#define NVSHMEM_BUILD_VARS \"$(INFO_BUILD_VARS)\"" >> $@
 	@echo "#endif /* NVSHMEM_VERSION_H */" >> $@
+
+.PHONY: $(INCDIR)/nvshmem_build_options.h
+$(INCDIR)/nvshmem_build_options.h: Makefile
+	@mkdir -p $(INCDIR)
+	@echo "#ifndef NVSHMEM_BUILD_OPTIONS_H" > $@
+	@echo "#define NVSHMEM_BUILD_OPTIONS_H" >> $@
+	@printf  $(BUILD_OPTIONS_STR) >> $@
+	@echo "#endif /* NVSHMEM_BUILD_OPTIONS_H */" >> $@
+
+$(INCDIR)/device/pt-to-pt/transfer_device.cuh: src/include/device/pt-to-pt/transfer_device.cuh.in
+	@mkdir -p `dirname $@`
+	@cp $^ $@
+
+src/comm/device/transfer_device.cu: src/include/device/pt-to-pt/transfer_device.cuh.in
+	@cp $^ $@
 
 $(OBJDIR_NVSHMEM)/%.o : src/%.cpp $(BUILT_HEADERS)
 	@mkdir -p `dirname $@`
@@ -494,5 +649,5 @@ install : lib
 	mkdir -p $(NVSHMEM_PREFIX)/bin
 	cp -v $(NVSHMEM_BUILDDIR)/bin/* $(NVSHMEM_PREFIX)/bin/
 	cp -v $(NVSHMEM_BUILDDIR)/lib/* $(NVSHMEM_PREFIX)/lib/
-	cp -P -v $(NVSHMEM_BUILDDIR)/include/* $(NVSHMEM_PREFIX)/include/
+	cp -P -R -v $(NVSHMEM_BUILDDIR)/include/* $(NVSHMEM_PREFIX)/include/
 	cp -P -R -v $(NVSHMEM_BUILDDIR)/share/* $(NVSHMEM_PREFIX)/share/

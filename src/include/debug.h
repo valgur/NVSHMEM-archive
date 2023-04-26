@@ -51,7 +51,7 @@ void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const
 #define INFO(FLAGS, ...) \
     nvshmem_debug_log(NVSHMEM_LOG_INFO, (FLAGS), __func__, __LINE__, __VA_ARGS__)
 
-#ifdef ENABLE_TRACE
+#ifdef NVSHMEM_TRACE
 #include <chrono>
 #define TRACE(FLAGS, ...) \
     nvshmem_debug_log(NVSHMEM_LOG_TRACE, (FLAGS), __func__, __LINE__, __VA_ARGS__)

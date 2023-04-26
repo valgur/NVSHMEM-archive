@@ -147,7 +147,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    num_entries = floor(log2((float)max_msg_size)) - floor(log2((float)min_msg_size)) + 1;
+    num_entries = floor(std::log2((float)max_msg_size)) - floor(std::log2((float)min_msg_size)) + 1;
     size_array = (uint64_t *)calloc(sizeof(uint64_t), num_entries);
     if (!size_array) {
         status = -1;

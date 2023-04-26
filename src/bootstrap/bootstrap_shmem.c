@@ -113,7 +113,7 @@ out:
 int nvshmemi_bootstrap_plugin_init(void *arg, bootstrap_handle_t *handle,
                                    const int nvshmem_version) {
     int status = 0;
-    int bootstrap_version = NVSHMEM_VENDOR_VERSION;
+    int bootstrap_version = NVSHMEMI_BOOTSTRAP_ABI_VERSION;
     if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
         BOOTSTRAP_ERROR_PRINT(
             "SHMEM bootstrap version (%d) is not compatible with NVSHMEM version (%d)",

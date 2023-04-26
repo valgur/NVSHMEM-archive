@@ -13,13 +13,15 @@
 #ifndef _NVSHMEMI_CONSTANTS_H_
 #define _NVSHMEMI_CONSTANTS_H_
 
+#include "nvshmemi_transport_defines.h"
+
 #define NVSHMEMI_DIAG_STRLEN 1024
 
 #define SYNC_SIZE 27648 /*XXX:Number of GPUs on Summit; currently O(N), need to be O(1)*/
 #define NVSHMEMI_SYNC_VALUE 0
 #define NVSHMEMI_SYNC_SIZE (2 * SYNC_SIZE)
 #define NVSHMEMI_BARRIER_SYNC_SIZE (2 * SYNC_SIZE)
-#define NVSHMEMI_BCAST_SYNC_SIZE SYNC_SIZE
+#define NVSHMEMI_BCAST_SYNC_SIZE (10 * SYNC_SIZE)
 #define NVSHMEMI_FCOLLECT_SYNC_SIZE SYNC_SIZE
 #define NVSHMEMI_REDUCE_SYNC_SIZE SYNC_SIZE
 #define NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE SYNC_SIZE
@@ -27,17 +29,6 @@
 #define NVSHMEMI_ALLTOALL_SYNC_SIZE 1
 
 #define NVSHMEMI_WARP_SIZE 32
-
-typedef enum {
-    NVSHMEMI_OP_PUT = 1,
-    NVSHMEMI_OP_P,
-    NVSHMEMI_OP_PUT_SIGNAL,
-    NVSHMEMI_OP_GET,
-    NVSHMEMI_OP_G,
-    NVSHMEMI_OP_FENCE,
-    NVSHMEMI_OP_AMO,
-    NVSHMEMI_OP_QUIET,
-} nvshmemi_op_t;
 
 typedef enum rdxn_ops {
     RDXN_OPS_AND = 0,
@@ -53,30 +44,10 @@ typedef enum rdxn_ops {
     RDXN_OPS_SUM = 5,
     RDXN_OPS_sum = 5,
     RDXN_OPS_PROD = 6,
-    RDXN_OPS_prod = 6
+    RDXN_OPS_prod = 6,
+    RDXN_OPS_MAXLOC = 7,
+    RDXN_OPS_maxloc
 } rdxn_ops_t;
-
-typedef enum {
-    NVSHMEMI_AMO_ACK = 1,
-    NVSHMEMI_AMO_INC,
-    NVSHMEMI_AMO_SET,
-    NVSHMEMI_AMO_ADD,
-    NVSHMEMI_AMO_AND,
-    NVSHMEMI_AMO_OR,
-    NVSHMEMI_AMO_XOR,
-    NVSHMEMI_AMO_SIGNAL,
-    NVSHMEMI_AMO_SIGNAL_SET,
-    NVSHMEMI_AMO_SIGNAL_ADD,
-    NVSHMEMI_AMO_END_OF_NONFETCH,  // end of nonfetch atomics
-    NVSHMEMI_AMO_FETCH,
-    NVSHMEMI_AMO_FETCH_INC,
-    NVSHMEMI_AMO_FETCH_ADD,
-    NVSHMEMI_AMO_FETCH_AND,
-    NVSHMEMI_AMO_FETCH_OR,
-    NVSHMEMI_AMO_FETCH_XOR,
-    NVSHMEMI_AMO_SWAP,
-    NVSHMEMI_AMO_COMPARE_SWAP,
-} nvshmemi_amo_t;
 
 typedef enum {
     NVSHMEMI_JOB_GPU_LDST_ATOMICS = 1,
@@ -97,5 +68,11 @@ typedef struct {
     int minor;
     int patch;
 } nvshmemi_version_t;
+
+typedef enum {
+    NVSHMEMI_PE_DIST_ROUNDROBIN = 0,
+    NVSHMEMI_PE_DIST_BLOCK,
+    NVSHMEMI_PE_DIST_MISC
+} nvshmemi_pe_dist_t;
 
 #endif

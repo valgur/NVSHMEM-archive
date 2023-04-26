@@ -25,15 +25,18 @@ void nvshmem_quiet(void) {
     int status = 0;
 
     int tbitmap = nvshmemi_state->transport_bitmap;
-    if (nvshmemi_state->npes_node > 1) {
+    if (nvshmemi_state->used_internal_streams) {
         for (int s = 0; s < MAX_PEER_STREAMS; s++) {
-            cudaStream_t custrm = nvshmemi_state->custreams[s];
-            CUDA_RUNTIME_CHECK_GOTO(cudaStreamSynchronize(custrm), status, out);
+            if (nvshmemi_state->active_internal_streams[s]) {
+                cudaStream_t custrm = nvshmemi_state->custreams[s];
+                CUDA_RUNTIME_CHECK_GOTO(cudaStreamSynchronize(custrm), status, out);
+                nvshmemi_state->active_internal_streams[s] = 0;
+            }
         }
         nvshmemi_state->used_internal_streams = 0;
     }
 
-    for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
+    for (int j = 0; j < nvshmemi_state->num_initialized_transports; j++) {
         if (tbitmap & 1) {
             struct nvshmem_transport *tcurr =
                 ((nvshmem_transport_t *)nvshmemi_state->transports)[j];
@@ -41,7 +44,8 @@ void nvshmem_quiet(void) {
                 if (nvshmemi_state->quiet[j]) {
                     status = nvshmemi_state->quiet[j](tcurr, k, 0);
                 }
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_quiet() failed \n");
+                NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                      "nvshmem_quiet() failed \n");
             }
         }
         tbitmap >>= 1;
@@ -51,12 +55,16 @@ out:
 }
 
 void nvshmemi_quiesce_internal_streams(cudaStream_t cstrm) {
-    if (nvshmemi_state->npes_node > 1 && nvshmemi_state->used_internal_streams) {
+    if (nvshmemi_state->used_internal_streams) {
         for (int s = 0; s < MAX_PEER_STREAMS; s++) {
             cudaStream_t custrm = nvshmemi_state->custreams[s];
             cudaEvent_t cuev = nvshmemi_state->cuevents[s];
-            CUDA_RUNTIME_CHECK(cudaEventRecord(cuev, custrm));
-            CUDA_RUNTIME_CHECK(cudaStreamWaitEvent(cstrm, cuev, 0));
+
+            if (nvshmemi_state->active_internal_streams[s]) {
+                CUDA_RUNTIME_CHECK(cudaEventRecord(cuev, custrm));
+                CUDA_RUNTIME_CHECK(cudaStreamWaitEvent(cstrm, cuev, 0));
+                nvshmemi_state->active_internal_streams[s] = 0;
+            }
         }
         nvshmemi_state->used_internal_streams = 0;
     }
@@ -69,10 +77,11 @@ void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {
     int tbitmap = nvshmemi_state->transport_bitmap;
     nvshmemi_quiesce_internal_streams(cstrm);
 
-    for (int j = 0; j < NVSHMEM_TRANSPORT_COUNT; j++) {
+    for (int j = 0; j < nvshmemi_state->num_initialized_transports; j++) {
         if (tbitmap & 1) {
-            if (j == NVSHMEM_TRANSPORT_ID_IBRC || j == NVSHMEM_TRANSPORT_ID_UCX ||
-                j == NVSHMEM_TRANSPORT_ID_IBDEVX || j == NVSHMEM_TRANSPORT_ID_FABRIC) {
+            struct nvshmem_transport *tcurr =
+                ((nvshmem_transport_t *)nvshmemi_state->transports)[j];
+            if (!tcurr->no_proxy) {
                 nvshmemi_call_proxy_quiet_entrypoint(cstrm);
             }
         }

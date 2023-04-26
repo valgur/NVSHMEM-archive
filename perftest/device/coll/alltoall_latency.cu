@@ -282,7 +282,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    array_size = floor(log2((float)max_elems)) + 1;
+    array_size = floor(std::log2((float)max_elems)) + 1;
 
     DEBUG_PRINT("symmetric size requested %lu\n", size);
     sprintf(size_string, "%lu", size);

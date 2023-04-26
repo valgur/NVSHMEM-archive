@@ -9,11 +9,12 @@
 
 #include "infiniband/mlx5dv.h"
 
-#include "nvshmem_internal.h"
+//#include "nvshmem_internal.h"
 #include "nvshmemx_error.h"
 #include "nvshmemi_util.h"
-#include "nvshmemi_ibgda.h"
-#include "utils.h"
+#include "utils_device.h"
+
+#include <algorithm>
 
 //#define NVSHMEM_IBGDA_DEBUG
 //#define NVSHMEM_TIMEOUT_DEVICE_POLLING
@@ -35,6 +36,9 @@
  * perf hit. TODO: Tune this number for each supported arch.
  */
 #define GIC_MAX_THREADS_PER_QUIET 32
+
+// MLX5 accepts up to 2 GiB per command
+#define GIC_MAX_TRANSFER_SIZE 2147483648LLU
 
 #ifndef likely
 #define likely(x) (__builtin_expect(!!(x), 1))
@@ -81,6 +85,14 @@ typedef struct mlx5_err_cqe gic_mlx5_err_cqe_t;
 
 #define GIC_4_BYTE_EXT_AMO_OPMOD 0x08000000
 #define GIC_8_BYTE_EXT_AMO_OPMOD 0x09000000
+
+typedef enum gic_mlx5_fm {
+    GIC_MLX5_FM_NO_FENCE = 0,
+    GIC_MLX5_FM_INITIATOR_SMALL_FENCE = 1 << 5,
+    GIC_MLX5_FM_FENCE = 2 << 5,
+    GIC_MLX5_FM_STRONG_ORDERING = 3 << 5,
+    GIC_MLX5_FM_FENCE_AND_INITIATOR_SMALL_FENCE = 4 << 5
+} gic_mlx5_fm_t;
 
 enum {
     GIC_MLX5_OPCODE_DUMP = 0x23,
@@ -311,6 +323,12 @@ __device__ static inline void gic_atomic_set(int *ptr, int val) {
 #endif
 }
 
+__device__ static inline size_t gic_cal_transfer_size(size_t req_size, size_t lchunk_size,
+                                                      size_t rchunk_size) {
+    return NVSHMEMI_MIN(GIC_MAX_TRANSFER_SIZE,
+                        NVSHMEMI_MIN(req_size, NVSHMEMI_MIN(rchunk_size, lchunk_size)));
+}
+
 template <threadgroup_t SCOPE>
 __device__ static inline void gic_lock_acquire(int *lock) {
     if (nvshmemi_thread_id_in_threadgroup<SCOPE>() == 0)
@@ -438,7 +456,8 @@ __device__ static inline uint16_t gic_sop_to_nwqes(uint8_t sop) {
 }
 
 #if __cplusplus >= 201103L
-static_assert(NVSHMEMI_GIC_MAX_QP_DEPTH <= 32768);
+static_assert(NVSHMEMI_GIC_MAX_QP_DEPTH <= 32768,
+              "static_assert(NVSHMEMI_GIC_MAX_QP_DEPTH <= 32768) failed");
 #endif
 template <bool support_half_av_seg>
 __device__ static inline int gic_poll_cq(nvshmemi_gic_device_cq_t *cq, uint64_t idx, int *error) {
@@ -606,7 +625,8 @@ out:
 
 __device__ static inline void gic_write_dump_wqe(nvshmemi_gic_device_qp_t *qp, uint64_t laddr,
                                                  __be32 lkey, uint32_t bytes, uint16_t wqe_idx,
-                                                 void **out_wqes, gic_ctrl_seg_t *out_ctrl_seg) {
+                                                 gic_mlx5_fm_t fm, void **out_wqes,
+                                                 gic_ctrl_seg_t *out_ctrl_seg) {
     gic_ctrl_seg_t ctrl_seg;
     struct mlx5_wqe_data_seg data_seg;
 
@@ -622,7 +642,7 @@ __device__ static inline void gic_write_dump_wqe(nvshmemi_gic_device_qp_t *qp, u
         0,
     };
     ctrl_seg.qpn_ds = HTOBE32((qp->qpn << 8) | 2);
-    ctrl_seg.fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
+    ctrl_seg.fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE | fm;
     ctrl_seg.opmod_idx_opcode = HTOBE32((wqe_idx << 8) | GIC_MLX5_OPCODE_DUMP);
 
     // out_ctrl_seg is in register and will eventually consumed by gic_ring_db.
@@ -1806,45 +1826,62 @@ __device__ static inline nvshmemi_gic_device_qp_t *gic_get_qp(int pe, bool *out_
         return gic_get_dci(pe, out_shared_among_ctas);
 }
 
-__device__ static inline __be32 gic_get_lkey(uint64_t addr) {
+__device__ static inline void gic_get_lkey(uint64_t addr, __be32 *lkey, size_t *chunk_size) {
     nvshmemi_gic_device_state_t *state = gic_get_state();
     uint64_t heap_start = (uint64_t)nvshmemi_device_state_d.heap_base;
     uint64_t heap_end = heap_start + nvshmemi_device_state_d.heap_size - 1;
     if (heap_start <= addr && addr <= heap_end) {
         // addr in the symmetric heap
         uint64_t idx = (addr - heap_start) >> state->log2_cumem_granularity;
+        nvshmemi_gic_device_key_t device_key;
 
-        if (idx < NVSHMEMI_GIC_MAX_CONST_LKEYS) return state->constmem.lkeys[idx];
+        if (idx < NVSHMEMI_GIC_MAX_CONST_LKEYS)
+            device_key = state->constmem.lkeys[idx];
+        else
+            device_key = state->globalmem.lkeys[idx - NVSHMEMI_GIC_MAX_CONST_LKEYS];
 
-        return state->globalmem.lkeys[idx - NVSHMEMI_GIC_MAX_CONST_LKEYS];
+        assert(addr < device_key.next_addr);
+
+        *lkey = device_key.key;
+        *chunk_size = device_key.next_addr - addr;
+        return;
     } else {
         // local-only addr
         nvshmemi_gic_device_local_only_mhandle_t *mhandle =
             state->globalmem.local_only_mhandle_head;
+
         while (mhandle) {
-            if (mhandle->start <= addr && addr <= mhandle->end) return mhandle->lkey;
+            if (mhandle->start <= addr && addr <= mhandle->end) {
+                *lkey = mhandle->lkey;
+                *chunk_size = mhandle->end - addr + 1;
+                return;
+            }
             mhandle = mhandle->next;
         }
     }
 
     // lkey is not found.
     assert(0);
-    return 0;
 }
 
 __device__ static inline void gic_get_raddr_rkey(uint64_t addr, int pe, uint64_t *raddr,
-                                                 __be32 *rkey) {
+                                                 __be32 *rkey, size_t *chunk_size) {
     nvshmemi_gic_device_state_t *state = gic_get_state();
     uint64_t heap_start = (uint64_t)nvshmemi_device_state_d.heap_base;
     uint64_t roffset = addr - heap_start;
     uint64_t idx = ((roffset >> state->log2_cumem_granularity) * nvshmemi_device_state_d.npes) + pe;
+    nvshmemi_gic_device_key_t device_key;
 
     if (idx < NVSHMEMI_GIC_MAX_CONST_RKEYS)
-        *rkey = state->constmem.rkeys[idx];
+        device_key = state->constmem.rkeys[idx];
     else
-        *rkey = state->globalmem.rkeys[idx - NVSHMEMI_GIC_MAX_CONST_RKEYS];
+        device_key = state->globalmem.rkeys[idx - NVSHMEMI_GIC_MAX_CONST_RKEYS];
+
+    assert(roffset < device_key.next_addr);
 
     *raddr = (uint64_t)nvshmemi_device_state_d.peer_heap_base_actual[pe] + roffset;
+    *rkey = device_key.key;
+    *chunk_size = device_key.next_addr - roffset;
 }
 
 template <bool support_half_av_seg>
@@ -1912,23 +1949,18 @@ __device__ static inline uint64_t gic_get_ibuf_addr(nvshmemi_gic_device_qp_t *qp
 }
 
 __device__ static inline bool gic_can_coalesce_warp(unsigned int amask,
-                                                    nvshmemi_gic_device_qp_t *qp, int pe) {
-    if (amask != GIC_FULL_WARP)
-        return false;
-    else if (!gic_is_rc_enabled())
-        return true;
-    else {
-        bool any_rc = __any_sync(amask, qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_RC);
-        if (any_rc) {
-            int pred_same_pe;
-            __match_all_sync(amask, pe, &pred_same_pe);
-            return !!(pred_same_pe);
-        }
-        return true;
-    }
+                                                    nvshmemi_gic_device_qp_t *qp) {
+    int pred_same_qp;
+
+    if (amask != GIC_FULL_WARP) return false;
+
+    __match_all_sync(amask, qp->qpn, &pred_same_qp);
+    if (!pred_same_qp) return false;
+
+    return true;
 }
 
-template <bool support_half_av_seg, bool nic_buf_on_gpumem>
+template <bool support_half_av_seg>
 __device__ static inline uint64_t gic_cst(nvshmemi_gic_device_qp_t *dci,
                                           bool is_dci_shared_among_ctas) {
     assert(likely(dci->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI));
@@ -1938,37 +1970,20 @@ __device__ static inline uint64_t gic_cst(nvshmemi_gic_device_qp_t *dci,
     uint64_t laddr = (uint64_t)dci->ibuf.buf;
     __be32 lkey = dci->ibuf.lkey;
 
-#ifndef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
-    uint64_t raddr = laddr;
-    __be32 rkey = dci->ibuf.rkey;
-#endif
-
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
-    int num_wqes = 1;
-#else
-    int num_wqes = (support_half_av_seg || nic_buf_on_gpumem) ? 1 : 2;
-#endif
+    const int num_wqes = 1;
 
     uint64_t base_wqe_idx =
         gic_reserve_wqe_slots<support_half_av_seg>(dci, num_wqes, is_dci_shared_among_ctas);
 
     gic_ctrl_seg_t ctrl_seg;
 
-    void *wqe_ptrs[2];
+    void *wqe_ptrs[1];
     wqe_ptrs[0] = gic_get_wqe_ptr(dci, base_wqe_idx);
-    wqe_ptrs[1] = gic_get_wqe_ptr(dci, base_wqe_idx + 1);
 
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
-    gic_write_dump_wqe(dci, laddr, lkey, sizeof(char), base_wqe_idx, wqe_ptrs, &ctrl_seg);
-#else
-    if (nic_buf_on_gpumem)
-        // For CST, DUMP OP is cheaper than RDMA READ.
-        // However, it works only when WQ buffer is on GPU memory.
-        gic_write_dump_wqe(dci, laddr, lkey, sizeof(char), base_wqe_idx, wqe_ptrs, &ctrl_seg);
-    else
-        gic_write_rdma_read_wqe<support_half_av_seg>(
-            dci, dct, laddr, lkey, raddr, rkey, sizeof(char), base_wqe_idx, wqe_ptrs, &ctrl_seg);
-#endif
+    // DUMP OP causes the NIC to read laddr, which is always on GPU memory.
+    // For CST, it is cheaper than RDMA READ.
+    gic_write_dump_wqe(dci, laddr, lkey, sizeof(char), base_wqe_idx, GIC_MLX5_FM_NO_FENCE, wqe_ptrs,
+                       &ctrl_seg);
 
     // Don't update get_head here because this is internal cst
     if (is_dci_shared_among_ctas)
@@ -1979,7 +1994,7 @@ __device__ static inline uint64_t gic_cst(nvshmemi_gic_device_qp_t *dci,
     return gic_quiet<support_half_av_seg>(dci);
 }
 
-template <bool support_half_av_seg, bool nic_buf_on_gpumem>
+template <bool support_half_av_seg>
 __device__ static inline uint64_t gic_quiet_with_cst(nvshmemi_gic_device_qp_t *qp,
                                                      bool is_qp_shared_among_ctas) {
     nvshmemi_gic_device_qp_management_t *mvars = &qp->mvars;
@@ -1991,7 +2006,7 @@ __device__ static inline uint64_t gic_quiet_with_cst(nvshmemi_gic_device_qp_t *q
     // In that case, we don't have to do quiet first
     if (get_tail < get_head) {
         if (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI) {
-            ticket = gic_cst<support_half_av_seg, nic_buf_on_gpumem>(qp, is_qp_shared_among_ctas);
+            ticket = gic_cst<support_half_av_seg>(qp, is_qp_shared_among_ctas);
             gic_update_get_tail(qp, ticket);
         } else {
             // We don't have RC loopback to self.
@@ -1999,8 +2014,7 @@ __device__ static inline uint64_t gic_quiet_with_cst(nvshmemi_gic_device_qp_t *q
             bool is_dci_shared_among_ctas;
             nvshmemi_gic_device_qp_t *dci =
                 gic_get_dci(nvshmemi_device_state_d.mype, &is_dci_shared_among_ctas);
-            uint64_t cst_ticket =
-                gic_cst<support_half_av_seg, nic_buf_on_gpumem>(dci, is_dci_shared_among_ctas);
+            uint64_t cst_ticket = gic_cst<support_half_av_seg>(dci, is_dci_shared_among_ctas);
             gic_update_get_tail(dci, cst_ticket);
             gic_update_get_tail(qp, ticket);
         }
@@ -2009,50 +2023,84 @@ __device__ static inline uint64_t gic_quiet_with_cst(nvshmemi_gic_device_qp_t *q
     return ticket;
 }
 
-template <threadgroup_t SCOPE, nvshmemi_op_t channel_op, bool nbi, bool support_half_av_seg,
-          bool nic_buf_on_gpumem>
-__device__ static inline void gic_rma(void *rptr, void *lptr, size_t bytes, int pe) {
+template <nvshmemi_op_t channel_op, bool nbi, bool support_half_av_seg>
+__device__ static inline void gic_rma_thread(uint64_t rptr, uint64_t lptr, size_t remaining_size,
+                                             int pe) {
     constexpr bool need_cst = (channel_op == NVSHMEMI_OP_GET);
+    constexpr bool need_immediate_cst = !nbi && need_cst;
 
-    int my_tid = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     nvshmemi_gic_device_state_t *state = gic_get_state();
 
-    __be32 lkey = gic_get_lkey((uint64_t)lptr);
-
-    __be32 rkey;
-    uint64_t raddr;
-    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey);
-
-    nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
     bool is_qp_shared_among_ctas;
     nvshmemi_gic_device_qp_t *qp = gic_get_qp(pe, &is_qp_shared_among_ctas);
 
-    if (my_tid == 0) {
-        int num_wqes =
-            (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI) ? (support_half_av_seg ? 1 : 2) : 1;
+    nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
 
-        uint64_t base_wqe_idx =
-            gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
+    int num_wqes_per_cmd =
+        (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI) ? (support_half_av_seg ? 1 : 2) : 1;
+
+    bool did_quiet = false;
+
+    if (unlikely(remaining_size == 0)) return;
+
+    while (remaining_size > 0) {
+        unsigned int amask = __activemask();
+
+        int my_tid;
+        int tg_size;
+
+        __be32 lkey;
+        size_t lchunk_size;
+        gic_get_lkey(lptr, &lkey, &lchunk_size);
+
+        __be32 rkey;
+        uint64_t raddr;
+        size_t rchunk_size;
+        gic_get_raddr_rkey(rptr, pe, &raddr, &rkey, &rchunk_size);
+
+        size_t transfer_size = gic_cal_transfer_size(remaining_size, lchunk_size, rchunk_size);
+
+        bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp);
+
+        if (can_coalesce_warp) {
+            my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
+            tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_WARP>();
+        } else {
+            my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_THREAD>();
+            tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_THREAD>();
+        }
+
+        int num_wqes = num_wqes_per_cmd * tg_size + (need_immediate_cst ? 1 : 0);
+
+        uint64_t base_wqe_idx;
+
+        if (my_tid == 0) {
+            base_wqe_idx =
+                gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
+        }
+
+        if (can_coalesce_warp) {
+            base_wqe_idx = __shfl_sync(amask, base_wqe_idx, 0);
+        }
+
+        uint64_t my_wqe_idx = base_wqe_idx + (my_tid * num_wqes_per_cmd);
 
         gic_ctrl_seg_t ctrl_seg;
 
         void *wqe_ptrs[2];
-        wqe_ptrs[0] = gic_get_wqe_ptr(qp, base_wqe_idx);
-        wqe_ptrs[1] = gic_get_wqe_ptr(qp, base_wqe_idx + 1);
+        wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
+        wqe_ptrs[1] = gic_get_wqe_ptr(qp, my_wqe_idx + 1);
 
         switch (channel_op) {
             case NVSHMEMI_OP_PUT:
-                gic_write_rdma_write_wqe<support_half_av_seg>(qp, dct, (uint64_t)lptr, lkey, raddr,
-                                                              rkey, bytes, base_wqe_idx, wqe_ptrs,
+                gic_write_rdma_write_wqe<support_half_av_seg>(qp, dct, lptr, lkey, raddr, rkey,
+                                                              transfer_size, my_wqe_idx, wqe_ptrs,
                                                               &ctrl_seg);
                 break;
             case NVSHMEMI_OP_GET:
-                gic_write_rdma_read_wqe<support_half_av_seg>(qp, dct, (uint64_t)lptr, lkey, raddr,
-                                                             rkey, bytes, base_wqe_idx, wqe_ptrs,
+                gic_write_rdma_read_wqe<support_half_av_seg>(qp, dct, lptr, lkey, raddr, rkey,
+                                                             transfer_size, my_wqe_idx, wqe_ptrs,
                                                              &ctrl_seg);
-                // GET index must be visible before the new cons index.
-                // gic_submit_requests has fence, which guarantees the ordering.
-                gic_update_get_head(qp, base_wqe_idx + num_wqes);
                 break;
             default:
 #ifdef NVSHMEM_IBGDA_DEBUG
@@ -2060,95 +2108,195 @@ __device__ static inline void gic_rma(void *rptr, void *lptr, size_t bytes, int 
 #endif
                 assert(0);
         }
-        if (is_qp_shared_among_ctas)
-            gic_submit_requests<true>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
-        else
-            gic_submit_requests<false>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
 
-        if (!nbi) {
-            if (need_cst)
-                gic_quiet_with_cst<support_half_av_seg, nic_buf_on_gpumem>(qp,
-                                                                           is_qp_shared_among_ctas);
+        if (can_coalesce_warp) {
+            nvshmemi_warp_sync();
+        }
+
+        if (my_tid == tg_size - 1) {
+            if (need_immediate_cst) {
+                // Enqueue CST op in the QP.  This command has NIC Fence, which
+                // waits for all prior READ/ATOMIC to finish before issuing this
+                // DUMP.
+                my_wqe_idx += num_wqes_per_cmd;
+                wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
+                gic_write_dump_wqe(qp, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sizeof(char),
+                                   my_wqe_idx, GIC_MLX5_FM_FENCE, wqe_ptrs, &ctrl_seg);
+            } else if (need_cst) {
+                // For nbi, we will do CST in QUIET.
+                // GET index must be visible before the new cons index.
+                gic_update_get_head(qp, base_wqe_idx + num_wqes);
+            }
+
+            if (is_qp_shared_among_ctas)
+                gic_submit_requests<true>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
             else
-                gic_quiet<support_half_av_seg>(qp);
+                gic_submit_requests<false>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
+        }
+
+        remaining_size -= transfer_size;
+
+        rptr += transfer_size;
+        lptr += transfer_size;
+
+        if (can_coalesce_warp) {
+            if (!nbi) {
+                bool do_coalesce_quiet = __all_sync(amask, remaining_size == 0);
+                if (do_coalesce_quiet && my_tid == tg_size - 1) {
+                    // CST, if required, has already been enqueued. We simply need to
+                    // do gic_quiet here.
+                    gic_quiet<support_half_av_seg>(qp);
+                }
+                did_quiet |= do_coalesce_quiet;
+            }
+            nvshmemi_warp_sync();
         }
     }
 
-    nvshmemi_threadgroup_sync<SCOPE>();
+    if (!nbi && !did_quiet) {
+        // CST, if required, has already been enqueued. We simply need to
+        // do gic_quiet here.
+        gic_quiet<support_half_av_seg>(qp);
+    }
 }
 
-template <nvshmemi_op_t channel_op, bool nbi, bool support_half_av_seg, bool nic_buf_on_gpumem>
-__device__ static inline void gic_rma_thread(void *rptr, void *lptr, size_t bytes, int pe) {
+#if __cplusplus >= 201103L
+static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 64,
+              "static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 64) failed");
+#endif
+template <threadgroup_t SCOPE, nvshmemi_op_t channel_op, bool nbi, bool support_half_av_seg>
+__device__ static inline void gic_rma(uint64_t req_rptr, uint64_t req_lptr, size_t bytes, int pe) {
+    assert(SCOPE == NVSHMEMI_THREADGROUP_WARP || SCOPE == NVSHMEMI_THREADGROUP_BLOCK);
+
     constexpr bool need_cst = (channel_op == NVSHMEMI_OP_GET);
+    constexpr bool need_immediate_cst = !nbi && need_cst;
 
-    unsigned int amask = __activemask();
-
-    int my_tid;
-    int tg_size;
+    // Use only wrap 0
+    int my_tid = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    int tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_WARP>();
 
     nvshmemi_gic_device_state_t *state = gic_get_state();
-
-    __be32 lkey = gic_get_lkey((uint64_t)lptr);
-
-    __be32 rkey;
-    uint64_t raddr;
-    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey);
 
     nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
     bool is_qp_shared_among_ctas;
     nvshmemi_gic_device_qp_t *qp = gic_get_qp(pe, &is_qp_shared_among_ctas);
 
-    bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp, pe);
-
-    if (can_coalesce_warp) {
-        my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
-        tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_WARP>();
-    } else {
-        my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_THREAD>();
-        tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_THREAD>();
-    }
-
     int num_wqes_per_cmd =
         (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI) ? (support_half_av_seg ? 1 : 2) : 1;
-    int num_wqes = num_wqes_per_cmd * tg_size;
+
+    int num_wqes;
 
     uint64_t base_wqe_idx;
-
-    if (my_tid == 0)
-        base_wqe_idx =
-            gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
-
-    if (can_coalesce_warp) base_wqe_idx = __shfl_sync(amask, base_wqe_idx, 0);
-
-    uint64_t my_wqe_idx = base_wqe_idx + (my_tid * num_wqes_per_cmd);
+    uint64_t my_wqe_idx;
 
     gic_ctrl_seg_t ctrl_seg;
 
     void *wqe_ptrs[2];
-    wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
-    wqe_ptrs[1] = gic_get_wqe_ptr(qp, my_wqe_idx + 1);
 
-    switch (channel_op) {
-        case NVSHMEMI_OP_PUT:
-            gic_write_rdma_write_wqe<support_half_av_seg>(
-                qp, dct, (uint64_t)lptr, lkey, raddr, rkey, bytes, my_wqe_idx, wqe_ptrs, &ctrl_seg);
-            break;
-        case NVSHMEMI_OP_GET:
-            gic_write_rdma_read_wqe<support_half_av_seg>(qp, dct, (uint64_t)lptr, lkey, raddr, rkey,
-                                                         bytes, my_wqe_idx, wqe_ptrs, &ctrl_seg);
-            break;
-        default:
-#ifdef NVSHMEM_IBGDA_DEBUG
-            printf("Unsupported channel_op.\n");
-#endif
-            assert(0);
+    size_t remaining_size = bytes;
+
+    size_t transfer_size;
+    size_t my_transfer_size = 0;
+
+    uint64_t rptr = req_rptr;
+    uint64_t lptr = req_lptr;
+
+    __be32 lkey;
+    __be32 my_lkey;
+    uint64_t my_laddr;
+    size_t lchunk_size;
+
+    __be32 rkey;
+    __be32 my_rkey;
+    uint64_t raddr;
+    uint64_t my_raddr;
+    size_t rchunk_size;
+
+    int chunk_idx = 0;
+
+    if (unlikely(remaining_size == 0)) goto out;
+
+    // Not warp 0, wait at the exit.
+    if (my_tid >= tg_size) {
+        goto out;
     }
 
-    if (can_coalesce_warp) nvshmemi_warp_sync();
+    // Calculate how many chunks we need to send.
+    while (remaining_size > 0) {
+        gic_get_lkey(lptr, &lkey, &lchunk_size);
+        gic_get_raddr_rkey(rptr, pe, &raddr, &rkey, &rchunk_size);
+        transfer_size = gic_cal_transfer_size(remaining_size, lchunk_size, rchunk_size);
+        if (my_tid == chunk_idx) {
+            my_lkey = lkey;
+            my_laddr = lptr;
+            my_rkey = rkey;
+            my_raddr = raddr;
+            my_transfer_size = transfer_size;
+        }
 
-    if (my_tid == tg_size - 1) {
-        if (need_cst) {
+        remaining_size -= transfer_size;
+        rptr += transfer_size;
+        lptr += transfer_size;
+
+        ++chunk_idx;
+    }
+
+    // Too many chunks. Use gic_rma_thread to handle it instead.
+    if (unlikely(chunk_idx > tg_size)) {
+        if (my_tid == 0) {
+            gic_rma_thread<channel_op, nbi, support_half_av_seg>(req_rptr, req_lptr, bytes, pe);
+        }
+        goto out;
+    }
+
+    num_wqes = num_wqes_per_cmd * chunk_idx + (need_immediate_cst ? 1 : 0);
+
+    if (my_tid == 0) {
+        base_wqe_idx =
+            gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
+    }
+
+    base_wqe_idx = __shfl_sync(GIC_FULL_WARP, base_wqe_idx, 0);
+    my_wqe_idx = base_wqe_idx + (my_tid * num_wqes_per_cmd);
+
+    if (my_tid < chunk_idx) {
+        wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
+        wqe_ptrs[1] = gic_get_wqe_ptr(qp, my_wqe_idx + 1);
+
+        switch (channel_op) {
+            case NVSHMEMI_OP_PUT:
+                gic_write_rdma_write_wqe<support_half_av_seg>(qp, dct, my_laddr, my_lkey, my_raddr,
+                                                              my_rkey, my_transfer_size, my_wqe_idx,
+                                                              wqe_ptrs, &ctrl_seg);
+                break;
+            case NVSHMEMI_OP_GET:
+                gic_write_rdma_read_wqe<support_half_av_seg>(qp, dct, my_laddr, my_lkey, my_raddr,
+                                                             my_rkey, my_transfer_size, my_wqe_idx,
+                                                             wqe_ptrs, &ctrl_seg);
+                break;
+            default:
+#ifdef NVSHMEM_IBGDA_DEBUG
+                printf("Unsupported channel_op.\n");
+#endif
+                assert(0);
+        }
+    }
+
+    nvshmemi_warp_sync();
+
+    if (my_tid == chunk_idx - 1) {
+        if (need_immediate_cst) {
+            my_wqe_idx += num_wqes_per_cmd;
+            wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
+            // Enqueue CST op in the QP.  This command has NIC Fence, which
+            // waits for all prior READ/ATOMIC to finish before issuing this
+            // DUMP.
+            gic_write_dump_wqe(qp, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sizeof(char), my_wqe_idx,
+                               GIC_MLX5_FM_FENCE, wqe_ptrs, &ctrl_seg);
+        } else if (need_cst) {
+            // For nbi, we will do CST in QUIET.
             // GET index must be visible before the new cons index.
+            // gic_submit_requests has fence, which guarantees the ordering.
             gic_update_get_head(qp, base_wqe_idx + num_wqes);
         }
 
@@ -2158,36 +2306,35 @@ __device__ static inline void gic_rma_thread(void *rptr, void *lptr, size_t byte
             gic_submit_requests<false>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
 
         if (!nbi) {
-            if (need_cst)
-                gic_quiet_with_cst<support_half_av_seg, nic_buf_on_gpumem>(qp,
-                                                                           is_qp_shared_among_ctas);
-            else
-                gic_quiet<support_half_av_seg>(qp);
+            // CST, if required, has already been enqueued. We simply need to
+            // do gic_quiet here.
+            gic_quiet<support_half_av_seg>(qp);
         }
     }
 
-    if (can_coalesce_warp) nvshmemi_warp_sync();
+out:
+    nvshmemi_threadgroup_sync<SCOPE>();
 }
 
 /**
  * RMA P base
  */
 #if __cplusplus >= 201103L
-static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 8);
+static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 64,
+              "static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 64) failed");
 #endif
 template <typename T, bool is_full_warp, bool can_combine_data, bool support_half_av_seg>
-__device__ static inline void nvshmemi_gic_rma_p_impl(void *rptr, const T value, int pe) {
-    static_assert((can_combine_data && is_full_warp) || (!can_combine_data));
-    static_assert((can_combine_data && support_half_av_seg) || (!can_combine_data));
+__device__ static inline void nvshmemi_gic_rma_p_impl(const uint64_t raddr, const __be32 rkey,
+                                                      const T value, int pe) {
+    static_assert((can_combine_data && is_full_warp) || (!can_combine_data),
+                  "can_combine_data check 1 failed.\n");
+    static_assert((can_combine_data && support_half_av_seg) || (!can_combine_data),
+                  "can_combine_data check 2 failed.\n");
 
     int my_tid;
     int tg_size;
 
     nvshmemi_gic_device_state_t *state = gic_get_state();
-
-    __be32 rkey;
-    uint64_t raddr;
-    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey);
 
     nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
     bool is_qp_shared_among_ctas;
@@ -2205,16 +2352,17 @@ __device__ static inline void nvshmemi_gic_rma_p_impl(void *rptr, const T value,
     int num_wqes;
 
     if (can_combine_data) {
-        if (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_RC)
+        if (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_RC) {
             num_wqes_per_cmd =
                 gic_get_num_wqes_in_inl_combine_warp<T, NVSHMEMI_GIC_DEVICE_QP_TYPE_RC>();
-        else if (sizeof(T) == 8)
+        } else if (sizeof(T) == 8) {
             num_wqes_per_cmd =
-                gic_get_num_wqes_in_inl_combine_warp<uint32_t, NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI>() *
-                2;
-        else
+                2 *
+                gic_get_num_wqes_in_inl_combine_warp<uint32_t, NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI>();
+        } else {
             num_wqes_per_cmd =
                 gic_get_num_wqes_in_inl_combine_warp<T, NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI>();
+        }
         num_wqes = num_wqes_per_cmd;
     } else {
         num_wqes_per_cmd =
@@ -2224,11 +2372,14 @@ __device__ static inline void nvshmemi_gic_rma_p_impl(void *rptr, const T value,
 
     uint64_t base_wqe_idx;
 
-    if (my_tid == 0)
+    if (my_tid == 0) {
         base_wqe_idx =
             gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
+    }
 
-    if (is_full_warp) base_wqe_idx = __shfl_sync(GIC_FULL_WARP, base_wqe_idx, 0);
+    if (is_full_warp) {
+        base_wqe_idx = __shfl_sync(GIC_FULL_WARP, base_wqe_idx, 0);
+    }
 
     uint64_t my_wqe_idx =
         can_combine_data ? base_wqe_idx : base_wqe_idx + (my_tid * num_wqes_per_cmd);
@@ -2237,7 +2388,9 @@ __device__ static inline void nvshmemi_gic_rma_p_impl(void *rptr, const T value,
 
     void *wqe_ptrs[8];
 #pragma unroll
-    for (int i = 0; i < 8; ++i) wqe_ptrs[i] = gic_get_wqe_ptr(qp, my_wqe_idx + i);
+    for (int i = 0; i < 8; ++i) {
+        wqe_ptrs[i] = gic_get_wqe_ptr(qp, my_wqe_idx + i);
+    }
 
     if (can_combine_data && sizeof(T) == 8 && qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI)
         gic_write_rdma_write_inl_wqe_combine_warp_for_dci_8B<T>(
@@ -2267,31 +2420,41 @@ __device__ inline void nvshmemi_gic_rma_p(void *rptr, const T value, int pe) {
     bool can_combine_data = false;
     int pred_pe = 0;
     int pred_contiguous = 0;
+    int pred_rkey = 0;
     int my_tid;
 
     nvshmemi_gic_device_state_t *state = gic_get_state();
+
+    __be32 rkey;
+    uint64_t raddr;
+    size_t rchunk_size;
+    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey, &rchunk_size);
+
+    // With proper alignment (requirement of NVSHMEM), one element cannot span multiple chunks.
+    assert(rchunk_size >= sizeof(T));
 
     if (amask == GIC_FULL_WARP) {
         my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
         __match_all_sync(GIC_FULL_WARP, pe, &pred_pe);
         __match_all_sync(GIC_FULL_WARP, (uintptr_t)(rptr) - (my_tid * sizeof(T)), &pred_contiguous);
-        can_combine_data = (pred_pe && pred_contiguous && state->support_half_av_seg);
+        __match_all_sync(GIC_FULL_WARP, rkey, &pred_rkey);
+        can_combine_data = (pred_pe && pred_contiguous && pred_rkey && state->support_half_av_seg);
         if (can_combine_data)
-            nvshmemi_gic_rma_p_impl<T, true, true, true>(rptr, value, pe);
+            nvshmemi_gic_rma_p_impl<T, true, true, true>(raddr, rkey, value, pe);
         else if (state->support_half_av_seg)
-            nvshmemi_gic_rma_p_impl<T, true, false, true>(rptr, value, pe);
+            nvshmemi_gic_rma_p_impl<T, true, false, true>(raddr, rkey, value, pe);
         else
-            nvshmemi_gic_rma_p_impl<T, true, false, false>(rptr, value, pe);
+            nvshmemi_gic_rma_p_impl<T, true, false, false>(raddr, rkey, value, pe);
     } else if (state->support_half_av_seg)
-        nvshmemi_gic_rma_p_impl<T, false, false, true>(rptr, value, pe);
+        nvshmemi_gic_rma_p_impl<T, false, false, true>(raddr, rkey, value, pe);
     else
-        nvshmemi_gic_rma_p_impl<T, false, false, false>(rptr, value, pe);
+        nvshmemi_gic_rma_p_impl<T, false, false, false>(raddr, rkey, value, pe);
 }
 
 /**
  * RMA G base
  */
-template <typename T, bool support_half_av_seg, bool nic_buf_on_gpumem>
+template <typename T, bool support_half_av_seg>
 __device__ inline T nvshmemi_gic_rma_g_impl(void *rptr, int pe) {
     unsigned int amask = __activemask();
     int my_tid;
@@ -2304,13 +2467,14 @@ __device__ inline T nvshmemi_gic_rma_g_impl(void *rptr, int pe) {
 
     __be32 rkey;
     uint64_t raddr;
-    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey);
+    size_t rchunk_size;
+    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey, &rchunk_size);
 
     nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
     bool is_qp_shared_among_ctas;
     nvshmemi_gic_device_qp_t *qp = gic_get_qp(pe, &is_qp_shared_among_ctas);
 
-    bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp, pe);
+    bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp);
 
     if (can_coalesce_warp) {
         my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
@@ -2322,7 +2486,8 @@ __device__ inline T nvshmemi_gic_rma_g_impl(void *rptr, int pe) {
 
     int num_wqes_per_cmd =
         (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI) ? (support_half_av_seg ? 1 : 2) : 1;
-    int num_wqes = num_wqes_per_cmd * tg_size;
+
+    int num_wqes = num_wqes_per_cmd * tg_size + 1;
 
     if (my_tid == 0) {
         base_ibuf_idx = gic_reserve_ibuf_slots(qp, tg_size);
@@ -2353,15 +2518,20 @@ __device__ inline T nvshmemi_gic_rma_g_impl(void *rptr, int pe) {
     if (can_coalesce_warp) nvshmemi_warp_sync();
 
     if (my_tid == tg_size - 1) {
-        // GET index must be visible before the new cons index.
-        gic_update_get_head(qp, base_wqe_idx + num_wqes);
+        my_wqe_idx += num_wqes_per_cmd;
+        wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
+        // Enqueue CST op in the QP.  This command has NIC Fence, which
+        // waits for all prior READ/ATOMIC to finish before issuing this
+        // DUMP.
+        gic_write_dump_wqe(qp, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sizeof(char), my_wqe_idx,
+                           GIC_MLX5_FM_FENCE, wqe_ptrs, &ctrl_seg);
 
         if (is_qp_shared_among_ctas)
             gic_submit_requests<true>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
         else
             gic_submit_requests<false>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
 
-        gic_quiet_with_cst<support_half_av_seg, nic_buf_on_gpumem>(qp, is_qp_shared_among_ctas);
+        gic_quiet<support_half_av_seg>(qp);
     }
 
     if (can_coalesce_warp) nvshmemi_warp_sync();
@@ -2382,21 +2552,10 @@ __device__ inline T nvshmemi_gic_rma_g(void *rptr, int pe) {
     T ret;
     nvshmemi_gic_device_state_t *state = gic_get_state();
 
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
     if (state->support_half_av_seg)
-        ret = nvshmemi_gic_rma_g_impl<T, true, true>(rptr, pe);
+        ret = nvshmemi_gic_rma_g_impl<T, true>(rptr, pe);
     else
-        ret = nvshmemi_gic_rma_g_impl<T, false, true>(rptr, pe);
-#else
-    if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-        ret = nvshmemi_gic_rma_g_impl<T, true, true>(rptr, pe);
-    else if (state->support_half_av_seg && !state->nic_buf_on_gpumem)
-        ret = nvshmemi_gic_rma_g_impl<T, true, false>(rptr, pe);
-    else if (!state->support_half_av_seg && state->nic_buf_on_gpumem)
-        ret = nvshmemi_gic_rma_g_impl<T, false, true>(rptr, pe);
-    else
-        ret = nvshmemi_gic_rma_g_impl<T, false, false>(rptr, pe);
-#endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
+        ret = nvshmemi_gic_rma_g_impl<T, false>(rptr, pe);
     return ret;
 }
 
@@ -2406,39 +2565,19 @@ __device__ inline T nvshmemi_gic_rma_g(void *rptr, int pe) {
 template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
 __device__ inline void nvshmemi_gic_rma_nbi(void *rptr, void *lptr, size_t bytes, int pe) {
     nvshmemi_gic_device_state_t *state = gic_get_state();
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
     if (SCOPE == NVSHMEMI_THREADGROUP_THREAD) {
-        if (state->support_half_av_seg)
-            gic_rma_thread<channel_op, true, true, true>(rptr, lptr, bytes, pe);
-        else
-            gic_rma_thread<channel_op, true, false, true>(rptr, lptr, bytes, pe);
+        if (state->support_half_av_seg) {
+            gic_rma_thread<channel_op, true, true>((uint64_t)rptr, (uint64_t)lptr, bytes, pe);
+        } else {
+            gic_rma_thread<channel_op, true, false>((uint64_t)rptr, (uint64_t)lptr, bytes, pe);
+        }
     } else {
-        if (state->support_half_av_seg)
-            gic_rma<SCOPE, channel_op, true, true, true>(rptr, lptr, bytes, pe);
-        else
-            gic_rma<SCOPE, channel_op, true, false, true>(rptr, lptr, bytes, pe);
+        if (state->support_half_av_seg) {
+            gic_rma<SCOPE, channel_op, true, true>((uint64_t)rptr, (uint64_t)lptr, bytes, pe);
+        } else {
+            gic_rma<SCOPE, channel_op, true, false>((uint64_t)rptr, (uint64_t)lptr, bytes, pe);
+        }
     }
-#else
-    if (SCOPE == NVSHMEMI_THREADGROUP_THREAD) {
-        if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma_thread<channel_op, true, true, true>(rptr, lptr, bytes, pe);
-        else if (state->support_half_av_seg && !state->nic_buf_on_gpumem)
-            gic_rma_thread<channel_op, true, true, false>(rptr, lptr, bytes, pe);
-        else if (!state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma_thread<channel_op, true, false, true>(rptr, lptr, bytes, pe);
-        else
-            gic_rma_thread<channel_op, true, false, false>(rptr, lptr, bytes, pe);
-    } else {
-        if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma<SCOPE, channel_op, true, true, true>(rptr, lptr, bytes, pe);
-        else if (state->support_half_av_seg && !state->nic_buf_on_gpumem)
-            gic_rma<SCOPE, channel_op, true, true, false>(rptr, lptr, bytes, pe);
-        else if (!state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma<SCOPE, channel_op, true, false, true>(rptr, lptr, bytes, pe);
-        else
-            gic_rma<SCOPE, channel_op, true, false, false>(rptr, lptr, bytes, pe);
-    }
-#endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
 }
 
 /**
@@ -2448,37 +2587,17 @@ template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
 __device__ inline void nvshmemi_gic_rma(void *rptr, void *lptr, size_t bytes, int pe) {
     nvshmemi_gic_device_state_t *state = gic_get_state();
     if (SCOPE == NVSHMEMI_THREADGROUP_THREAD) {
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
-        if (state->support_half_av_seg)
-            gic_rma_thread<channel_op, false, true, true>(rptr, lptr, bytes, pe);
-        else
-            gic_rma_thread<channel_op, false, false, true>(rptr, lptr, bytes, pe);
-#else
-        if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma_thread<channel_op, false, true, true>(rptr, lptr, bytes, pe);
-        else if (state->support_half_av_seg && !state->nic_buf_on_gpumem)
-            gic_rma_thread<channel_op, false, true, false>(rptr, lptr, bytes, pe);
-        else if (!state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma_thread<channel_op, false, false, true>(rptr, lptr, bytes, pe);
-        else
-            gic_rma_thread<channel_op, false, false, false>(rptr, lptr, bytes, pe);
-#endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
+        if (state->support_half_av_seg) {
+            gic_rma_thread<channel_op, false, true>((uint64_t)rptr, (uint64_t)lptr, bytes, pe);
+        } else {
+            gic_rma_thread<channel_op, false, false>((uint64_t)rptr, (uint64_t)lptr, bytes, pe);
+        }
     } else {
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
-        if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma<SCOPE, channel_op, false, true, true>(rptr, lptr, bytes, pe);
-        else
-            gic_rma<SCOPE, channel_op, false, false, true>(rptr, lptr, bytes, pe);
-#else
-        if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma<SCOPE, channel_op, false, true, true>(rptr, lptr, bytes, pe);
-        else if (state->support_half_av_seg && !state->nic_buf_on_gpumem)
-            gic_rma<SCOPE, channel_op, false, true, false>(rptr, lptr, bytes, pe);
-        else if (!state->support_half_av_seg && state->nic_buf_on_gpumem)
-            gic_rma<SCOPE, channel_op, false, false, true>(rptr, lptr, bytes, pe);
-        else
-            gic_rma<SCOPE, channel_op, false, false, false>(rptr, lptr, bytes, pe);
-#endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
+        if (state->support_half_av_seg) {
+            gic_rma<SCOPE, channel_op, false, true>((uint64_t)rptr, (uint64_t)lptr, bytes, pe);
+        } else {
+            gic_rma<SCOPE, channel_op, false, false>((uint64_t)rptr, (uint64_t)lptr, bytes, pe);
+        }
     }
 }
 
@@ -2494,13 +2613,14 @@ __device__ inline void nvshmemi_gic_amo_nonfetch_impl(void *rptr, const T value,
 
     __be32 rkey;
     uint64_t raddr;
-    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey);
+    size_t rchunk_size;
+    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey, &rchunk_size);
 
     nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
     bool is_qp_shared_among_ctas;
     nvshmemi_gic_device_qp_t *qp = gic_get_qp(pe, &is_qp_shared_among_ctas);
 
-    bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp, pe);
+    bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp);
 
     if (can_coalesce_warp) {
         my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
@@ -2559,7 +2679,7 @@ __device__ inline void nvshmemi_gic_amo_nonfetch(void *rptr, const T value, int 
 /**
  * AMO fetch base
  */
-template <typename T, bool support_half_av_seg, bool nic_buf_on_gpumem>
+template <typename T, bool support_half_av_seg>
 __device__ inline T nvshmemi_gic_amo_fetch_impl(void *rptr, const T value, const T compare, int pe,
                                                 nvshmemi_amo_t op) {
     unsigned int amask = __activemask();
@@ -2570,13 +2690,14 @@ __device__ inline T nvshmemi_gic_amo_fetch_impl(void *rptr, const T value, const
 
     __be32 rkey;
     uint64_t raddr;
-    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey);
+    size_t rchunk_size;
+    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey, &rchunk_size);
 
     nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
     bool is_qp_shared_among_ctas;
     nvshmemi_gic_device_qp_t *qp = gic_get_qp(pe, &is_qp_shared_among_ctas);
 
-    bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp, pe);
+    bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp);
 
     if (can_coalesce_warp) {
         my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
@@ -2587,7 +2708,7 @@ __device__ inline T nvshmemi_gic_amo_fetch_impl(void *rptr, const T value, const
     }
 
     int num_wqes_per_cmd = 2;
-    int num_wqes = num_wqes_per_cmd * tg_size;
+    int num_wqes = num_wqes_per_cmd * tg_size + 1;
 
     uint64_t base_wqe_idx;
     uint64_t base_ibuf_idx;
@@ -2621,15 +2742,20 @@ __device__ inline T nvshmemi_gic_amo_fetch_impl(void *rptr, const T value, const
     if (can_coalesce_warp) nvshmemi_warp_sync();
 
     if (my_tid == tg_size - 1) {
-        // GET index must be visible before the new cons index.
-        gic_update_get_head(qp, base_wqe_idx + num_wqes);
+        my_wqe_idx += num_wqes_per_cmd;
+        wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
+        // Enqueue CST op in the QP.  This command has NIC Fence, which
+        // waits for all prior READ/ATOMIC to finish before issuing this
+        // DUMP.
+        gic_write_dump_wqe(qp, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sizeof(char), my_wqe_idx,
+                           GIC_MLX5_FM_FENCE, wqe_ptrs, &ctrl_seg);
 
         if (is_qp_shared_among_ctas)
             gic_submit_requests<true>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
         else
             gic_submit_requests<false>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
 
-        gic_quiet_with_cst<support_half_av_seg, nic_buf_on_gpumem>(qp, is_qp_shared_among_ctas);
+        gic_quiet<support_half_av_seg>(qp);
     }
 
     if (can_coalesce_warp) nvshmemi_warp_sync();
@@ -2652,169 +2778,275 @@ __device__ inline T nvshmemi_gic_amo_fetch(void *rptr, const T value, const T co
     T ret;
     nvshmemi_gic_device_state_t *state = gic_get_state();
 
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
     if (state->support_half_av_seg)
-        ret = nvshmemi_gic_amo_fetch_impl<T, true, true>(rptr, value, compare, pe, op);
+        ret = nvshmemi_gic_amo_fetch_impl<T, true>(rptr, value, compare, pe, op);
     else
-        ret = nvshmemi_gic_amo_fetch_impl<T, false, true>(rptr, value, compare, pe, op);
-#else
-    if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-        ret = nvshmemi_gic_amo_fetch_impl<T, true, true>(rptr, value, compare, pe, op);
-    else if (state->support_half_av_seg && !state->nic_buf_on_gpumem)
-        ret = nvshmemi_gic_amo_fetch_impl<T, true, false>(rptr, value, compare, pe, op);
-    else if (!state->support_half_av_seg && state->nic_buf_on_gpumem)
-        ret = nvshmemi_gic_amo_fetch_impl<T, false, true>(rptr, value, compare, pe, op);
-    else
-        ret = nvshmemi_gic_amo_fetch_impl<T, false, false>(rptr, value, compare, pe, op);
-#endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
+        ret = nvshmemi_gic_amo_fetch_impl<T, false>(rptr, value, compare, pe, op);
     return ret;
 }
 
-/**
- * PUT SIGNAL base
- */
 #if __cplusplus >= 201103L
-static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 4);
-#endif
-template <threadgroup_t SCOPE, bool is_nbi, bool support_half_av_seg>
-__device__ static inline void nvshmemi_gic_put_signal_impl(void *rptr, void *lptr, size_t bytes,
-                                                           void *sig_rptr, uint64_t signal,
-                                                           nvshmemi_amo_t sig_op, int pe) {
-    int my_tid = nvshmemi_thread_id_in_threadgroup<SCOPE>();
-    nvshmemi_gic_device_state_t *state = gic_get_state();
-
-    __be32 lkey = gic_get_lkey((uint64_t)lptr);
-
-    __be32 rkey;
-    uint64_t raddr;
-    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey);
-
-    __be32 sig_rkey;
-    uint64_t sig_raddr;
-    gic_get_raddr_rkey((uint64_t)sig_rptr, pe, &sig_raddr, &sig_rkey);
-
-    nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
-    bool is_qp_shared_among_ctas;
-    nvshmemi_gic_device_qp_t *qp = gic_get_qp(pe, &is_qp_shared_among_ctas);
-
-    if (my_tid == 0) {
-        int num_rdma_write_wqes =
-            (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI) ? (support_half_av_seg ? 1 : 2) : 1;
-        int num_atomic_wqes = 2;
-        int num_wqes = num_rdma_write_wqes + num_atomic_wqes;
-
-        uint64_t base_wqe_idx =
-            gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
-
-        gic_ctrl_seg_t ctrl_seg;
-
-        void *wqe_ptrs[4];
-        wqe_ptrs[0] = gic_get_wqe_ptr(qp, base_wqe_idx);
-        wqe_ptrs[1] = gic_get_wqe_ptr(qp, base_wqe_idx + 1);
-        wqe_ptrs[2] = gic_get_wqe_ptr(qp, base_wqe_idx + 2);
-        wqe_ptrs[3] = gic_get_wqe_ptr(qp, base_wqe_idx + 3);
-
-        gic_write_rdma_write_wqe<support_half_av_seg>(qp, dct, (uint64_t)lptr, lkey, raddr, rkey,
-                                                      bytes, base_wqe_idx, wqe_ptrs, &ctrl_seg);
-
-        gic_write_atomic_wqe<support_half_av_seg>(
-            qp, dct, &signal, NULL, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sig_raddr, sig_rkey,
-            sizeof(signal), base_wqe_idx + num_rdma_write_wqes, sig_op,
-            &wqe_ptrs[num_rdma_write_wqes], &ctrl_seg);
-
-        if (is_qp_shared_among_ctas)
-            gic_submit_requests<true>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
-        else
-            gic_submit_requests<false>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
-
-        if (!is_nbi) gic_quiet<support_half_av_seg>(qp);
-    }
-
-    nvshmemi_threadgroup_sync<SCOPE>();
-}
-
-#if __cplusplus >= 201103L
-static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 4);
+static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 128,
+              "static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 128) failed");
 #endif
 template <bool is_nbi, bool support_half_av_seg>
 __device__ static inline void nvshmemi_gic_put_signal_thread_impl(void *rptr, void *lptr,
                                                                   size_t bytes, void *sig_rptr,
                                                                   uint64_t signal,
                                                                   nvshmemi_amo_t sig_op, int pe) {
-    unsigned int amask = __activemask();
-
     int my_tid;
     int tg_size;
 
     nvshmemi_gic_device_state_t *state = gic_get_state();
 
-    __be32 lkey = gic_get_lkey((uint64_t)lptr);
+    nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
+    bool is_qp_shared_among_ctas;
+    nvshmemi_gic_device_qp_t *qp = gic_get_qp(pe, &is_qp_shared_among_ctas);
+
+    gic_ctrl_seg_t ctrl_seg;
+
+    __be32 lkey;
+    size_t lchunk_size;
+    gic_get_lkey((uint64_t)lptr, &lkey, &lchunk_size);
 
     __be32 rkey;
     uint64_t raddr;
-    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey);
+    size_t rchunk_size;
+    gic_get_raddr_rkey((uint64_t)rptr, pe, &raddr, &rkey, &rchunk_size);
 
     __be32 sig_rkey;
     uint64_t sig_raddr;
-    gic_get_raddr_rkey((uint64_t)sig_rptr, pe, &sig_raddr, &sig_rkey);
+    size_t sig_rchunk_size;
+    gic_get_raddr_rkey((uint64_t)sig_rptr, pe, &sig_raddr, &sig_rkey, &sig_rchunk_size);
+
+    size_t transfer_size = gic_cal_transfer_size(bytes, lchunk_size, rchunk_size);
+
+    if (transfer_size == bytes) {
+        unsigned int amask = __activemask();
+
+        bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp);
+
+        if (can_coalesce_warp) {
+            my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
+            tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_WARP>();
+        } else {
+            my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_THREAD>();
+            tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_THREAD>();
+        }
+
+        int num_rdma_write_wqes_per_cmd =
+            (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI) ? (support_half_av_seg ? 1 : 2) : 1;
+
+        int num_atomic_wqes_per_cmd = 2;
+        int num_wqes_per_cmd = num_rdma_write_wqes_per_cmd + num_atomic_wqes_per_cmd;
+        int num_wqes = num_wqes_per_cmd * tg_size;
+
+        uint64_t base_wqe_idx;
+
+        if (my_tid == 0) {
+            base_wqe_idx =
+                gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
+        }
+
+        if (can_coalesce_warp) {
+            base_wqe_idx = __shfl_sync(amask, base_wqe_idx, 0);
+        }
+
+        uint64_t my_wqe_idx = base_wqe_idx + (my_tid * num_wqes_per_cmd);
+
+        void *wqe_ptrs[4];
+        wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
+        wqe_ptrs[1] = gic_get_wqe_ptr(qp, my_wqe_idx + 1);
+        wqe_ptrs[2] = gic_get_wqe_ptr(qp, my_wqe_idx + 2);
+        wqe_ptrs[3] = gic_get_wqe_ptr(qp, my_wqe_idx + 3);
+
+        gic_write_rdma_write_wqe<support_half_av_seg>(qp, dct, (uint64_t)lptr, lkey, raddr, rkey,
+                                                      bytes, my_wqe_idx, wqe_ptrs, &ctrl_seg);
+
+        gic_write_atomic_wqe<support_half_av_seg>(
+            qp, dct, &signal, NULL, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sig_raddr, sig_rkey,
+            sizeof(signal), my_wqe_idx + num_rdma_write_wqes_per_cmd, sig_op,
+            &wqe_ptrs[num_rdma_write_wqes_per_cmd], &ctrl_seg);
+
+        if (can_coalesce_warp) {
+            nvshmemi_warp_sync();
+        }
+
+        if (my_tid == tg_size - 1) {
+            if (is_qp_shared_among_ctas)
+                gic_submit_requests<true>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
+            else
+                gic_submit_requests<false>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
+
+            if (!is_nbi) {
+                gic_quiet<support_half_av_seg>(qp);
+            }
+        }
+
+        if (can_coalesce_warp) {
+            nvshmemi_warp_sync();
+        }
+    } else {
+        gic_rma_thread<NVSHMEMI_OP_PUT, true, support_half_av_seg>((uintptr_t)rptr, (uintptr_t)lptr,
+                                                                   bytes, pe);
+
+        uint64_t my_wqe_idx =
+            gic_reserve_wqe_slots<support_half_av_seg>(qp, 2, is_qp_shared_among_ctas);
+
+        void *wqe_ptrs[2];
+        wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
+        wqe_ptrs[1] = gic_get_wqe_ptr(qp, my_wqe_idx + 1);
+
+        gic_write_atomic_wqe<support_half_av_seg>(
+            qp, dct, &signal, NULL, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sig_raddr, sig_rkey,
+            sizeof(signal), my_wqe_idx, sig_op, wqe_ptrs, &ctrl_seg);
+
+        if (is_qp_shared_among_ctas)
+            gic_submit_requests<true>(qp, my_wqe_idx, 2, &ctrl_seg);
+        else
+            gic_submit_requests<false>(qp, my_wqe_idx, 2, &ctrl_seg);
+
+        if (!is_nbi) {
+            gic_quiet<support_half_av_seg>(qp);
+        }
+    }
+}
+
+/**
+ * PUT SIGNAL base
+ */
+#if __cplusplus >= 201103L
+static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 64,
+              "static_assert(NVSHMEMI_GIC_MIN_QP_DEPTH >= 64) failed");
+#endif
+template <threadgroup_t SCOPE, bool is_nbi, bool support_half_av_seg>
+__device__ static inline void nvshmemi_gic_put_signal_impl(void *req_rptr, void *req_lptr,
+                                                           size_t bytes, void *sig_rptr,
+                                                           uint64_t signal, nvshmemi_amo_t sig_op,
+                                                           int pe) {
+    assert(SCOPE == NVSHMEMI_THREADGROUP_WARP || SCOPE == NVSHMEMI_THREADGROUP_BLOCK);
+
+    // Use only wrap 0
+    int my_tid = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    int tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_WARP>();
+
+    nvshmemi_gic_device_state_t *state = gic_get_state();
 
     nvshmemi_gic_device_dct_t *dct = gic_get_dct(pe);
     bool is_qp_shared_among_ctas;
     nvshmemi_gic_device_qp_t *qp = gic_get_qp(pe, &is_qp_shared_among_ctas);
 
-    bool can_coalesce_warp = gic_can_coalesce_warp(amask, qp, pe);
-
-    if (can_coalesce_warp) {
-        my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
-        tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_WARP>();
-    } else {
-        my_tid = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_THREAD>();
-        tg_size = nvshmemi_threadgroup_size<NVSHMEMI_THREADGROUP_THREAD>();
-    }
-
-    int num_rdma_write_wqes_per_cmd =
+    int num_wqes_per_cmd =
         (qp->qp_type == NVSHMEMI_GIC_DEVICE_QP_TYPE_DCI) ? (support_half_av_seg ? 1 : 2) : 1;
-    int num_atomic_wqes_per_cmd = 2;
-    int num_wqes_per_cmd = num_rdma_write_wqes_per_cmd + num_atomic_wqes_per_cmd;
-    int num_wqes = num_wqes_per_cmd * tg_size;
+
+    int num_wqes;
 
     uint64_t base_wqe_idx;
-
-    if (my_tid == 0)
-        base_wqe_idx =
-            gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
-
-    if (can_coalesce_warp) base_wqe_idx = __shfl_sync(amask, base_wqe_idx, 0);
-
-    uint64_t my_wqe_idx = base_wqe_idx + (my_tid * num_wqes_per_cmd);
+    uint64_t my_wqe_idx;
 
     gic_ctrl_seg_t ctrl_seg;
 
-    void *wqe_ptrs[4];
+    void *wqe_ptrs[2];
+
+    size_t remaining_size = bytes;
+
+    size_t transfer_size;
+    size_t my_transfer_size = 0;
+
+    uint64_t rptr = (uint64_t)req_rptr;
+    uint64_t lptr = (uint64_t)req_lptr;
+
+    __be32 lkey;
+    __be32 my_lkey;
+    uint64_t my_laddr;
+    size_t lchunk_size;
+
+    __be32 rkey;
+    __be32 my_rkey;
+    uint64_t raddr;
+    uint64_t my_raddr;
+    size_t rchunk_size;
+
+    int chunk_idx = 0;
+
+    // Not warp 0, wait at the exit.
+    if (my_tid >= tg_size) {
+        goto out;
+    }
+
+    // Calculate how many chunks we need to send.
+    while (remaining_size > 0) {
+        gic_get_lkey(lptr, &lkey, &lchunk_size);
+        gic_get_raddr_rkey(rptr, pe, &raddr, &rkey, &rchunk_size);
+        transfer_size = gic_cal_transfer_size(remaining_size, lchunk_size, rchunk_size);
+        if (my_tid == chunk_idx) {
+            my_lkey = lkey;
+            my_laddr = lptr;
+            my_rkey = rkey;
+            my_raddr = raddr;
+            my_transfer_size = transfer_size;
+        }
+
+        remaining_size -= transfer_size;
+        rptr += transfer_size;
+        lptr += transfer_size;
+
+        ++chunk_idx;
+    }
+
+    // Too many chunks. Use nvshmemi_gic_put_signal_thread_impl to handle it instead.
+    // Note that we need one thread to handle amo.
+    if (unlikely(chunk_idx > tg_size - 1)) {
+        if (my_tid == 0) {
+            nvshmemi_gic_put_signal_thread_impl<is_nbi, support_half_av_seg>(
+                req_rptr, req_lptr, bytes, sig_rptr, signal, sig_op, pe);
+        }
+        goto out;
+    }
+
+    num_wqes = num_wqes_per_cmd * chunk_idx + 2;
+
+    if (my_tid == 0) {
+        base_wqe_idx =
+            gic_reserve_wqe_slots<support_half_av_seg>(qp, num_wqes, is_qp_shared_among_ctas);
+    }
+
+    base_wqe_idx = __shfl_sync(GIC_FULL_WARP, base_wqe_idx, 0);
+    my_wqe_idx = base_wqe_idx + (my_tid * num_wqes_per_cmd);
+
     wqe_ptrs[0] = gic_get_wqe_ptr(qp, my_wqe_idx);
     wqe_ptrs[1] = gic_get_wqe_ptr(qp, my_wqe_idx + 1);
-    wqe_ptrs[2] = gic_get_wqe_ptr(qp, my_wqe_idx + 2);
-    wqe_ptrs[3] = gic_get_wqe_ptr(qp, my_wqe_idx + 3);
 
-    gic_write_rdma_write_wqe<support_half_av_seg>(qp, dct, (uint64_t)lptr, lkey, raddr, rkey, bytes,
-                                                  my_wqe_idx, wqe_ptrs, &ctrl_seg);
+    if (my_tid < chunk_idx) {
+        gic_write_rdma_write_wqe<support_half_av_seg>(qp, dct, my_laddr, my_lkey, my_raddr, my_rkey,
+                                                      my_transfer_size, my_wqe_idx, wqe_ptrs,
+                                                      &ctrl_seg);
+    } else if (my_tid == chunk_idx) {
+        __be32 sig_rkey;
+        uint64_t sig_raddr;
+        size_t sig_rchunk_size;
+        gic_get_raddr_rkey((uint64_t)sig_rptr, pe, &sig_raddr, &sig_rkey, &sig_rchunk_size);
 
-    gic_write_atomic_wqe<support_half_av_seg>(
-        qp, dct, &signal, NULL, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sig_raddr, sig_rkey,
-        sizeof(signal), my_wqe_idx + 1, sig_op, &wqe_ptrs[num_rdma_write_wqes_per_cmd], &ctrl_seg);
+        gic_write_atomic_wqe<support_half_av_seg>(
+            qp, dct, &signal, NULL, (uint64_t)qp->ibuf.buf, qp->ibuf.lkey, sig_raddr, sig_rkey,
+            sizeof(signal), my_wqe_idx, sig_op, wqe_ptrs, &ctrl_seg);
+    }
 
-    if (can_coalesce_warp) nvshmemi_warp_sync();
+    nvshmemi_warp_sync();
 
-    if (my_tid == tg_size - 1) {
+    if (my_tid == chunk_idx) {
         if (is_qp_shared_among_ctas)
             gic_submit_requests<true>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
         else
             gic_submit_requests<false>(qp, base_wqe_idx, num_wqes, &ctrl_seg);
 
-        if (!is_nbi) gic_quiet<support_half_av_seg>(qp);
+        if (!is_nbi) {
+            gic_quiet<support_half_av_seg>(qp);
+        }
     }
 
-    if (can_coalesce_warp) nvshmemi_warp_sync();
+out:
+    nvshmemi_threadgroup_sync<SCOPE>();
 }
 
 template <threadgroup_t SCOPE>
@@ -2865,35 +3097,17 @@ __device__ inline void nvshmemi_gic_quiet() {
     if (index_in_scope < scope_size) {
         for (uint32_t i = index_in_scope; i < ndcis; i += scope_size) {
             qp = &state->globalmem.dcis[i];
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
             if (state->support_half_av_seg)
-                gic_quiet_with_cst<true, true>(qp, true);
+                gic_quiet_with_cst<true>(qp, true);
             else
-                gic_quiet_with_cst<false, true>(qp, true);
-#else
-            if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-                gic_quiet_with_cst<true, true>(qp, true);
-            else if (state->support_half_av_seg && !state->nic_buf_on_gpumem)
-                gic_quiet_with_cst<true, false>(qp, true);
-            else if (!state->support_half_av_seg && state->nic_buf_on_gpumem)
-                gic_quiet_with_cst<false, true>(qp, true);
-            else
-                gic_quiet_with_cst<false, false>(qp, true);
-#endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
+                gic_quiet_with_cst<false>(qp, true);
         }
 
         for (uint32_t i = index_in_scope; i < nrcs; i += scope_size) {
             if (i / state->num_rc_per_pe == nvshmemi_device_state_d.mype) continue;
 
             qp = &state->globalmem.rcs[i];
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
-            gic_quiet_with_cst<true, true>(qp, true);
-#else
-            if (state->nic_buf_on_gpumem)
-                gic_quiet_with_cst<true, true>(qp, true);
-            else
-                gic_quiet_with_cst<true, false>(qp, true);
-#endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
+            gic_quiet_with_cst<true>(qp, true);
         }
     }
 }
@@ -2949,21 +3163,10 @@ __device__ inline void nvshmemi_gic_enforce_consistency_at_target(bool use_memba
     nvshmemi_gic_device_qp_t *dci =
         gic_get_dci(nvshmemi_device_state_d.mype, &is_dci_shared_among_ctas);
 
-#ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
     if (state->support_half_av_seg)
-        gic_cst<true, true>(dci, is_dci_shared_among_ctas);
+        gic_cst<true>(dci, is_dci_shared_among_ctas);
     else
-        gic_cst<false, true>(dci, is_dci_shared_among_ctas);
-#else
-    if (state->support_half_av_seg && state->nic_buf_on_gpumem)
-        gic_cst<true, true>(dci, is_dci_shared_among_ctas);
-    else if (state->support_half_av_seg && !state->nic_buf_on_gpumem)
-        gic_cst<true, false>(dci, is_dci_shared_among_ctas);
-    else if (!state->support_half_av_seg && state->nic_buf_on_gpumem)
-        gic_cst<false, true>(dci, is_dci_shared_among_ctas);
-    else
-        gic_cst<false, false>(dci, is_dci_shared_among_ctas);
-#endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
+        gic_cst<false>(dci, is_dci_shared_among_ctas);
 
     // TODO: This fence is from the design of Proxy.
     // Review if we still need it when we fully move to GIC -- especially for on-stream API.

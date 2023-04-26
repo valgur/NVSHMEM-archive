@@ -1,4 +1,30 @@
 ===============================================================================
+				Changes in 2.9.0
+===============================================================================
+
+# Improvements to CMake build system. CMake is now the default build system and
+the Makefile build system is deprecated.
+# Added loadable network transport modules.
+# NVSHMEM device code can now be inlined to improve performance by enabling
+NVSHMEM_ENABLE_ALL_DEVICE_INLINING when building the NVSHMEM library.
+# Improvements to collective communication performance.
+# Updated libfabric transport to fragment messages larger than the maximum
+length supported by the provider.
+# Improvements to IBGDA transport, including large message support, user buffer
+registration, blocking g/get/amo performance, CUDA module support, and several
+bugfixes.
+# Introduced ABI compatibility for bootstrap modules. This release is
+backawards compatible with the ABI introduced in NVSHMEM 2.8.0.
+# Added NVSHMEM_BOOTSTRAP_*_PLUGIN environment variables that can be used to
+override the default filename used when opening each bootstrap plugin.
+# Improved error handling for GDRCopy.
+# Added a check to detect when the same number of PEs is not run on all nodes.
+# Added a check to detect availability of nvidia_peermem kernel module.
+# Reduced internal stream synchronizations to fix a compatibility bug with CUDA
+graph capture.
+# Fixed a data consistency issue with CUDA graph capture support.
+
+===============================================================================
 				Changes in 2.8.0
 ===============================================================================
 

@@ -6,7 +6,15 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include "rdxn_device.cuh"
+#include <string>
+#include <typeinfo>
+
+#include "nvshmem.h"
+#include "nvshmemx.h"
+#include "gpu_coll.h"
+#include "device/coll/reduce.cuh"
+
+using namespace std;
 
 template <typename TYPE, rdxn_ops_t OP>
 __global__ void rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
@@ -21,7 +29,15 @@ __global__ void rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYP
 template <typename TYPE, rdxn_ops_t OP>
 void nvshmemi_call_rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
                                          size_t nreduce, cudaStream_t stream) {
-    size_t num_threads_per_block = (MAX_THREADS_PER_CTA > nreduce) ? nreduce : MAX_THREADS_PER_CTA;
+    int tmp;
+    pair<string, rdxn_ops_t> map_pair(string(typeid(TYPE).name()), OP);
+    if (nvshmemi_reduce_maxblocksize.find(map_pair) == nvshmemi_reduce_maxblocksize.end()) {
+        CUDA_RUNTIME_CHECK(cudaOccupancyMaxPotentialBlockSize(
+            &tmp, (int *)&nvshmemi_reduce_maxblocksize[map_pair], rdxn_on_stream_kernel<TYPE, OP>));
+    }
+    size_t num_threads_per_block = (nvshmemi_reduce_maxblocksize[map_pair] > nreduce)
+                                       ? nreduce
+                                       : nvshmemi_reduce_maxblocksize[map_pair];
     int num_blocks = 1;
     rdxn_on_stream_kernel<TYPE, OP>
         <<<num_blocks, num_threads_per_block, 0, stream>>>(team, dest, source, nreduce);

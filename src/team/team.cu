@@ -90,7 +90,7 @@ int nvshmem_team_split_2d(nvshmem_team_t parent_team, int xrange,
 void nvshmem_team_destroy(nvshmem_team_t team) {
     NVSHMEMI_CHECK_INIT_STATUS();
     if (team == NVSHMEM_TEAM_WORLD || team == NVSHMEM_TEAM_SHARED || team == NVSHMEMX_TEAM_NODE)
-        ERROR_EXIT("Cannot destroy a pre-defined team");
+        NVSHMEMI_ERROR_EXIT("Cannot destroy a pre-defined team");
     if (team == NVSHMEM_TEAM_INVALID) return;
 
     nvshmemi_team_destroy(nvshmemi_team_pool[team]);

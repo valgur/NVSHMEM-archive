@@ -4,15 +4,19 @@
  * See COPYRIGHT for license information
  */
 
-#ifndef RDXN_DEVICE_CUH
-#define RDXN_DEVICE_CUH
+#ifndef REDUCE_DEVICE_CUH
+#define REDUCE_DEVICE_CUH
 
-#include "nvshmem.h"
-#include "nvshmemx.h"
-#include "gpu_coll.h"
+#include "device/pt-to-pt/proxy_device.cuh"
+#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#include "device/pt-to-pt/transfer_device.cuh"
+#else
+#include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
+#endif
+#include "utils.cuh"
 #include "nvshmemi_team.h"
-#include "nvshmemi_coll.h"
-#include "common.cuh"
+#include "fcollect.cuh"
+#include "broadcast.cuh"
 
 #ifdef __CUDA_ARCH__
 
@@ -924,6 +928,164 @@ __device__ inline void nvshmemi_reduce_threadgroup(nvshmem_team_t team, TYPE *de
     nvshmemi_gpu_rdxn_threadgroup<TYPE, OP, SCOPE>(team, dest, source, nreduce);
 }
 
+#define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE, OP) \
+    static __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
+        nvshmem##SC_PREFIX##_##TYPENAME##_##OP##_reduce##SC_SUFFIX(                                \
+            nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce) {                 \
+        nvshmemi_reduce_threadgroup<TYPE, RDXN_OPS_##OP, nvshmemi_threadgroup_##SC>(               \
+            team, dest, source, nreduce);                                                          \
+        return 0;                                                                                  \
+    }
+
+#define DEFN_NVSHMEM_REDUCE_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX)                                  \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE2(                                            \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, and)               \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE2(                                            \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, or)                \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE2(                                            \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, xor)               \
+                                                                                                   \
+    NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE2(                                           \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, max)               \
+    NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE2(                                           \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, min)               \
+                                                                                                   \
+    NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, \
+                                                     SC, SC_SUFFIX, SC_PREFIX, sum)                \
+    NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP, \
+                                                     SC, SC_SUFFIX, SC_PREFIX, prod)
+
+DEFN_NVSHMEM_REDUCE_THREADGROUP(thread, , );
+DEFN_NVSHMEM_REDUCE_THREADGROUP(warp, _warp, x);
+DEFN_NVSHMEM_REDUCE_THREADGROUP(block, _block, x);
+#undef DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP
+#undef DEFN_NVSHMEM_REDUCE_THREADGROUP
+
+static __device__ inline void nvshmemi_double2_maxloc_reduce_alltoall_block(nvshmem_team_t team,
+                                                                            double2 *dest,
+                                                                            const double2 *source) {
+#define SCOPE NVSHMEMI_THREADGROUP_BLOCK
+    nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
+    const int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    const int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+    if (!myIdx) { /* Only one thread should increment */
+        teami->ll_flag++;
+        teami->rdxn_count += 1;
+    }
+    nvshmemi_threadgroup_sync<SCOPE>();
+    const uint32_t ll_flag = teami->ll_flag;
+    char *pWrk = (char *)nvshmemi_team_get_psync(teami, REDUCE);
+
+    nvshmemi_packLL<double2, SCOPE>((uint64_t *)(pWrk), source, 1, ll_flag);
+    nvshmemi_threadgroup_sync<SCOPE>();
+    const int my_pe = nvshmem_team_my_pe(team);
+    const int n_pes = nvshmem_team_n_pes(team);
+    for (int i = myIdx + 1; i < n_pes; i += groupSize) {
+        int peer = (my_pe + i) % n_pes;
+        size_t offset = 2 * sizeof(double2) * (my_pe + 2);
+        nvshmemi_put_nbi_threadgroup<uint64_t, NVSHMEMI_THREADGROUP_THREAD>(
+            (uint64_t *)(pWrk + offset), (uint64_t *)(pWrk), sizeof(double2) / sizeof(uint32_t),
+            nvshmem_team_translate_pe(team, peer, NVSHMEM_TEAM_WORLD));
+    }
+
+    if (!myIdx) {
+        dest[0] = source[0];
+        for (int i = 1; i < n_pes; i++) {
+            int peer = (my_pe + i) % n_pes;
+            size_t offset = 2 * sizeof(double2) * (peer + 2);
+            nvshmemi_recvLL<double2, NVSHMEMI_THREADGROUP_THREAD>(
+                (double2 *)(pWrk + 2 * sizeof(double2)), (uint64_t *)(pWrk + offset), 1, ll_flag);
+            dest[0] = perform_gpu_rdxn<double2, RDXN_OPS_MAXLOC>(
+                dest[0], *((double2 *)(pWrk + 2 * sizeof(double2))));
+        }
+    }
+    nvshmemi_threadgroup_sync<SCOPE>();
+#undef SCOPE
+}
+
+static __device__ inline void nvshmemi_double2_maxloc_rooted_reduce_flat_block(
+    nvshmem_team_t team, double2 *dest, const double2 *source) {
+#define SCOPE NVSHMEMI_THREADGROUP_BLOCK
+    nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
+    const int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    const int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+    if (!myIdx) { /* Only one thread should increment */
+        teami->ll_flag++;
+        teami->rdxn_count += 1;
+    }
+    nvshmemi_threadgroup_sync<SCOPE>();
+    const uint32_t ll_flag = teami->ll_flag;
+    char *pWrk = (char *)nvshmemi_team_get_psync(teami, REDUCE);
+
+    if (nvshmem_team_my_pe(team) != 0) {
+        nvshmemi_packLL<double2, SCOPE>((uint64_t *)(pWrk), source, 1, ll_flag);
+        size_t offset = 2 * sizeof(double2) * nvshmem_team_my_pe(team);
+        nvshmemi_put_nbi_threadgroup<uint64_t, SCOPE>(
+            (uint64_t *)(pWrk + offset), (uint64_t *)(pWrk), sizeof(double2) / sizeof(uint32_t),
+            nvshmem_team_translate_pe(team, 0, NVSHMEM_TEAM_WORLD));
+    } else {
+        dest[0] = source[0];
+        if (!myIdx) {
+            for (int i = 1; i < teami->size; i += 1) {
+                size_t offset = 2 * sizeof(double2) * i;
+                nvshmemi_recvLL<double2, NVSHMEMI_THREADGROUP_THREAD>(
+                    (double2 *)pWrk, (uint64_t *)(pWrk + offset), 1, ll_flag);
+                dest[0] = perform_gpu_rdxn<double2, RDXN_OPS_MAXLOC>(dest[0], *(double2 *)pWrk);
+            }
+        }
+        nvshmemi_threadgroup_sync<SCOPE>();
+    }
+#undef SCOPE
+}
+
+/* double2 MAXLOC implementation */
+static __device__ inline int nvshmemx_double2_maxloc_reduce_block(nvshmem_team_t team,
+                                                                  double2 *dest,
+                                                                  const double2 *source,
+                                                                  size_t nreduce) {
+#ifdef NVSHMEM_DEBUG
+    assert(nreduce == 1);
+#endif
+#define SCOPE NVSHMEMI_THREADGROUP_BLOCK
+    nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
+    switch (nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_algo) {
+        case 1: /*  Alltoall algorithm */
+            nvshmemi_double2_maxloc_reduce_alltoall_block(team, dest, source);
+            break;
+        case 2: /* Topo-unaware: Flat reduce + Flat bcast */
+            nvshmemi_double2_maxloc_rooted_reduce_flat_block(team, dest, source);
+            nvshmemi_bcast_internode_tree_threadgroup<double2, SCOPE>(team, dest, dest, 1, 0,
+                                                                      nvshmem_team_n_pes(team) - 1);
+            break;
+        case 3: /* Topo aware two-level flat reduce + Topo aware two-level tree bcast */
+            if (teami->is_team_node || teami->is_team_same_mype_node) {
+                nvshmemi_double2_maxloc_rooted_reduce_flat_block(team, dest, source);
+            } else {
+                nvshmemi_double2_maxloc_rooted_reduce_flat_block(teami->team_node, dest, source);
+                if (nvshmem_team_my_pe(teami->team_node) == 0) {
+                    nvshmemi_double2_maxloc_rooted_reduce_flat_block(teami->team_same_mype_node,
+                                                                     dest, dest);
+                }
+            }
+            nvshmemi_bcast_hierarchical_threadgroup<double2, SCOPE>(team, dest, dest, 1, 0);
+            break;
+        case 4: /* Topo aware two-level flat reduce + Topo aware two-level tree bcast */
+            if (teami->is_team_node || teami->is_team_same_mype_node) {
+                nvshmemi_double2_maxloc_reduce_alltoall_block(team, dest, source);
+            } else {
+                nvshmemi_double2_maxloc_reduce_alltoall_block(teami->team_node, dest, source);
+                nvshmemi_double2_maxloc_reduce_alltoall_block(teami->team_same_mype_node, dest,
+                                                              dest);
+            }
+            break;
+        default:
+            assert(0);
+            break;
+    }
+#undef SCOPE
+    return 0;
+}
+
 #endif /* __CUDA_ARCH__ */
 
 /* This is a special kernel that is launched only with
@@ -938,4 +1100,4 @@ __global__ void nvshmemi_reduce_kernel(int start, int stride, int size, TYPE *ds
 #endif
 }
 
-#endif /* RDXN_DEVICE_CUH */
+#endif /* REDUCE_DEVICE_CUH */

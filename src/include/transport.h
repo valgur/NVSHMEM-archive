@@ -9,7 +9,23 @@
 
 #include <stdint.h>
 #include "cuda.h"
-#include "common.h"
+#include <cuda_runtime.h>
+
+/* This header, along with the six below, comprise
+ * the ABI for transport modules.
+ */
+#include "nvshmem_build_options.h"
+#include "cudawrap.h"
+#include "env_defs.h"
+#include "nvshmem_bootstrap_defines.h"
+#include "nvshmem_version.h"
+#include "nvshmemi_transport_defines.h"
+#include "nvshmemx_error.h"
+
+/* patch_version + minor_version * 100 + major_version * 10000 */
+#define NVSHMEM_TRANSPORT_INTERFACE_VERSION           \
+    (NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION * 10000 + \
+     NVSHMEM_TRANSPORT_PLUGIN_MINOR_VERSION * 100 + NVSHMEM_TRANSPORT_PLUGIN_PATCH_VERSION)
 
 #define TRANSPORT_STRING_MAX_LENGTH 8
 #define IB_TRANSPORT_STRING "ibrc"
@@ -21,33 +37,7 @@
 #define GIC_TRANSPORT_STRING "gic"
 #endif
 
-#define NVSHMEM_TRANSPORT_DEVICE_SCORE_MAX 7
-#define NVSHMEM_PCIE_DBF_BUFFER_LEN 50
-
-enum { NVSHMEM_TRANSPORT_WAIT_EQ = 0 };
-
-enum {
-    NVSHMEM_TRANSPORT_ID_P2P = 0,
-    NVSHMEM_TRANSPORT_ID_IBRC,
-    NVSHMEM_TRANSPORT_ID_UCX,
-    NVSHMEM_TRANSPORT_ID_IBDEVX,
-    NVSHMEM_TRANSPORT_ID_FABRIC,
-#ifdef NVSHMEM_IBGDA_SUPPORT
-    NVSHMEM_TRANSPORT_ID_GIC,
-#endif
-    NVSHMEM_TRANSPORT_COUNT,
-};
-
-enum {
-    NVSHMEM_TRANSPORT_MASK_P2P = 1 << NVSHMEM_TRANSPORT_ID_P2P,
-    NVSHMEM_TRANSPORT_MASK_IBRC = 1 << NVSHMEM_TRANSPORT_ID_IBRC,
-    NVSHMEM_TRANSPORT_MASK_UCX = 1 << NVSHMEM_TRANSPORT_ID_UCX,
-    NVSHMEM_TRANSPORT_MASK_IBDEVX = 1 << NVSHMEM_TRANSPORT_ID_IBDEVX,
-    NVSHMEM_TRANSPORT_MASK_FABRIC = 1 << NVSHMEM_TRANSPORT_ID_FABRIC,
-#ifdef NVSHMEM_IBGDA_SUPPORT
-    NVSHMEM_TRANSPORT_MASK_GIC = 1 << NVSHMEM_TRANSPORT_ID_GIC,
-#endif
-};
+#define NVSHMEM_TRANSPORT_COUNT 6
 
 enum {
     NVSHMEM_TRANSPORT_CAP_MAP = 1,
@@ -69,25 +59,10 @@ enum {
     NVSHMEM_TRANSPORT_ATTR_CONNECTED = 1 << 1,
 };
 
-enum {
-    NVSHMEM_TRANSPORT_DMA_FLUSH_ACTIVE = 0,
-    NVSHMEM_TRANSPORT_DMA_FLUSH_COMPLETE,
-    NVSHMEM_TRANSPORT_DMA_FLUSH_ERROR,
-};
-
-enum {
-    NVSHMEM_TRANSPORT_MEMTYPE_HOST = 0,
-    NVSHMEM_TRANSPORT_MEMTYPE_DEVICE,
-    NVSHMEM_TRANSPORT_MEMTYPE_IOMEM
-};
-
-typedef struct pcie_identifier {
-    int dev_id;
-    int bus_id;
-    int domain_id;
-} pcie_id_t;
-
-int nvshmemi_get_pcie_attrs(pcie_id_t *pcie_id, CUdevice cudev);
+typedef enum {
+    NVSHMEM_TRANSPORT_LIB_CODE_NONE = 0,
+    NVSHMEM_TRANSPORT_LIB_CODE_IBGDA = 1,
+} nvshmem_transport_inline_lib_code_type_t;
 
 typedef struct nvshmem_transport_pe_info {
     pcie_id_t pcie_id;
@@ -96,43 +71,50 @@ typedef struct nvshmem_transport_pe_info {
     cudaUUID_t gpu_uuid;
 } nvshmem_transport_pe_info_t;
 
-/*inc*/
-#define TRANSPORT_TYPE_INC(type, TYPE, opname) \
-    void (*atomic_##type##_inc)(volatile TYPE *, nvshmem_mem_handle_t *, int);
+typedef struct rma_verb {
+    nvshmemi_op_t desc;
+    int is_nbi;
+    int is_stream;
+    cudaStream_t cstrm;
+} rma_verb_t;
 
-/*finc, fetch*/
-#define TRANSPORT_TYPE_FINC_FETCH(type, TYPE, opname) \
-    TYPE (*atomic_##type##_##opname)(volatile TYPE *, nvshmem_mem_handle_t *, int);
+typedef struct rma_memdesc {
+    void *ptr;
+    uint64_t offset;
+    nvshmem_mem_handle_t *handle;
+} rma_memdesc_t;
 
-/*and, or, xor, add, set*/
-#define TRANSPORT_TYPE_AND_OR_XOR_ADD_SET(type, TYPE, opname) \
-    void (*atomic_##type##_##opname)(volatile TYPE *, nvshmem_mem_handle_t *, TYPE, int);
+typedef struct rma_bytesdesc {
+    size_t nelems;
+    int elembytes;
+    ptrdiff_t srcstride;
+    ptrdiff_t deststride;
+} rma_bytesdesc_t;
 
-/*fand, for, fxor, fadd, swap*/
-#define TRANSPORT_TYPE_FAND_FOR_FXOR_FADD_SWAP(type, TYPE, opname) \
-    TYPE (*atomic_##type##_##opname)(volatile TYPE *, nvshmem_mem_handle_t *, TYPE, int);
+typedef struct amo_verb {
+    nvshmemi_amo_t desc;
+    int is_fetch;
+    int is_val;
+    int is_cmp;
+} amo_verb_t;
 
-/*cswap*/
-#define TRANSPORT_TYPE_CSWAP(type, TYPE, opname) \
-    TYPE (*atomic_##type##_##opname)(volatile TYPE *, nvshmem_mem_handle_t *, TYPE, TYPE, int);
+typedef struct amo_memdesc {
+    void *ptr;
+    uint64_t offset;
+    uint64_t retflag;
+    void *retptr;
+    void *valptr;
+    void *cmpptr;
+    uint64_t val;
+    uint64_t cmp;
+    nvshmem_mem_handle_t *handle;
+    nvshmem_mem_handle_t *ret_handle;
+} amo_memdesc_t;
 
-#define TRANSPORT_TYPE_COMMON_OPGROUP(OPNAME, opname)                      \
-    TRANSPORT_TYPE_##OPNAME(uint, unsigned int, opname)                    \
-        TRANSPORT_TYPE_##OPNAME(ulong, unsigned long, opname)              \
-            TRANSPORT_TYPE_##OPNAME(ulonglong, unsigned long long, opname) \
-                TRANSPORT_TYPE_##OPNAME(int32, int32_t, opname)            \
-                    TRANSPORT_TYPE_##OPNAME(int64, int64_t, opname)        \
-                        TRANSPORT_TYPE_##OPNAME(uint32, uint32_t, opname)  \
-                            TRANSPORT_TYPE_##OPNAME(uint64, uint64_t, opname)
-
-#define TRANSPORT_TYPE_STANDARD_OPGROUP(OPNAME, opname)                                   \
-    TRANSPORT_TYPE_##OPNAME(int, int, opname) TRANSPORT_TYPE_##OPNAME(long, long, opname) \
-        TRANSPORT_TYPE_##OPNAME(longlong, long long, opname)                              \
-            TRANSPORT_TYPE_##OPNAME(size, size_t, opname)                                 \
-                TRANSPORT_TYPE_##OPNAME(ptrdiff, ptrdiff_t, opname)
-
-#define TRANSPORT_TYPE_EXTENDED_OPGROUP(OPNAME, opname) \
-    TRANSPORT_TYPE_##OPNAME(float, float, opname) TRANSPORT_TYPE_##OPNAME(double, double, opname)
+typedef struct amo_bytesdesc {
+    int name_type;
+    int elembytes;
+} amo_bytesdesc_t;
 
 typedef int (*rma_handle)(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
                           rma_memdesc_t *remote, rma_memdesc_t *local, rma_bytesdesc_t bytesdesc,
@@ -143,11 +125,9 @@ typedef int (*fence_handle)(struct nvshmem_transport *tcurr, int pe, int is_prox
 typedef int (*quiet_handle)(struct nvshmem_transport *tcurr, int pe, int is_proxy);
 
 struct nvshmem_transport_host_ops {
-    int (*get_device_count)(int *ndev, struct nvshmem_transport *transport);
-    int (*get_pci_path)(int dev, char **pcipath, struct nvshmem_transport *transport);
     int (*can_reach_peer)(int *access, nvshmem_transport_pe_info_t *peer_info,
                           struct nvshmem_transport *transport);
-    int (*connect_endpoints)(struct nvshmem_transport *t);
+    int (*connect_endpoints)(struct nvshmem_transport *t, int selected_dev_id);
     int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t *mem_handle_in,
                           void *buf, size_t size, struct nvshmem_transport *transport,
                           bool local_only);
@@ -166,54 +146,45 @@ struct nvshmem_transport_host_ops {
     quiet_handle quiet;
     int (*enforce_cst)(struct nvshmem_transport *transport);
     int (*enforce_cst_at_target)(struct nvshmem_transport *transport);
-#ifdef NVSHMEM_IBGDA_SUPPORT
-    int (*add_device_remote_mem_handles)(struct nvshmem_transport *transport, int transport_id,
+    int (*add_device_remote_mem_handles)(struct nvshmem_transport *transport, int transport_stride,
                                          nvshmem_mem_handle_t *mem_handles, uint64_t heap_offset,
                                          size_t size);
-#endif
 };
 
 struct nvshmem_transport {
-    int attr;
-    struct nvshmem_transport_host_ops host_ops;
+    /* lib identifiers */
+    int api_version;
+    nvshmem_transport_inline_lib_code_type_t type;
     int *cap;
+    /* APIs */
+    struct nvshmem_transport_host_ops host_ops;
+    /* Handles to bootstrap and internal state */
+    bootstrap_handle_t *boot_handle;
     void *state;
+    void *type_specific_shared_state;
+    void *cache_handle;
+    /* transport shares to lib */
+    char **device_pci_paths;
+    int attr;
+    int n_devices;
+    bool atomics_complete_on_quiet;
     bool is_successfully_initialized;
+    bool no_proxy;
+    /* lib shares to transport */
+    void *heap_base;
+    size_t log2_cumem_granularity;
+    uint64_t max_op_len;
+    uint32_t atomic_host_endian_min_size;
+    int index;
+    int my_pe;
+    int n_pes;
 };
 
 typedef struct nvshmem_transport *nvshmem_transport_t;
 
-void nvshmemi_add_transport(int id, int (*init_op)(nvshmem_transport_t *));
-int nvshmemi_transport_init(struct nvshmemi_state_dec *state);
-int nvshmemi_transport_finalize(struct nvshmemi_state_dec *state);
-int nvshmemi_transport_show_info(nvshmemi_state_dec *state);
-
-/*Per transport struct*/
-
-typedef struct {
-    int ndev;
-    CUdevice *cudev;
-    int *devid;
-    CUdeviceptr *curetval;
-    CUdevice cudevice;
-    int device_id;
-    uint64_t hostHash;
-    pcie_id_t *pcie_ids;
-    char pcie_bdf[NVSHMEM_PCIE_DBF_BUFFER_LEN];
-} transport_p2p_state_t;
-
 int nvshmemt_p2p_init(nvshmem_transport_t *transport);
 
-int nvshmemt_ibrc_init(nvshmem_transport_t *transport);
-
-int nvshmemt_ucx_init(nvshmem_transport_t *transport);
-
-int nvshmemt_ibdevx_init(nvshmem_transport_t *transport);
-
-int nvshmemt_libfabric_init(nvshmem_transport_t *transport);
-
-#ifdef NVSHMEM_IBGDA_SUPPORT
-int nvshmemt_gic_init(nvshmem_transport_t *transport);
-#endif
+typedef int (*nvshmemi_transport_init_fn)(nvshmem_transport_t *transport,
+                                          struct nvshmemi_cuda_fn_table *table, int api_version);
 
 #endif

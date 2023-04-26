@@ -6,18 +6,13 @@
 #ifndef NVSHMEM_BOOTSTRAP_H
 #define NVSHMEM_BOOTSTRAP_H
 
-typedef struct bootstrap_handle {
-    int pg_rank;
-    int pg_size;
-    int mype_node;
-    int npes_node;
-    int (*allgather)(const void *sendbuf, void *recvbuf, int bytes,
-                     struct bootstrap_handle *handle);
-    int (*alltoall)(const void *sendbuf, void *recvbuf, int bytes, struct bootstrap_handle *handle);
-    int (*barrier)(struct bootstrap_handle *handle);
-    void (*global_exit)(int status);
-    int (*finalize)(struct bootstrap_handle *handle);
-} bootstrap_handle_t;
+#include "nvshmem_bootstrap_defines.h"
+#include "nvshmem_version.h"
+/* Version = major * 10000 + minor * 100 + patch*/
+/* ABI Introduced in NVSHMEM 2.8.0 */
+#define NVSHMEMI_BOOTSTRAP_ABI_VERSION                \
+    (NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION * 10000 + \
+     NVSHMEM_BOOTSTRAP_PLUGIN_MINOR_VERSION * 100 + NVSHMEM_BOOTSTRAP_PLUGIN_PATCH_VERSION)
 
 static bool nvshmemi_is_bootstrap_compatible(int bootstrap_version, int nvshmem_version) {
     if (bootstrap_version == nvshmem_version)

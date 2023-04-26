@@ -313,7 +313,8 @@ DEFINE_NVSHMEM_GETMEM_NBI_THREADGROUP(block)
             }                                                                                     \
             NVSHMEMI_SYNC_##Group();                                                              \
         } else {                                                                                  \
-            printf("nvshmemx_" #Name "_iput_" #Group " not implemented over IB\n");               \
+            printf("nvshmemx_" #Name "_iput_" #Group                                              \
+                   " not implemented over remote network transports\n");                          \
             assert(0);                                                                            \
         }                                                                                         \
     }
@@ -343,7 +344,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_IPUT_THREADGROUP)
             }                                                                                     \
             NVSHMEMI_SYNC_##Group();                                                              \
         } else {                                                                                  \
-            printf("nvshmemx_iput" #Name "_" #Group " not implemented over IB\n");                \
+            printf("nvshmemx_iput" #Name "_" #Group                                               \
+                   " not implemented over remote network transports\n");                          \
             assert(0);                                                                            \
         }                                                                                         \
     }
@@ -374,7 +376,8 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_IPUTSIZE_THREADGROUP)
             }                                                                                  \
             NVSHMEMI_SYNC_##Group();                                                           \
         } else {                                                                               \
-            printf("nvshmemx_" #Name "_iget_" #Group " not implemented over IB\n");            \
+            printf("nvshmemx_" #Name "_iget_" #Group                                           \
+                   " not implemented over remote network transports\n");                       \
             assert(0);                                                                         \
         }                                                                                      \
     }
@@ -404,7 +407,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_IGET_THREADGROUP)
             }                                                                                  \
             NVSHMEMI_SYNC_##Group();                                                           \
         } else {                                                                               \
-            printf("nvshmemx_iget" #Name "_" #Group " not implemented over IB\n");             \
+            printf("nvshmemx_iget" #Name "_" #Group                                            \
+                   " not implemented over remote network transports\n");                       \
             assert(0);                                                                         \
         }                                                                                      \
     }
@@ -454,4 +458,6 @@ __device__ inline void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, i
 #ifdef __cplusplus
 }
 #endif
+#include "device/coll/defines.cuh"
+
 #endif

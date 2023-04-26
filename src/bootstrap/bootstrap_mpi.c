@@ -91,14 +91,14 @@ out:
 }
 
 int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle,
-                                   const int nvshmem_version) {
+                                   const int abi_version) {
     int status = MPI_SUCCESS, initialized = 0, finalized = 0;
     MPI_Comm src_comm;
-    int bootstrap_version = NVSHMEM_VENDOR_VERSION;
-    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
+    int bootstrap_version = NVSHMEMI_BOOTSTRAP_ABI_VERSION;
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version)) {
         BOOTSTRAP_ERROR_PRINT(
             "MPI bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
-            bootstrap_version, nvshmem_version);
+            bootstrap_version, abi_version);
         exit(-1);
     }
 

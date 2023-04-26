@@ -53,6 +53,8 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
+    float *ms_d = (float *)nvshmem_malloc(sizeof(float));
+    float *ms_sum_d = (float *)nvshmem_malloc(sizeof(float));
 
     nvshmem_barrier_all();
     i = 0;
@@ -238,9 +240,13 @@ int broadcast_calling_kernel(nvshmem_team_t team, void *dest, const void *source
         cudaEventRecord(stop, stream);
         CUDA_CHECK(cudaStreamSynchronize(stream));
 
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        cudaMemcpy(ms_d, &milliseconds, sizeof(float), cudaMemcpyHostToDevice);
+        nvshmem_float_sum_reduce(NVSHMEM_TEAM_WORLD, ms_sum_d, ms_d, 1);
+        cudaMemcpy(&milliseconds, ms_sum_d, sizeof(float), cudaMemcpyDeviceToHost);
         if (!mype) {
-            cudaEventElapsedTime(&milliseconds, start, stop);
-            h_block_lat[i] = (milliseconds * 1000.0) / (float)iter;
+            h_block_lat[i] =
+                (milliseconds * 1000.0) / ((float)iter * nvshmem_team_n_pes(NVSHMEM_TEAM_WORLD));
         }
         i++;
         nvshmem_barrier_all();
@@ -284,7 +290,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    array_size = floor(log2((float)max_elems)) + 1;
+    array_size = floor(std::log2((float)max_elems)) + 1;
 
     DEBUG_PRINT("symmetric size %lu\n", size);
     sprintf(size_string, "%lu", size);

@@ -9,42 +9,12 @@
 
 #include "cuda.h"
 #include "nvshmem_internal.h"
-#include "nvshmemi_transfer.h"
-#include "common.cuh"
-
-/* This is signaling function used in barrier algorithm.
-nvshmem_<type>_signal function cannot be used in barrier because it uses a
-combination of P2P path and IB path depending on how the peer GPU is
-connected. In contrast to that, this fuction uses either P2P path (when all GPUs
-are NVLink connected) or IB path (when any of the GPU is not NVLink connected).
-
-Using this function in barrier is necessary to ensure any previous RMA
-operations are visible. When combination of P2P and IB path are used
-as in nvshmem_<type>_signal function, it can lead to race conditions.
-For example NVLink writes (of data and signal) can overtake IB writes.
-And hence the data may not be visible after the barrier operation.
-*/
-#ifdef __CUDA_ARCH__
-template <typename T>
-__device__ inline void nvshmemi_signal_for_barrier(T *dest, const T value, int pe) {
-    const void *peer_base_addr =
-        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
-    if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST) {
-        volatile T *dest_actual =
-            (volatile T *)((char *)(peer_base_addr) +
-                           ((char *)dest - (char *)(nvshmemi_device_state_d.heap_base)));
-        *dest_actual = value;
-    } else {
-        nvshmemi_transfer_amo_nonfetch<T>((void *)dest, value, pe, NVSHMEMI_AMO_SIGNAL);
-    }
-}
-#endif /* __CUDACC__ */
-
-#include "alltoall_device.cuh"
-#include "barrier_device.cuh"
-#include "broadcast_device.cuh"
-#include "fcollect_device.cuh"
-#include "rdxn_device.cuh"
+#include "device/pt-to-pt/proxy_device.cuh"
+#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#include "device/pt-to-pt/transfer_device.cuh"
+#else
+#include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
+#endif
 
 /* structs */
 
@@ -57,6 +27,7 @@ extern int nvshmemi_coll_common_gpu_return_modes(void);
 extern int nvshmemi_coll_common_gpu_finalize(void);
 
 void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami);
+void nvshmemi_recexchalgo_free_mem(nvshmemi_team_t *teami);
 
 /* macro definitions */
 #define MAX_THREADS_PER_CTA 512
@@ -66,13 +37,5 @@ void nvshmemi_recexchalgo_get_neighbors(nvshmemi_team_t *teami);
         fprintf(stderr, "Error at %s:%d in %s", __FILE__, __LINE__, __FUNCTION__); \
         goto fn_fail;                                                              \
     } while (0)
-
-#if __cplusplus
-extern "C" {
-#endif
-int init_shm_kernel_shm_ptr();
-#if __cplusplus
-}
-#endif
 
 #endif /* NVSHMEMI_COLL_GPU_H */

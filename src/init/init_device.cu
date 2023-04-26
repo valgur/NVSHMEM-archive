@@ -6,12 +6,12 @@
 
 #include "nvshmem.h"
 #include "nvshmem_internal.h"
-#include "nvshmemi_proxy.h"
 
 #include <stdio.h>
 #include "nvshmemx_error.h"
 #include "util.h"
 #include <algorithm>
+#include "device/pt-to-pt/proxy_device.cuh"
 
 #ifdef NVSHMEM_IBGDA_SUPPORT
 #include "nvshmemi_ibgda.h"
@@ -49,10 +49,10 @@ int nvshmemi_set_device_state(nvshmemi_device_state_t *nvshmemi_device_state) {
 void nvshmemi_check_state_and_init() {
     if (!nvshmemi_is_device_state_set) {
         if (!nvshmemi_is_nvshmem_bootstrapped)
-            ERROR_EXIT("nvshmem API called before nvshmem_init \n");
+            NVSHMEMI_ERROR_EXIT("nvshmem API called before nvshmem_init \n");
         if (!nvshmemi_is_nvshmem_initialized) {
             if (nvshmemx_internal_common_init()) {
-                ERROR_EXIT("nvshmem initialization failed, exiting \n");
+                NVSHMEMI_ERROR_EXIT("nvshmem initialization failed, exiting \n");
             }
         }
         nvshmemi_device_state_t *nvshmemi_device_state;
@@ -90,7 +90,8 @@ int nvshmemi_init_thread(int requested_thread_support, int *provided_thread_supp
     status =
         nvshmemx_internal_init_thread(requested_thread_support, provided_thread_support,
                                       bootstrap_flags, bootstrap_attr, nvshmemi_device_lib_version);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_internal_init_thread failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "nvshmem_internal_init_thread failed \n");
     if (nvshmemi_is_nvshmem_initialized) {
         nvshmemx_get_device_state(&nvshmemi_device_state);
         nvshmemi_set_device_state(nvshmemi_device_state);

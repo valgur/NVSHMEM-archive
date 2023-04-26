@@ -5,6 +5,7 @@
  */
 #include "nvshmem.h"
 #include <unistd.h>
+#include "nvshmemi_proxy.h"
 #include "proxy.h"
 #include "nvshmem_internal.h"
 #include "nvshmemx_error.h"
@@ -35,8 +36,8 @@ int nvshmemi_proxy_create_channels(proxy_state_t *proxy_state) {
 
     proxy_channel_t *channels =
         (proxy_channel_t *)malloc(sizeof(proxy_channel_t) * proxy_state->channel_count);
-    NULL_ERROR_JMP(channels, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "failed allocating channels");
+    NVSHMEMI_NULL_ERROR_JMP(channels, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "failed allocating channels");
     memset(channels, 0, sizeof(proxy_channel_t) * proxy_state->channel_count);
 
     for (int i = 0; i < proxy_state->channel_count; i++) {
@@ -85,15 +86,15 @@ int nvshmemi_proxy_setup_connections(proxy_state_t *proxy_state) {
     proxy_state->transport_bitmap = 0;
     transport = proxy_state->transport =
         (struct nvshmem_transport **)calloc(state->npes, sizeof(struct nvshmem_transport *));
-    NULL_ERROR_JMP(transport, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "failed allocating space for transports \n");
+    NVSHMEMI_NULL_ERROR_JMP(transport, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "failed allocating space for transports \n");
 
     transport_id = proxy_state->transport_id = (int *)calloc(state->npes, sizeof(int));
-    NULL_ERROR_JMP(transport_id, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "failed allocating space for transport id \n");
+    NVSHMEMI_NULL_ERROR_JMP(transport_id, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "failed allocating space for transport id \n");
 
     for (int j = 0; j < state->npes; j++) {
-        for (int i = 0; i < NVSHMEM_TRANSPORT_COUNT; i++) {
+        for (int i = 0; i < state->num_initialized_transports; i++) {
             int transport_bit = (1 << i);
             // assumes symmetry of transport list at all PEs
             if (!((state->transport_bitmap) & transport_bit)) continue;
@@ -116,7 +117,7 @@ int nvshmemi_proxy_setup_connections(proxy_state_t *proxy_state) {
     }
 
     status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "barrier failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "barrier failed \n");
 
 out:
     if (status) {
@@ -169,7 +170,7 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level) {
         status =
             pthread_create(&proxy_state->progress_thread, NULL, nvshmemi_proxy_progress_minimal,
                            (void *)&proxy_state->progress_params);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread creation failed \n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread creation failed \n");
         state->proxy = (void *)proxy_state;
         goto out;
     }
@@ -237,7 +238,7 @@ post_cst_api_check:
 
     status = pthread_create(&proxy_state->progress_thread, NULL, nvshmemi_proxy_progress,
                             (void *)&proxy_state->progress_params);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread creation failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread creation failed \n");
 
     state->proxy = (void *)proxy_state;
 
@@ -382,7 +383,7 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
 
         status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytes, 1);
         if (unlikely(status)) {
-            ERROR_PRINT("aborting due to error in process_channel_dma\n");
+            NVSHMEMI_ERROR_PRINT("aborting due to error in process_channel_dma\n");
             exit(-1);
         }
     }
@@ -490,7 +491,7 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
 
         status = tcurr->host_ops.amo(tcurr, pe, NULL, verb, &memdesc, bytes, 1);
         if (unlikely(status)) {
-            ERROR_PRINT("aborting due to error in process_channel_dma\n");
+            NVSHMEMI_ERROR_PRINT("aborting due to error in process_channel_dma\n");
             exit(-1);
         }
     }
@@ -539,10 +540,10 @@ void enforce_cst(proxy_state_t *proxy_state) {
 #if defined(NVSHMEM_PPC64LE)
     status = cudaEventRecord(proxy_state->cuev, proxy_state->stream);
     if (unlikely(status != CUDA_SUCCESS)) {
-        ERROR_EXIT("cuEventRecord() failed in the proxy thread \n");
+        NVSHMEMI_ERROR_EXIT("cuEventRecord() failed in the proxy thread \n");
     }
 #elif defined(NVSHMEM_X86_64)
-    for (int i = 0; i < NVSHMEM_TRANSPORT_COUNT; i++) {
+    for (int i = 0; i < state->num_initialized_transports; i++) {
         if (!((state->transport_bitmap) & (1 << i))) continue;
         struct nvshmem_transport *tcurr = state->transports[i];
         if (!tcurr->host_ops.enforce_cst) continue;
@@ -551,7 +552,7 @@ void enforce_cst(proxy_state_t *proxy_state) {
         if (tcurr->attr & NVSHMEM_TRANSPORT_ATTR_CONNECTED) {
             status = tcurr->host_ops.enforce_cst(tcurr);
             if (status) {
-                ERROR_PRINT("aborting due to error in progress_cst \n");
+                NVSHMEMI_ERROR_PRINT("aborting due to error in progress_cst \n");
                 exit(-1);
             }
         }
@@ -642,7 +643,7 @@ inline void progress_quiet(proxy_state_t *proxy_state) {
             if (tcurr == NULL) continue;
             status = tcurr->host_ops.quiet(tcurr, i, 1);
             if (unlikely(status)) {
-                ERROR_PRINT("aborting due to error in progress_quiet \n");
+                NVSHMEMI_ERROR_PRINT("aborting due to error in progress_quiet \n");
                 exit(-1);
             }
         }
@@ -719,7 +720,7 @@ inline int process_channel_fence(proxy_state_t *proxy_state, proxy_channel_t *ch
 
         if (tcurr->host_ops.fence) status = tcurr->host_ops.fence(tcurr, i, 1);
         if (unlikely(status)) {
-            ERROR_PRINT("aborting due to error in process_fence \n");
+            NVSHMEMI_ERROR_PRINT("aborting due to error in process_fence \n");
             exit(-1);
         }
     }
@@ -808,7 +809,7 @@ inline void progress_channels(proxy_state_t *proxy_state) {
                         TRACE(NVSHMEM_PROXY, "host proxy: received PUT \n");
                         is_processed = 0;
                         status = process_channel_dma(proxy_state, ch, &is_processed);
-                        NZ_EXIT(status, "error in process_channel_dma<PUT>\n");
+                        NVSHMEMI_NZ_EXIT(status, "error in process_channel_dma<PUT>\n");
                         break;
                     case NVSHMEMI_OP_G:
                     case NVSHMEMI_OP_GET:
@@ -816,23 +817,23 @@ inline void progress_channels(proxy_state_t *proxy_state) {
                         is_processed = 0;
                         status = process_channel_dma(proxy_state, ch, &is_processed);
                         if (likely(is_processed)) proxy_state->issued_get = 1;
-                        NZ_EXIT(status, "error in process_channel_dma<GET>\n");
+                        NVSHMEMI_NZ_EXIT(status, "error in process_channel_dma<GET>\n");
                         break;
                     case NVSHMEMI_OP_P:
                         TRACE(NVSHMEM_PROXY, "host proxy: received P_CHAR \n");
                         is_processed = 0;
                         status = process_channel_inline(proxy_state, ch, &is_processed);
-                        NZ_EXIT(status, "error in process_channel_inline<char>\n");
+                        NVSHMEMI_NZ_EXIT(status, "error in process_channel_inline<char>\n");
                         break;
                     case NVSHMEMI_OP_AMO:
                         is_processed = 0;
                         status = process_channel_amo(proxy_state, ch, &is_processed);
-                        NZ_EXIT(status, "error in process_channel_inline<char>\n");
+                        NVSHMEMI_NZ_EXIT(status, "error in process_channel_inline<char>\n");
                         break;
                     case NVSHMEMI_OP_FENCE:
                         TRACE(NVSHMEM_PROXY, "host proxy: received FENCE \n");
                         status = process_channel_fence(proxy_state, ch);
-                        NZ_EXIT(status, "error in process_channel_fence\n");
+                        NVSHMEMI_NZ_EXIT(status, "error in process_channel_fence\n");
                         break;
                     default:
                         fprintf(stderr, "invalid op type encountered in proxy \n");
@@ -911,10 +912,11 @@ void progress_timeout_polling(proxy_state_t *proxy_state) {
                 break;
             default: { str = "unknown call site, exiting"; }
         }
-        ERROR_PRINT("received timeout signal from GPU thread(s) in %s\n", str);
-        ERROR_PRINT("signal addr %" PRIu64 " signal val found %" PRIu64
-                    " signal val expected %" PRIu64 "\n",
-                    timeout->signal_addr, timeout->signal_val_found, timeout->signal_val_expected);
+        NVSHMEMI_ERROR_PRINT("received timeout signal from GPU thread(s) in %s\n", str);
+        NVSHMEMI_ERROR_PRINT("signal addr %" PRIu64 " signal val found %" PRIu64
+                             " signal val expected %" PRIu64 "\n",
+                             timeout->signal_addr, timeout->signal_val_found,
+                             timeout->signal_val_expected);
         exit(-1);
     }
 }
@@ -923,7 +925,7 @@ void progress_transports(proxy_state_t *proxy_state) {
     int status = 0;
     nvshmemi_state_t *state = proxy_state->nvshmemi_state;
 
-    for (int i = 0; i < NVSHMEM_TRANSPORT_COUNT; i++) {
+    for (int i = 0; i < state->num_initialized_transports; i++) {
         if (!((proxy_state->transport_bitmap) & (1 << i))) continue;
 
         struct nvshmem_transport *tcurr = state->transports[i];
@@ -931,10 +933,11 @@ void progress_transports(proxy_state_t *proxy_state) {
         if (tcurr->host_ops.progress == NULL) continue;
 
         status = tcurr->host_ops.progress(tcurr);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport %d progress failed \n", i);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "transport %d progress failed \n", i);
     }
 out:
-    NZ_EXIT(status, "error in progress_transport \n");
+    NVSHMEMI_NZ_EXIT(status, "error in progress_transport \n");
 }
 
 // this has to be call before channels are torn down
@@ -971,9 +974,9 @@ void *nvshmemi_proxy_progress(void *in) {
     INFO(NVSHMEM_PROXY, "setting current CUDA context to saved context: %p",
          proxy_state->nvshmemi_state->cucontext);
     CUresult curesult = CUDA_SUCCESS;
-    curesult = CUPFN(cuCtxSetCurrent(proxy_state->nvshmemi_state->cucontext));
+    curesult = CUPFN(nvshmemi_cuda_syms, cuCtxSetCurrent(proxy_state->nvshmemi_state->cucontext));
     if (curesult != CUDA_SUCCESS) {
-        ERROR_EXIT("failed setting context on the proxy thread \n");
+        NVSHMEMI_ERROR_EXIT("failed setting context on the proxy thread \n");
     }
 
     // setup progress channels

@@ -11,9 +11,7 @@
 #include <stdint.h>
 #include <infiniband/mlx5dv.h>
 
-#include "nvshmemi_util.h"
-
-#define NVSHMEMI_GIC_MIN_QP_DEPTH 8
+#define NVSHMEMI_GIC_MIN_QP_DEPTH 128
 #define NVSHMEMI_GIC_MAX_QP_DEPTH 32768
 
 #define NVSHMEMI_GIC_CQE_SIZE 64
@@ -110,6 +108,11 @@ typedef struct nvshmemi_gic_device_local_only_mhandle {
 } nvshmemi_gic_device_local_only_mhandle_t;
 
 typedef struct {
+    __be32 key;
+    uint64_t next_addr;  // end of this address range + 1
+} nvshmemi_gic_device_key_t;
+
+typedef struct {
     size_t log2_cumem_granularity;
     uint32_t num_shared_dcis;
     uint32_t num_exclusive_dcis;
@@ -134,20 +137,20 @@ typedef struct {
 
         // For lkeys that cannot be contained in constmem.lkeys.
         // lkeys[idx - NVSHMEMI_GIC_MAX_CONST_LKEYS] gives the lkey of chunk idx.
-        __be32 *lkeys;
+        nvshmemi_gic_device_key_t *lkeys;
 
         // For rkeys that cannot be contained in constmem.rkeys.
         // rkeys[(idx * npes + pe) - NVSHMEMI_GIC_MAX_CONST_RKEYS] gives rkey of chunck idx
         // targeting peer pe.
-        __be32 *rkeys;
+        nvshmemi_gic_device_key_t *rkeys;
     } globalmem;
 
     struct {
         // lkeys[idx] gives the lkey of chunk idx.
-        __be32 lkeys[NVSHMEMI_GIC_MAX_CONST_LKEYS];
+        nvshmemi_gic_device_key_t lkeys[NVSHMEMI_GIC_MAX_CONST_LKEYS];
 
         // rkeys[idx * npes + pe] gives rkey of chunck idx targeting peer pe.
-        __be32 rkeys[NVSHMEMI_GIC_MAX_CONST_RKEYS];
+        nvshmemi_gic_device_key_t rkeys[NVSHMEMI_GIC_MAX_CONST_RKEYS];
 
         nvshmemi_gic_device_dct_t dcts[NVSHMEMI_GIC_MAX_CONST_DCTS];
     } constmem;
@@ -157,17 +160,6 @@ typedef struct {
 #define EXTERN_CONSTANT extern __constant__
 EXTERN_CONSTANT nvshmemi_gic_device_state_t nvshmemi_gic_device_state_d;
 #undef EXTERN_CONSTANT
-#endif
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-void nvshmemx_gic_get_device_state(nvshmemi_gic_device_state_t **gic_device_state);
-int nvshmemi_gic_set_device_state(nvshmemi_gic_device_state_t *gic_device_state);
-
-int nvshmemi_gic_update_device_state();
-#ifdef __cplusplus
-}
 #endif
 
 #endif /* _NVSHMEMI_GIC_H_ */

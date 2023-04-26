@@ -351,16 +351,15 @@ error:
     return status;
 }
 
-int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle,
-                                   const int nvshmem_version) {
+int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const int abi_version) {
     int status = 0;
     int spawned = 0;
     int rank, size, key_length, value_length, name_length;
-    int bootstrap_version = NVSHMEM_VENDOR_VERSION;
-    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
+    int bootstrap_version = NVSHMEMI_BOOTSTRAP_ABI_VERSION;
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version)) {
         BOOTSTRAP_ERROR_PRINT(
             "PMI bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
-            bootstrap_version, nvshmem_version);
+            bootstrap_version, abi_version);
         exit(-1);
     }
 

@@ -42,7 +42,16 @@ install -m 755 -d $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.$
 install -m 755 -d $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/src/perftest/host/pt-to-pt
 install -m 755 -d $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/scripts/
 install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}
-install -m 644 include/* $RPM_BUILD_ROOT/%{_includedir}
+install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/device/pt-to-pt/
+install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/device/coll/
+install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/device/team/
+install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/device/init/
+install -m 644 include/*.h $RPM_BUILD_ROOT/%{_includedir}
+install -m 644 include/*.cuh $RPM_BUILD_ROOT/%{_includedir}
+install -m 644 include/device/pt-to-pt/* $RPM_BUILD_ROOT/%{_includedir}/device/pt-to-pt/
+install -m 644 include/device/coll/* $RPM_BUILD_ROOT/%{_includedir}/device/coll/
+install -m 644 include/device/team/* $RPM_BUILD_ROOT/%{_includedir}/device/team/
+install -m 644 include/device/init/* $RPM_BUILD_ROOT/%{_includedir}/device/init/
 install -m 644 share/nvshmem/src/bootstrap-plugins/* $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/src/bootstrap-plugins/
 install -m 644 examples/Makefile $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/src/examples/
 install -m 644 examples/*.c* $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/src/examples/
@@ -57,17 +66,22 @@ install -m 644 scripts/install_hydra.sh $RPM_BUILD_ROOT/%{_prefix}/share/libnvsh
 install -m 644 lib/libnvshmem.a $RPM_BUILD_ROOT/%{_libdir}
 install -m 644 lib/libnvshmem_device.a $RPM_BUILD_ROOT/%{_libdir}
 install -m 644 lib/libnvshmem_host.so.${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch} $RPM_BUILD_ROOT/%{_libdir}
-ln -s libnvshmem_host.so.${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch} $RPM_BUILD_ROOT/%{_libdir}/libnvshmem_host.so.${nvshmem:Major}
+ln -s libnvshmem_host.so.${bootstrap:Major}.${bootstrap:Minor}.${bootstrap:Patch} $RPM_BUILD_ROOT/%{_libdir}/libnvshmem_host.so.${bootstrap:Major}
 ln -s libnvshmem_host.so.${nvshmem:Major} $RPM_BUILD_ROOT/%{_libdir}/libnvshmem_host.so
-install -m 644 lib/nvshmem_bootstrap_pmi.so.${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch} $RPM_BUILD_ROOT/%{_libdir}
-ln -s nvshmem_bootstrap_pmi.so.${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch} $RPM_BUILD_ROOT/%{_libdir}/nvshmem_bootstrap_pmi.so.${nvshmem:Major}
-ln -s nvshmem_bootstrap_pmi.so.${nvshmem:Major} $RPM_BUILD_ROOT/%{_libdir}/nvshmem_bootstrap_pmi.so
-install -m 644 lib/nvshmem_bootstrap_pmi2.so.${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch} $RPM_BUILD_ROOT/%{_libdir}
-ln -s nvshmem_bootstrap_pmi2.so.${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch} $RPM_BUILD_ROOT/%{_libdir}/nvshmem_bootstrap_pmi2.so.${nvshmem:Major}
-ln -s nvshmem_bootstrap_pmi2.so.${nvshmem:Major} $RPM_BUILD_ROOT/%{_libdir}/nvshmem_bootstrap_pmi2.so
+install -m 644 lib/nvshmem_bootstrap_pmi.so.${bootstrap:Major}.${bootstrap:Minor}.${bootstrap:Patch} $RPM_BUILD_ROOT/%{_libdir}
+ln -s nvshmem_bootstrap_pmi.so.${bootstrap:Major}.${bootstrap:Minor}.${bootstrap:Patch} $RPM_BUILD_ROOT/%{_libdir}/nvshmem_bootstrap_pmi.so.${bootstrap:Major}
+ln -s nvshmem_bootstrap_pmi.so.${bootstrap:Major} $RPM_BUILD_ROOT/%{_libdir}/nvshmem_bootstrap_pmi.so
+install -m 644 lib/nvshmem_bootstrap_pmi2.so.${bootstrap:Major}.${bootstrap:Minor}.${bootstrap:Patch} $RPM_BUILD_ROOT/%{_libdir}
+ln -s nvshmem_bootstrap_pmi2.so.${bootstrap:Major}.${bootstrap:Minor}.${bootstrap:Patch} $RPM_BUILD_ROOT/%{_libdir}/nvshmem_bootstrap_pmi2.so.${bootstrap:Major}
+ln -s nvshmem_bootstrap_pmi2.so.${bootstrap:Major} $RPM_BUILD_ROOT/%{_libdir}/nvshmem_bootstrap_pmi2.so
 ${nvshmem:pmix_install}
 ${nvshmem:mpi_install}
 ${nvshmem:shmem_install}
+${nvshmem:ucx_instal}
+${nvshmem:ibrc_instal}
+${nvshmem:ibdevx_instal}
+${nvshmem:ibgda_instal}
+${nvshmem:libfabric_instal}
 install -m 644 bin/hydra_nameserver $RPM_BUILD_ROOT/%{_bindir}/hydra_nameserver
 install -m 644 bin/hydra_persist $RPM_BUILD_ROOT/%{_bindir}/hydra_persist
 install -m 644 bin/hydra_pmi_proxy $RPM_BUILD_ROOT/%{_bindir}/hydra_pmi_proxy
@@ -87,6 +101,11 @@ rm -rf $RPM_BUILD_ROOT
 %defattr(-,root,root,-)
 %{_includedir}/*.h
 %{_includedir}/*.cuh
+%{_includedir}/device/coll/*.cuh
+%{_includedir}/device/pt-to-pt/*.h
+%{_includedir}/device/pt-to-pt/*.cuh
+%{_includedir}/device/team/*.cuh
+%{_includedir}/device/init/*.cuh
 %{_libdir}/libnvshmem.a
 %{_libdir}/libnvshmem_device.a
 %{_libdir}/*.so*

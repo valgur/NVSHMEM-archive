@@ -15,9 +15,9 @@ fi
 srcdir=$1
 builddir=$2
 
-if test -f $builddir/bin/mpiexec.hydra; then
+if test -f $builddir/bin/nvshmrun.hydra; then
     echo "hydra already installed"
-    exit 1
+    exit 0
 fi
 
 mkdir -p $srcdir

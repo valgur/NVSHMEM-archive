@@ -38,6 +38,12 @@
 #define NVSHMEMI_HOSTDEVICE_PREFIX
 #endif
 
+#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#define NVSHMEMI_DEVICE_INLINE inline
+#else
+#define NVSHMEMI_DEVICE_INLINE __noinline__
+#endif
+
 #define NVSHMEMI_UNUSED_ARG(ARG) (void)(ARG)
 
 #define NVSHPRI_float "%0.2f"
@@ -475,6 +481,7 @@ typedef struct {
     int npes;
     int node_mype;
     int node_npes;
+    nvshmemi_pe_dist_t pe_dist;
     int *p2p_attrib_native_atomic_support;
     int proxy;
     int atomics_sync;
@@ -526,6 +533,7 @@ typedef struct {
 } nvshmemi_device_state_t;
 
 extern nvshmemi_device_state_t nvshmemi_device_state;
+extern nvshmemi_pe_dist_t nvshmemi_pe_dist;
 extern bool nvshmemi_is_device_state_set;
 extern bool nvshmemi_is_nvshmem_bootstrapped;
 extern bool nvshmemi_is_nvshmem_initialized;

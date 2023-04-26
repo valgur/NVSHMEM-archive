@@ -5,10 +5,24 @@
  */
 
 #include "transport_ib_common.h"
+#include <unistd.h>
+#include <assert.h>
+
+int nvshmemt_ib_common_nv_peer_mem_available() {
+    if (access("/sys/kernel/mm/memory_peers/nv_mem/version", F_OK) == 0) {
+        return NVSHMEMX_SUCCESS;
+    }
+    if (access("/sys/kernel/mm/memory_peers/nvidia-peermem/version", F_OK) == 0) {
+        return NVSHMEMX_SUCCESS;
+    }
+
+    return NVSHMEMX_ERROR_INTERNAL;
+}
 
 int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable, struct ibv_pd *pd,
                                       nvshmem_mem_handle_t *mem_handle, void *buf, size_t length,
-                                      bool local_only, bool dmabuf_support) {
+                                      bool local_only, bool dmabuf_support,
+                                      struct nvshmemi_cuda_fn_table *table, int log_level) {
     struct nvshmemt_ib_common_mem_handle *handle =
         (struct nvshmemt_ib_common_mem_handle *)mem_handle;
     struct ibv_mr *mr = NULL;
@@ -30,13 +44,14 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
     }
 
     if (ftable->reg_dmabuf_mr != NULL && !host_memory && dmabuf_support &&
-        CUPFN(cuMemGetHandleForAddressRange)) {
+        CUPFN(table, cuMemGetHandleForAddressRange)) {
         size_t page_size = sysconf(_SC_PAGESIZE);
         CUdeviceptr p;
         size_t size_aligned = ROUNDUP(length, page_size);
         p = (CUdeviceptr)((uintptr_t)buf & ~(page_size - 1));
 
-        CUCHECKGOTO(cuMemGetHandleForAddressRange(&handle->fd, (CUdeviceptr)p, size_aligned,
+        CUCHECKGOTO(table,
+                    cuMemGetHandleForAddressRange(&handle->fd, (CUdeviceptr)p, size_aligned,
                                                   CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0),
                     status, out);
 
@@ -47,7 +62,7 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
             goto reg_dmabuf_failure;
         }
 
-        INFO(NVSHMEM_TRANSPORT, "ibv_reg_dmabuf_mr handle %p handle->mr %p", handle, handle->mr);
+        INFO(log_level, "ibv_reg_dmabuf_mr handle %p handle->mr %p", handle, handle->mr);
     } else {
     reg_dmabuf_failure:
 #endif
@@ -55,57 +70,34 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
         mr = ftable->reg_mr(pd, buf, length,
                             IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                                 IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-        NULL_ERROR_JMP(mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "mem registration failed \n");
-        INFO(NVSHMEM_TRANSPORT, "ibv_reg_mr handle %p handle->mr %p", handle, handle->mr);
-#if CUDART_VERSION >= 11070
+        NVSHMEMI_NULL_ERROR_JMP(mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                                "mem registration failed \n");
+        INFO(log_level, "ibv_reg_mr handle %p handle->mr %p", handle, handle->mr);
+#if CUDA_VERSION >= 11070
     }
 #endif
-
+    handle->buf = buf;
     handle->lkey = mr->lkey;
     handle->rkey = mr->rkey;
     handle->mr = mr;
+    handle->local_only = local_only;
 
 out:
     return status;
 }
 
 int nvshmemt_ib_common_release_mem_handle(struct nvshmemt_ibv_function_table *ftable,
-                                          nvshmem_mem_handle_t *mem_handle) {
+                                          nvshmem_mem_handle_t *mem_handle, int log_level) {
     int status = 0;
     struct nvshmemt_ib_common_mem_handle *handle =
         (struct nvshmemt_ib_common_mem_handle *)mem_handle;
 
-    INFO(NVSHMEM_TRANSPORT, "ibv_dereg_mr handle %p handle->mr %p", handle, handle->mr);
+    INFO(log_level, "ibv_dereg_mr handle %p handle->mr %p", handle, handle->mr);
     if (handle->mr) {
         status = ftable->dereg_mr((struct ibv_mr *)handle->mr);
     }
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_dereg_mr failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_dereg_mr failed \n");
 
 out:
     return status;
 }
-
-#ifdef NVSHMEM_MLX5_CODE
-bool nvshmemt_ib_common_query_mlx5_caps(struct ibv_context *context) {
-    int status;
-    uint8_t cmd_cap_in[DEVX_ST_SZ_BYTES(query_hca_cap_in)] = {
-        0,
-    };
-    uint8_t cmd_cap_out[DEVX_ST_SZ_BYTES(query_hca_cap_out)] = {
-        0,
-    };
-
-    DEVX_SET(query_hca_cap_in, cmd_cap_in, opcode, MLX5_CMD_OP_QUERY_HCA_CAP);
-    DEVX_SET(
-        query_hca_cap_in, cmd_cap_in, op_mod,
-        MLX5_SET_HCA_CAP_OP_MOD_GENERAL_DEVICE | (MLX5_CAP_GENERAL << 1) | HCA_CAP_OPMOD_GET_CUR);
-
-    status = mlx5dv_devx_general_cmd(context, cmd_cap_in, sizeof(cmd_cap_in), cmd_cap_out,
-                                     sizeof(cmd_cap_out));
-
-    if (status == 0) {
-        return true;
-    }
-    return false;
-}
-#endif

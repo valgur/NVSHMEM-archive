@@ -15,7 +15,7 @@
 #include "nvshmem.h"
 #include "nvshmemx.h"
 
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
 #include "mpi.h"
 #endif
 
@@ -59,13 +59,13 @@ int main(int c, char *v[]) {
     int num_elems = 8192;
     int num_blocks;
 
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
     bool use_mpi = false;
     char *value = getenv("NVSHMEMTEST_USE_MPI_LAUNCHER");
     if (value) use_mpi = atoi(value);
 #endif
 
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
     if (use_mpi) {
         MPI_Init(&c, &v);
         int rank, nranks;
@@ -124,7 +124,7 @@ int main(int c, char *v[]) {
 
     nvshmem_finalize();
 
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
     if (use_mpi) MPI_Finalize();
 #endif
     return 0;

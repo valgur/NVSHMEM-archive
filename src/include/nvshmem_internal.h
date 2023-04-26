@@ -7,6 +7,7 @@
 #ifndef _INTERNAL_H
 #define _INTERNAL_H
 
+#include "nvshmem_build_options.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include "cudawrap.h"
@@ -21,27 +22,46 @@
 #include <tuple>
 #include "nvshmemx_error.h"
 #include "util.h"
+#include "nvshmemi_ibgda.h"
+#include <map>
 using namespace std;
+
+#define NVSHMEMI_LOCAL_BUF_CACHE_DEFAULT_SIZE 64
 
 #define MAX_PEER_STREAMS 3
 
 #define MAX_TRANSPORT_EP_COUNT 1
-
-#define SYMMETRIC_SIZE_DEFAULT 1024 * 1024 * 1024
-
-#define MAXPATHSIZE 1024
-#define MAX_BUSID_SIZE 16
 
 #define NUM_G_BUF_ELEMENTS 1024 * 1024
 #define MAX_PES_PER_GPU 48
 
 #define G_COALESCING_BUF_SIZE NUM_G_BUF_ELEMENTS *NVSHMEMI_WARP_SIZE * sizeof(uint64_t)
 
-#define NVSHMEMI_CHECK_INIT_STATUS()                                                        \
-    do {                                                                                    \
-        if (nvshmemi_is_nvshmem_initialized == false)                                       \
-            ERROR_EXIT("NVSHMEM API called before NVSHMEM initialization has completed\n"); \
+#define NVSHMEMI_CHECK_INIT_STATUS()                                                 \
+    do {                                                                             \
+        if (nvshmemi_is_nvshmem_initialized == false)                                \
+            NVSHMEMI_ERROR_EXIT(                                                     \
+                "NVSHMEM API called before NVSHMEM initialization has completed\n"); \
     } while (0)
+
+typedef struct nvshmem_local_buf_handle {
+    void *ptr;
+    size_t length;
+    nvshmem_mem_handle_t *handle;
+    bool registered_by_us;
+    bool linked_with_prev;
+    bool linked_with_next;
+} nvshmem_local_buf_handle_t;
+
+typedef struct nvshmem_local_buf_cache {
+    size_t array_size;
+    size_t array_used;
+    nvshmem_local_buf_handle_t **buffers;
+    pthread_rwlock_t buffer_lock;
+} nvshmem_local_buf_cache_t;
+
+int nvshmemi_local_mem_cache_init(nvshmem_local_buf_cache_t **cache);
+void nvshmemi_local_mem_cache_fini(nvshmem_transport_t transport, nvshmem_local_buf_cache_t *cache);
 
 typedef struct {
     int multi_processor_count;
@@ -83,11 +103,6 @@ typedef struct nvshmemi_state_dec {
     size_t heap_size;
     void *heap_base;
     void *global_heap_base; /* Used when using VMM API */
-    /* registered local memory state */
-    size_t registered_buffer_array_size;
-    size_t registered_buffer_array_used;
-    nvshmem_local_buf_handle_t **registered_buffers;
-    pthread_rwlock_t registered_buffer_lock;
     bool host_memory_registration_supported;
 
     void **peer_heap_base_actual;
@@ -106,6 +121,7 @@ typedef struct nvshmemi_state_dec {
     int *transport_map;
     struct nvshmem_transport_pe_info *pe_info;
     struct nvshmem_transport **transports;
+    int num_initialized_transports;
     int *selected_transport_for_rma;
     int *selected_transport_for_amo;
     /*consolidated rma ops*/
@@ -124,6 +140,8 @@ typedef struct nvshmemi_state_dec {
     void *proxy;
     cudaStream_t *custreams;
     cudaEvent_t *cuevents;
+    bool *active_internal_streams;
+    bool used_internal_streams;
     /* MPS support */
     cudaEvent_t mps_event;
     cudaEvent_t
@@ -139,13 +157,7 @@ typedef struct nvshmemi_state_dec {
           handles(),
           idx_in_handles() {
     }
-    bool used_internal_streams;
 } nvshmemi_state_t;
-
-typedef struct {
-    volatile uint64_t data;
-    volatile uint64_t flag;
-} g_elem_t;
 
 typedef struct {
     int error_checks;
@@ -153,13 +165,20 @@ typedef struct {
 
 typedef int (*nvshmemi_state_change_handler_fn_t)(void);
 
+extern struct nvshmemi_cuda_fn_table *nvshmemi_cuda_syms;
 extern nvshmemi_state_t *nvshmemi_state;
 extern bootstrap_handle_t nvshmemi_boot_handle;
+extern uint64_t *nvshmemi_host_hashes;
 extern int nvshmemi_init_counter;
 extern nvshmem_options_t nvshmem_options;
 extern int nvshmemi_job_connectivity;
 extern int nvshmemi_cuda_driver_version;
 extern int nvshmemi_use_nccl;
+extern map<string, size_t> nvshmemi_alltoall_maxblocksize;
+extern map<string, size_t> nvshmemi_fcollect_maxblocksize;
+extern map<pair<string, rdxn_ops_t>, size_t> nvshmemi_reduce_maxblocksize;
+extern size_t nvshmemi_barrier_maxblocksize;
+extern map<string, size_t> nvshmemi_broadcast_maxblocksize;
 extern bool nvshmemi_is_mps_available;
 extern bool nvshmemi_use_cuda_vmm;
 extern int nccl_version;
@@ -200,12 +219,14 @@ void nvshmemi_barrier_all();
 int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level);
 int nvshmemi_proxy_finalize(nvshmemi_state_t *state);
 
-struct nvshmem_mem_handle *nvshmemi_get_registered_buffer_handle(void *addr, size_t *len);
+struct nvshmem_mem_handle *nvshmemi_get_registered_buffer_handle(nvshmem_transport_t transport,
+                                                                 void *addr, size_t *len);
 
 static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, size_t *len,
                                                  void *addr, int transport_idx) {
     nvshmem_mem_handle_t *handle_ptr;
-    size_t max_len = SIZE_MAX;
+    nvshmem_transport_t transport = nvshmemi_state->transports[transport_idx];
+    size_t max_len = transport->max_op_len;
 
     if (addr >= nvshmemi_state->heap_base &&
         (addr < (void *)((char *)nvshmemi_state->heap_base + nvshmemi_state->heap_size))) {
@@ -216,26 +237,18 @@ static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, 
         void *handle_start_addr = std::get<1>(nvshmemi_state->idx_in_handles[addr_idx]);
         size_t handle_size = std::get<2>(nvshmemi_state->idx_in_handles[addr_idx]);
         *handle =
-            &nvshmemi_state->handles[handle_idx][nvshmemi_state->mype * NVSHMEM_TRANSPORT_COUNT +
+            &nvshmemi_state->handles[handle_idx][nvshmemi_state->mype *
+                                                     nvshmemi_state->num_initialized_transports +
                                                  transport_idx];
         if (len) *len = handle_size - ((char *)addr - (char *)handle_start_addr);
     } else {
         /* registered buffer lookup code */
-        handle_ptr = nvshmemi_get_registered_buffer_handle(addr, len);
+        handle_ptr = nvshmemi_get_registered_buffer_handle(transport, addr, len);
         if (handle_ptr) {
             *handle = handle_ptr;
         } else {
             *handle = NULL;
         }
-    }
-
-    if (transport_idx == NVSHMEM_TRANSPORT_ID_IBRC || transport_idx == NVSHMEM_TRANSPORT_ID_IBDEVX
-#ifdef NVSHMEM_IBGDA_SUPPORT
-        || transport_idx == NVSHMEM_TRANSPORT_ID_GIC
-#endif
-    ) {
-        /* 1 GB Max*/
-        max_len = 1ULL << 30;
     }
 
     if (len) *len = *len < max_len ? *len : max_len;
@@ -249,7 +262,9 @@ static inline void nvshmemi_get_remote_mem_handle(nvshmem_mem_handle_t **handle,
     void *handle_start_addr = std::get<1>(nvshmemi_state->idx_in_handles[addr_idx]);
     size_t handle_size = std::get<2>(nvshmemi_state->idx_in_handles[addr_idx]);
 
-    *handle = &nvshmemi_state->handles[handle_idx][pe * NVSHMEM_TRANSPORT_COUNT + transport_idx];
+    *handle =
+        &nvshmemi_state
+             ->handles[handle_idx][pe * nvshmemi_state->num_initialized_transports + transport_idx];
     if (len) *len = handle_size - ((char *)addr - (char *)handle_start_addr);
 }
 /* rptr is symmetric address on the local pe
@@ -281,7 +296,7 @@ static inline void nvshmemi_process_multisend_rma(struct nvshmem_transport *tcur
 
         status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytes, is_proxy);
         if (unlikely(status)) {
-            ERROR_PRINT("aborting due to error in process_channel_dma\n");
+            NVSHMEMI_ERROR_PRINT("aborting due to error in process_channel_dma\n");
             exit(-1);
         }
         size_remaining -= chunk_size;
@@ -294,5 +309,26 @@ extern "C" {
 void nvshmemi_register_state_change_handler(nvshmemi_state_change_handler_fn_t fn);
 }
 int nvshmemi_update_device_state();
+
+int nvshmemi_cuda_library_init(struct nvshmemi_cuda_fn_table *table);
+
+int nvshmemi_get_pcie_attrs(pcie_id_t *pcie_id, CUdevice cudev);
+
+void nvshmemi_add_transport(int id, int (*init_op)(nvshmem_transport_t *));
+int nvshmemi_transport_init(struct nvshmemi_state_dec *state);
+int nvshmemi_transport_finalize(struct nvshmemi_state_dec *state);
+int nvshmemi_transport_show_info(nvshmemi_state_dec *state);
+
+#ifdef NVSHMEM_IBGDA_SUPPORT
+#ifdef __cplusplus
+extern "C" {
+#endif
+int nvshmemi_gic_set_device_state(nvshmemi_gic_device_state_t *gic_device_state);
+
+int nvshmemi_gic_update_device_state();
+#ifdef __cplusplus
+}
+#endif
+#endif
 
 #endif

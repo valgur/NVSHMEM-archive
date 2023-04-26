@@ -6,11 +6,18 @@
 
 #include "transport_common.h"
 
+#include <string.h>
 #include <dlfcn.h>
 
-int nvshmemi_gdrapi_compile_time_major_version;
-int nvshmemi_gdrapi_compile_time_minor_version;
-int nvshmemt_parse_hca_list(const char *string, struct nvshmemt_hca_info *hca_list, int max_count) {
+struct transport_mem_handle_info_cache {
+    void **cache;
+    uint64_t size;
+    uint64_t address_granularity;
+    uintptr_t address_mask;
+};
+
+int nvshmemt_parse_hca_list(const char *string, struct nvshmemt_hca_info *hca_list, int max_count,
+                            int log_level) {
     if (!string) return 0;
 
     const char *ptr = string;
@@ -61,13 +68,13 @@ int nvshmemt_parse_hca_list(const char *string, struct nvshmemt_hca_info *hca_li
         ptr++;
     } while (if_num < max_count && c);
 
-    INFO(NVSHMEM_INIT, "Begin - Parsed HCA list provided by user - ");
+    INFO(log_level, "Begin - Parsed HCA list provided by user - ");
     for (int i = 0; i < if_num; i++) {
-        INFO(NVSHMEM_INIT,
+        INFO(log_level,
              "Parsed HCA list provided by user - i=%d (of %d), name=%s, port=%d, count=%d", i,
              if_num, hca_list[i].name, hca_list[i].port, hca_list[i].count);
     }
-    INFO(NVSHMEM_INIT, "End - Parsed HCA list provided by user");
+    INFO(log_level, "End - Parsed HCA list provided by user");
 
     return if_num;
 }
@@ -78,103 +85,24 @@ int nvshmemt_ib_iface_get_mlx_path(const char *ib_name, char **path) {
     char device_path[MAXPATHSIZE];
     status = snprintf(device_path, MAXPATHSIZE, "/sys/class/infiniband/%s/device", ib_name);
     if (status < 0 || status >= MAXPATHSIZE) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to fill in device name.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                           "Unable to fill in device name.\n");
     } else {
         status = NVSHMEMX_SUCCESS;
     }
 
     *path = realpath(device_path, NULL);
-    NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
+    NVSHMEMI_NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
 
 out:
     return status;
 }
 
-#ifdef NVSHMEM_USE_GDRCOPY
-bool nvshmemt_gdrcopy_ftable_init(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc,
-                                  void **gdrcopy_handle) {
-    bool use_gdrcopy = true;
-    void *local_gdrcopy_handle;
-    int major, minor;
-    nvshmemi_gdrapi_compile_time_major_version = GDR_API_MAJOR_VERSION;
-    nvshmemi_gdrapi_compile_time_minor_version = GDR_API_MINOR_VERSION;
-    if (nvshmemi_options.DISABLE_GDRCOPY) {
-        use_gdrcopy = false;
-        goto skip_gdrcopy_dlsym;
-    }
-
-    *gdrcopy_handle = dlopen("libgdrapi.so.2", RTLD_LAZY);
-    if (!*gdrcopy_handle) {
-        INFO(NVSHMEM_INIT, "GDRCopy library not found. disabling GDRCopy.\n");
-        use_gdrcopy = false;
-        goto skip_gdrcopy_dlsym;
-    } else {
-        local_gdrcopy_handle = *gdrcopy_handle;
-        LOAD_SYM(local_gdrcopy_handle, "gdr_runtime_get_version",
-                 gdrcopy_ftable->runtime_get_version);
-        if (!gdrcopy_ftable->runtime_get_version) {
-            INFO(NVSHMEM_INIT, "GDRCopy library is older than v2.0. Disabling GDRCopy.");
-            use_gdrcopy = false;
-            goto skip_gdrcopy_dlsym;
-        }
-        int gdrapi_runtime_major_version, gdrapi_runtime_minor_version;
-        gdrcopy_ftable->runtime_get_version(&gdrapi_runtime_major_version,
-                                            &gdrapi_runtime_minor_version);
-        if (gdrapi_runtime_major_version != nvshmemi_gdrapi_compile_time_major_version ||
-            gdrapi_runtime_minor_version < nvshmemi_gdrapi_compile_time_minor_version) {
-            INFO(NVSHMEM_INIT,
-                 "GDRCopy library version is not compatible with gdrapi.h (%d.%d) used during "
-                 "compilation. "
-                 "Disabling GDRCopy.\n",
-                 nvshmemi_gdrapi_compile_time_major_version,
-                 nvshmemi_gdrapi_compile_time_minor_version);
-            use_gdrcopy = false;
-            goto skip_gdrcopy_dlsym;
-        }
-        LOAD_SYM(local_gdrcopy_handle, "gdr_driver_get_version",
-                 gdrcopy_ftable->driver_get_version);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_open", gdrcopy_ftable->open);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_close", gdrcopy_ftable->close);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_pin_buffer", gdrcopy_ftable->pin_buffer);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_unpin_buffer", gdrcopy_ftable->unpin_buffer);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_map", gdrcopy_ftable->map);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_unmap", gdrcopy_ftable->unmap);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_get_info", gdrcopy_ftable->get_info);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_copy_from_mapping", gdrcopy_ftable->copy_from_mapping);
-        LOAD_SYM(local_gdrcopy_handle, "gdr_copy_to_mapping", gdrcopy_ftable->copy_to_mapping);
-    }
-
-    *gdr_desc = gdrcopy_ftable->open();
-    if (!*gdr_desc) {
-        dlclose(*gdrcopy_handle);
-        *gdrcopy_handle = NULL;
-        INFO(NVSHMEM_INIT, "GDRCopy open call failed, disabling GDRCopy.\n");
-        use_gdrcopy = false;
-    }
-    gdrcopy_ftable->driver_get_version(*gdr_desc, &major, &minor);
-    INFO(NVSHMEM_INIT, "GDR driver version: (%d, %d)", major, minor);
-
-skip_gdrcopy_dlsym:
-    return use_gdrcopy;
-}
-
-void nvshmemt_gdrcopy_ftable_fini(struct gdrcopy_function_table *gdrcopy_ftable, gdr_t *gdr_desc,
-                                  void **gdrcopy_handle) {
-    if (gdrcopy_ftable->close && gdr_desc) {
-        gdrcopy_ftable->close(*gdr_desc);
-    }
-
-    if (gdrcopy_handle && *gdrcopy_handle) {
-        dlclose(*gdrcopy_handle);
-        *gdrcopy_handle = NULL;
-    }
-}
-#endif
-
-int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable) {
+int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable,
+                             int log_level) {
     *ibv_handle = dlopen("libibverbs.so.1", RTLD_LAZY);
     if (*ibv_handle == NULL) {
-        INFO(NVSHMEM_INIT, "libibverbs not found on the system.");
+        INFO(log_level, "libibverbs not found on the system.");
         return -1;
     }
 
@@ -209,7 +137,147 @@ void nvshmemt_ibv_ftable_fini(void **ibv_handle) {
     if (ibv_handle) {
         status = dlclose(*ibv_handle);
         if (status) {
-            WARN("Unable to close libibverbs handle.");
+            NVSHMEMI_ERROR_PRINT("Unable to close libibverbs handle.");
         }
     }
+}
+
+int nvshmemt_mem_handle_cache_init(nvshmem_transport_t t,
+                                   struct transport_mem_handle_info_cache **cache) {
+    struct transport_mem_handle_info_cache *cache_pointer;
+
+    if (cache == NULL) {
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    *cache = (struct transport_mem_handle_info_cache *)calloc(
+        1, sizeof(struct transport_mem_handle_info_cache));
+    if (!(*cache)) {
+        NVSHMEMI_ERROR_PRINT("Unable to allocate mem handle cache in transport code.");
+        return NVSHMEMX_ERROR_OUT_OF_MEMORY;
+    }
+
+    cache_pointer = *cache;
+
+    cache_pointer->cache = (void **)calloc(1000, sizeof(void *));
+    if (!(cache_pointer->cache)) {
+        NVSHMEMI_ERROR_PRINT("Unable to allocate mem handle cache in transport code.");
+        return NVSHMEMX_ERROR_OUT_OF_MEMORY;
+    }
+    cache_pointer->size = 1000;
+    cache_pointer->address_granularity = 1ULL << t->log2_cumem_granularity;
+    cache_pointer->address_mask = (uintptr_t)(~(cache_pointer->address_granularity - 1));
+
+    return NVSHMEMX_SUCCESS;
+}
+
+int nvshmemt_mem_handle_cache_add(nvshmem_transport_t t,
+                                  struct transport_mem_handle_info_cache *cache, void *addr,
+                                  void *mem_handle_info) {
+    uint64_t addr_offset;
+    uint64_t arr_idx;
+
+    if (addr < t->heap_base) {
+        NVSHMEMI_ERROR_PRINT("Unable to process pointers outside of the heap.");
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    addr_offset = (uint64_t)((char *)addr - (char *)t->heap_base);
+    if (addr_offset % cache->address_granularity) {
+        NVSHMEMI_ERROR_PRINT("Unable to process unaligned pointers.");
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    arr_idx = addr_offset / cache->address_granularity;
+
+    if (arr_idx >= cache->size) {
+        size_t new_cache_size = cache->size * 2 > arr_idx ? cache->size * 2 : arr_idx + 1;
+        void *new_cache;
+        new_cache = realloc(cache->cache, new_cache_size);
+        if (new_cache == NULL) {
+            NVSHMEMI_ERROR_PRINT("Unable to reallocate larger heap cache.");
+            return NVSHMEMX_ERROR_OUT_OF_MEMORY;
+        }
+
+        cache->cache = (void **)new_cache;
+    }
+
+    cache->cache[arr_idx] = mem_handle_info;
+    return NVSHMEMX_SUCCESS;
+}
+
+void *nvshmemt_mem_handle_cache_get(nvshmem_transport_t t,
+                                    struct transport_mem_handle_info_cache *cache, void *addr) {
+    uintptr_t addr_offset;
+    uintptr_t aligned_addr;
+    uint64_t arr_idx;
+
+    if (addr < t->heap_base) {
+        NVSHMEMI_ERROR_PRINT("Unable to process pointers outside of the heap.");
+        return NULL;
+    }
+
+    addr_offset = (uintptr_t)((char *)addr - (char *)t->heap_base);
+    aligned_addr = addr_offset & cache->address_mask;
+    arr_idx = (uint64_t)aligned_addr / cache->address_granularity;
+
+    if (arr_idx >= cache->size) {
+        NVSHMEMI_ERROR_PRINT("Address not registered. Unable to get handle for it.");
+        return NULL;
+    }
+
+    return cache->cache[arr_idx];
+}
+
+void *nvshmemt_mem_handle_cache_get_by_idx(struct transport_mem_handle_info_cache *cache,
+                                           size_t idx) {
+    if (idx > cache->size) {
+        NVSHMEMI_ERROR_PRINT("Index out of bounds. Unable to get handle for it.");
+    }
+    return cache->cache[idx];
+}
+size_t nvshmemt_mem_handle_cache_get_size(struct transport_mem_handle_info_cache *cache) {
+    return cache->size;
+}
+
+int nvshmemt_mem_handle_cache_remove(nvshmem_transport_t t,
+                                     struct transport_mem_handle_info_cache *cache, void *addr) {
+    uint64_t addr_offset;
+    uint64_t arr_idx;
+
+    if (addr < t->heap_base) {
+        NVSHMEMI_ERROR_PRINT("Unable to process pointers outside of the heap.");
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    addr_offset = (uint64_t)((char *)addr - (char *)t->heap_base);
+    if (addr_offset % cache->address_granularity) {
+        NVSHMEMI_ERROR_PRINT("Unable to process unaligned pointers.");
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    arr_idx = addr_offset / cache->address_granularity;
+
+    if (arr_idx >= cache->size) {
+        NVSHMEMI_ERROR_PRINT("Address not registered. Unable to unregister it.");
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    cache->cache[arr_idx] = NULL;
+    return NVSHMEMX_SUCCESS;
+}
+
+int nvshmemt_mem_handle_cache_fini(struct transport_mem_handle_info_cache *cache) {
+    if (cache == NULL) {
+        NVSHMEMI_ERROR_PRINT("Mem handle cache not initialized, cannot finalize it.");
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    if (cache->cache) {
+        free(cache->cache);
+    }
+
+    free(cache);
+
+    return NVSHMEMX_SUCCESS;
 }

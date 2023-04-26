@@ -13,7 +13,10 @@
 #ifndef _NVSHMEM_H_
 #define _NVSHMEM_H_
 
+#include "nvshmem_build_options.h"
 #include "nvshmem_api.h"
 #include "nvshmem_defines.h"
+
+#include "nvshmemx.h"
 
 #endif

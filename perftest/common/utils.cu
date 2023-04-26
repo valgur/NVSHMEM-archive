@@ -22,7 +22,7 @@ int use_mpi = 0;
 int use_shmem = 0;
 __device__ int clockrate;
 
-#ifdef NVSHMEM_SHMEM_SUPPORT
+#ifdef NVSHMEMTEST_SHMEM_SUPPORT
 #include "unistd.h"
 static uint64_t getHostHash() {
     char hostname[1024];
@@ -93,21 +93,21 @@ void select_device() {
 }
 
 void init_wrapper(int *c, char ***v) {
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
     {
         char *value = getenv("NVSHMEMTEST_USE_MPI_LAUNCHER");
         if (value) use_mpi = atoi(value);
     }
 #endif
 
-#ifdef NVSHMEM_SHMEM_SUPPORT
+#ifdef NVSHMEMTEST_SHMEM_SUPPORT
     {
         char *value = getenv("NVSHMEMTEST_USE_SHMEM_LAUNCHER");
         if (value) use_shmem = atoi(value);
     }
 #endif
 
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
     if (use_mpi) {
         MPI_Init(c, v);
         int rank, nranks;
@@ -127,7 +127,7 @@ void init_wrapper(int *c, char ***v) {
     }
 #endif
 
-#ifdef NVSHMEM_SHMEM_SUPPORT
+#ifdef NVSHMEMTEST_SHMEM_SUPPORT
     if (use_shmem) {
         shmem_init();
         mype = shmem_my_pe();
@@ -168,14 +168,14 @@ void init_wrapper(int *c, char ***v) {
 }
 
 void finalize_wrapper() {
-#ifdef NVSHMEM_SHMEM_SUPPORT
+#ifdef NVSHMEMTEST_SHMEM_SUPPORT
     if (use_shmem) {
         shmem_free(latency);
         shmem_free(avg_time);
     }
 #endif
 
-#if !defined(NVSHMEM_SHMEM_SUPPORT) && !defined(NVSHMEM_MPI_SUPPORT)
+#if !defined(NVSHMEMTEST_SHMEM_SUPPORT) && !defined(NVSHMEMTEST_MPI_SUPPORT)
     if (!use_mpi && !use_shmem) {
         nvshmem_free(d_latency);
         nvshmem_free(d_avg_time);
@@ -183,10 +183,10 @@ void finalize_wrapper() {
 #endif
     nvshmem_finalize();
 
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
     if (use_mpi) MPI_Finalize();
 #endif
-#ifdef NVSHMEM_SHMEM_SUPPORT
+#ifdef NVSHMEMTEST_SHMEM_SUPPORT
     if (use_shmem) shmem_finalize();
 #endif
 }

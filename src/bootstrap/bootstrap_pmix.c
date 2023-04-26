@@ -190,17 +190,16 @@ out:
     return status;
 }
 
-int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle,
-                                   const int nvshmem_version) {
+int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const int abi_version) {
     pmix_status_t status = PMIX_SUCCESS;
     pmix_proc_t proc;
     proc.rank = PMIX_RANK_WILDCARD;
     pmix_value_t *val;
-    int bootstrap_version = NVSHMEM_VENDOR_VERSION;
-    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, nvshmem_version)) {
+    int bootstrap_version = NVSHMEMI_BOOTSTRAP_ABI_VERSION;
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version)) {
         BOOTSTRAP_ERROR_PRINT(
             "PMIx bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
-            bootstrap_version, nvshmem_version);
+            bootstrap_version, abi_version);
         exit(-1);
     }
 

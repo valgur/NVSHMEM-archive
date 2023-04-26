@@ -13,6 +13,6 @@
 // Cache CUDA __constant__ variables on host
 nvshmemi_gic_device_state_t nvshmemi_gic_device_state;
 
-void nvshmemx_gic_get_device_state(nvshmemi_gic_device_state_t **gic_device_state) {
-    *gic_device_state = &nvshmemi_gic_device_state;
+void nvshmemx_gic_get_device_state(void **gic_device_state) {
+    *gic_device_state = (void *)&nvshmemi_gic_device_state;
 }

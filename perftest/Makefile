@@ -36,6 +36,7 @@ PERFCUSRCFILES := device/coll/alltoall_bw.cu \
                   device/coll/bcast_latency.cu \
                   device/coll/fcollect_latency.cu \
                   device/coll/reduction_latency.cu \
+                  device/coll/redmaxloc_latency.cu \
                   device/coll/sync_latency.cu \
                   device/pt-to-pt/shmem_atomic_bw.cu \
                   device/pt-to-pt/shmem_atomic_latency.cu \

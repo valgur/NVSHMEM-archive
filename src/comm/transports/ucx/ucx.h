@@ -7,12 +7,10 @@
 #ifndef _UCX_H
 #define _UCX_H
 
-#include "transport.h"
-#include "nvshmem.h"
-#include "nvshmem_internal.h"
+#include "transport_common.h"
 
 #ifdef NVSHMEM_USE_GDRCOPY
-#include "gdrapi.h"
+#include "transport_gdr_common.h"
 #endif
 
 #include <ucs/type/status.h>
@@ -78,12 +76,14 @@ typedef struct {
     ucp_rkey_h ep_rkey_host;
     ucp_rkey_h ep_rkey_proxy;
     size_t rkey_packed_buf_len;
+    void *ptr;
+    bool local_only;
 } nvshmemt_ucx_mem_handle_t;
 
 typedef struct {
     void *ptr;
     size_t size;
-    ucp_mem_h mem_handle;
+    nvshmemt_ucx_mem_handle_t *mem_handle;
 #ifdef NVSHMEM_USE_GDRCOPY
     gdr_mh_t mh;
     void *cpu_ptr;
@@ -97,6 +97,7 @@ typedef struct {
     uint64_t amo_retflag;
     void *amo_device_retptr;
     void *ucx_state;
+    void *transport;
     bool in_use;
     bool is_proxy;
     bool amo_has_retval;
@@ -104,7 +105,7 @@ typedef struct {
 
 typedef struct transport_ucx_state_t {
     ucp_config_t *library_config;
-    vector<nvshmemt_ucx_mem_handle_info_t> mem_handle_info_cache;
+    struct transport_mem_handle_info_cache *cache;
     ucp_context_h library_context;
     ucp_worker_h worker_context;
     ucp_ep_h *endpoints;
@@ -113,12 +114,11 @@ typedef struct transport_ucx_state_t {
     int ep_count;
     int proxy_ep_idx;
     int num_headers_requested;
+    int log_level;
     uint16_t num_bounce_buffers_requested;
     nvshmemt_ucx_am_header_t send_headers[NVSHMEMT_UCX_ATOMIC_POOL_SIZE];
     nvshmemt_ucx_am_header_t recv_headers[NVSHMEMT_UCX_ATOMIC_POOL_SIZE];
     nvshmemt_ucx_bounce_buffer_t bounce_buffers[NVSHMEMT_UCX_BOUNCE_BUFFER_POOL_SIZE];
-
-    transport_ucx_state_t() : mem_handle_info_cache() {}
 } transport_ucx_state_t;
 
 struct ibv_device **(*get_device_list)(int *num_devices);

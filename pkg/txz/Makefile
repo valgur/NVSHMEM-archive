@@ -53,6 +53,7 @@ $(TXZPREPDIR)/% : %.in
 	cp ../../version.mk $(NVSHMEM_BUILDDIR)/
 	cp ../../Makefile $(NVSHMEM_BUILDDIR)/
 	cp ../../NVSHMEMConfig.cmake.in $(NVSHMEM_BUILDDIR)/
+	cp ../../nvshmem_transport.sym $(NVSHMEM_BUILDDIR)/
 	cp ../../nvshmem_host.sym $(NVSHMEM_BUILDDIR)/
 	cp ../../nvshmem_bootstrap.sym $(NVSHMEM_BUILDDIR)/
 	mkdir -p $(NVSHMEM_BUILDDIR)/src

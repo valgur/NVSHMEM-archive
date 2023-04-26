@@ -221,7 +221,7 @@ int main(int argc, char *argv[]) {
         goto finalize;
     }
 
-    array_size = floor(log2((float)max_data_size)) + 1;
+    array_size = floor(std::log2((float)max_data_size)) + 1;
     alloc_tables(&h_tables, 3, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_bw = (double *)h_tables[1];

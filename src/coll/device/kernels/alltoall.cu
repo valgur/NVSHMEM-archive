@@ -6,7 +6,13 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include "alltoall_device.cuh"
+#include "nvshmem.h"
+#include "nvshmemx.h"
+#include "gpu_coll.h"
+#include <string>
+#include <typeinfo>
+
+using namespace std;
 
 template <typename TYPE>
 __global__ void alltoall_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
@@ -20,7 +26,16 @@ __global__ void alltoall_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const
 template <typename TYPE>
 void nvshmemi_call_alltoall_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
                                              size_t nelems, cudaStream_t stream) {
-    int num_threads_per_block = (MAX_THREADS_PER_CTA > nelems) ? nelems : MAX_THREADS_PER_CTA;
+    int tmp;
+    string type_str(typeid(TYPE).name());
+    if (nvshmemi_alltoall_maxblocksize.find(type_str) == nvshmemi_alltoall_maxblocksize.end()) {
+        CUDA_RUNTIME_CHECK(cudaOccupancyMaxPotentialBlockSize(
+            &tmp, (int *)&nvshmemi_alltoall_maxblocksize[type_str],
+            alltoall_on_stream_kernel<TYPE>));
+    }
+    int num_threads_per_block = (nvshmemi_alltoall_maxblocksize[type_str] > nelems)
+                                    ? nelems
+                                    : nvshmemi_alltoall_maxblocksize[type_str];
     int num_blocks = 1;
     alltoall_on_stream_kernel<TYPE>
         <<<num_blocks, num_threads_per_block, 0, stream>>>(team, dest, source, nelems);

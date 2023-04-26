@@ -21,7 +21,8 @@ int nvshmemi_reduce_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *sourc
     if (nvshmemi_use_nccl && nvshmemi_get_nccl_op<OP>() != ncclNumOps &&
         nvshmemi_get_nccl_dt<TYPE>() != ncclNumTypes) {
         NCCL_CHECK(nccl_ftable.AllReduce(source, dest, nreduce, nvshmemi_get_nccl_dt<TYPE>(),
-                                         nvshmemi_get_nccl_op<OP>(), teami->nccl_comm, stream));
+                                         nvshmemi_get_nccl_op<OP>(), (ncclComm_t)teami->nccl_comm,
+                                         stream));
     } else
 #endif /* NVSHMEM_USE_NCCL */
     {

@@ -4,11 +4,10 @@
  * See COPYRIGHT for license information
  */
 
-#include "nvshmem.h"
-#include "nvshmem_internal.h"
-
 #include "transport_common.h"
 #include "transport_ib_common.h"
+#include "transport_mlx5_common.h"
+
 #include "ibdevx.h"
 
 #include <math.h>
@@ -19,8 +18,6 @@
 #include <vector>
 #include <deque>
 #include <dlfcn.h>
-#include "nvshmemx_error.h"
-#include "topo.h"
 #include <asm/types.h>
 #include <netinet/in.h>
 #ifdef NVSHMEM_X86_64
@@ -231,8 +228,11 @@ typedef struct {
     int proxy_ep_idx;
     int ep_count;
     int selected_dev_id;
+    int log_level;
     bool dmabuf_support;
     struct ibdevx_ep **ep;
+    struct nvshmemi_options_s *options;
+    struct nvshmemi_cuda_fn_table *table;
 } transport_ibdevx_state_t;
 
 struct nvshmemt_ib_common_mem_handle local_dummy_mr;
@@ -248,36 +248,24 @@ static int use_ib_native_atomics = 1;
 static struct nvshmemt_ibv_function_table ftable;
 static void *ibv_handle;
 
-int nvshmemt_ibdevx_init(nvshmem_transport_t *transport);
 int check_poll_avail(struct ibdevx_ep *ep, int wait_predicate);
 int progress_send(transport_ibdevx_state_t *ibdevx_state);
 
 int nvshmemt_ibdevx_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
                               int transport_count, int npes, int mype) {
     for (int i = 0; i < npes; ++i) {
-        INFO(NVSHMEM_TRANSPORT, "[%d] mem_handle %d : %p", mype, transport_id,
-             &mem_handles[i * transport_count + transport_id]);
+        printf("[%d] mem_handle %d : %p", mype, transport_id,
+               &mem_handles[i * transport_count + transport_id]);
         struct nvshmemt_ib_common_mem_handle *mem_handle =
             (struct nvshmemt_ib_common_mem_handle
                  *)&mem_handles[i * transport_count + transport_id];
-        INFO(NVSHMEM_TRANSPORT, "[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey,
-             mem_handle->rkey, mem_handle->mr);
+        printf("[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey, mem_handle->rkey,
+               mem_handle->mr);
     }
     return 0;
 }
 
-int nvshmemt_ibdevx_get_device_count(int *ndev, nvshmem_transport_t t) {
-    int status = 0;
-
-    struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
-    transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)transport->state;
-
-    *ndev = ibdevx_state->n_dev_ids;
-
-    return status;
-}
-
-int nvshmemt_ibdevx_get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
+static int get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
     int status = NVSHMEMX_SUCCESS;
 
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
@@ -287,7 +275,8 @@ int nvshmemt_ibdevx_get_pci_path(int dev, char **pci_path, nvshmem_transport_t t
         (const char *)((struct ibdevx_device *)ibdevx_state->devices)[dev_id].dev->name;
 
     status = nvshmemt_ib_iface_get_mlx_path(ib_name, pci_path);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmemt_ib_iface_get_mlx_path failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "nvshmemt_ib_iface_get_mlx_path failed \n");
 
 out:
     return status;
@@ -336,10 +325,9 @@ static int nvshmemt_ibdevx_mlx5_qp_create(struct ibdevx_ep *ep, struct ibdevx_de
     uint8_t cmd_cap_out[DEVX_ST_SZ_BYTES(query_hca_cap_out)] = {
         0,
     };
-    void *cap;
 
+    void *cap;
     uint32_t bf_reg_size, log_bf_reg_size;
-    int amo_endianness_mode;
     int wq_buf_size;
     int status;
 
@@ -350,52 +338,41 @@ static int nvshmemt_ibdevx_mlx5_qp_create(struct ibdevx_ep *ep, struct ibdevx_de
 
     status = mlx5dv_devx_general_cmd(context, cmd_cap_in, sizeof(cmd_cap_in), cmd_cap_out,
                                      sizeof(cmd_cap_out));
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mlx5dv_devx_general_cmd failed.\n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "mlx5dv_devx_general_cmd failed.\n");
 
     log_bf_reg_size = DEVX_GET(cmd_hca_cap, cap, log_bf_reg_size);
-
-    DEVX_SET(query_hca_cap_in, cmd_cap_in, op_mod,
-             MLX5_SET_HCA_CAP_OP_MOD_GENERAL_DEVICE | (MLX5_CAP_ATOMIC << 1));
-    status = mlx5dv_devx_general_cmd(context, cmd_cap_in, sizeof(cmd_cap_in), cmd_cap_out,
-                                     sizeof(cmd_cap_out));
-
-    /* Report whether we need to do atomic endianness conversions on 8 byte operands. */
-    amo_endianness_mode = DEVX_GET(atomic_caps, cap, atomic_req_8B_endianness_mode);
-    if (amo_endianness_mode) {
-        nvshmemi_state->atomic_host_endian_min_size = 8;
-    } else {
-        nvshmemi_state->atomic_host_endian_min_size = UINT32_MAX;
-    }
 
     // The size of 1st + 2nd half (as when we use alternating DB)
     bf_reg_size = 1LLU << log_bf_reg_size;
 
     // Allocate UAR. This will be used as a DB/BF register).
     uar = mlx5dv_devx_alloc_uar(context, MLX5DV_UAR_ALLOC_TYPE_BF);
-    NULL_ERROR_JMP(uar, status, ENOMEM, out, "cannot allocate mlx5dv_devx_uar\n");
+    NVSHMEMI_NULL_ERROR_JMP(uar, status, ENOMEM, out, "cannot allocate mlx5dv_devx_uar\n");
 
     // Allocate WQ buffer.
     wq_buf_size = ibdevx_qp_depth * MLX5_SEND_WQE_BB;
     status = posix_memalign(&wq_buf, sysconf(_SC_PAGESIZE), wq_buf_size);
-    NULL_ERROR_JMP(wq_buf, status, ENOMEM, out, "cannot allocate wq buf for qpair.\n");
+    NVSHMEMI_NULL_ERROR_JMP(wq_buf, status, ENOMEM, out, "cannot allocate wq buf for qpair.\n");
 
     wq_umem = mlx5dv_devx_umem_reg(context, wq_buf, wq_buf_size, 0);
-    NULL_ERROR_JMP(wq_umem, status, NVSHMEMX_ERROR_INTERNAL, out,
-                   "cannot register wq buf for qpair.\n");
+    NVSHMEMI_NULL_ERROR_JMP(wq_umem, status, NVSHMEMX_ERROR_INTERNAL, out,
+                            "cannot register wq buf for qpair.\n");
 
     // Allocate Doorbell Register buffer.
     status = posix_memalign(&dbr_buf, sysconf(_SC_PAGESIZE), NVSHMEMT_IBDEVX_DBSIZE);
-    NULL_ERROR_JMP(dbr_buf, status, ENOMEM, out, "cannot allocate dbr buf for qpair.\n");
+    NVSHMEMI_NULL_ERROR_JMP(dbr_buf, status, ENOMEM, out, "cannot allocate dbr buf for qpair.\n");
 
     db_umem = mlx5dv_devx_umem_reg(context, dbr_buf, NVSHMEMT_IBDEVX_DBSIZE, 0);
-    NULL_ERROR_JMP(wq_umem, status, NVSHMEMX_ERROR_INTERNAL, out,
-                   "cannot register dbr buf for qpair.\n");
+    NVSHMEMI_NULL_ERROR_JMP(wq_umem, status, NVSHMEMX_ERROR_INTERNAL, out,
+                            "cannot register dbr buf for qpair.\n");
 
     if (device->pdn == 0) {
         dv_obj.pd.in = pd;
         dv_obj.pd.out = &dvpd;
         status = mlx5dv_init_obj(&dv_obj, MLX5DV_OBJ_PD);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mlx5dv PD initialization failed.\n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "mlx5dv PD initialization failed.\n");
         device->pdn = dvpd.pdn;
     }
 
@@ -403,7 +380,8 @@ static int nvshmemt_ibdevx_mlx5_qp_create(struct ibdevx_ep *ep, struct ibdevx_de
         dv_obj.cq.in = ep->send_cq;
         dv_obj.cq.out = &dvscq;
         status = mlx5dv_init_obj(&dv_obj, MLX5DV_OBJ_CQ);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mlx5dv SCQ initialization failed.\n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "mlx5dv SCQ initialization failed.\n");
         device->scq.buf = dvscq.buf;
         device->scq.cqn = dvscq.cqn;
         device->scq.cur_idx = 0;
@@ -420,21 +398,23 @@ static int nvshmemt_ibdevx_mlx5_qp_create(struct ibdevx_ep *ep, struct ibdevx_de
         dv_obj.srq.in = device->srq;
         dv_obj.srq.out = &dvsrq;
         status = mlx5dv_init_obj(&dv_obj, MLX5DV_OBJ_SRQ);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mlx5dv SRQ initialization failed.\n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "mlx5dv SRQ initialization failed.\n");
         device->srqn = dvsrq.srqn;
     }
 
     if (device->srqn == 0) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                  "Unable to allocate SRQ for your device. "
-                  "This may occur if your ofed is older than version 5.0.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                           "Unable to allocate SRQ for your device. "
+                           "This may occur if your ofed is older than version 5.0.\n");
     }
 
     if (device->rcq.cqn == 0) {
         dv_obj.cq.in = ep->recv_cq;
         dv_obj.cq.out = &dvrcq;
         status = mlx5dv_init_obj(&dv_obj, MLX5DV_OBJ_CQ);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "mlx5dv RCQ initialization failed.\n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "mlx5dv RCQ initialization failed.\n");
         device->rcq.buf = dvrcq.buf;
         device->rcq.cqn = dvrcq.cqn;
         device->rcq.cur_idx = 0;
@@ -467,8 +447,8 @@ static int nvshmemt_ibdevx_mlx5_qp_create(struct ibdevx_ep *ep, struct ibdevx_de
     DEVX_SET(qpc, qp_context, page_offset, 0);
 
     ep->devx_qp = mlx5dv_devx_obj_create(context, cmd_in, sizeof(cmd_in), cmd_out, sizeof(cmd_out));
-    NULL_ERROR_JMP(ep->devx_qp, status, NVSHMEMX_ERROR_INTERNAL, out,
-                   "cannot create devx object for qpair.\n");
+    NVSHMEMI_NULL_ERROR_JMP(ep->devx_qp, status, NVSHMEMX_ERROR_INTERNAL, out,
+                            "cannot create devx object for qpair.\n");
 
     ep->qpid = DEVX_GET(create_qp_out, cmd_out, qpn);
     ep->uar = uar;
@@ -519,13 +499,13 @@ static int ep_create(struct ibdevx_ep **ep_ptr, int devid, transport_ibdevx_stat
     // tail_op_id which can be used in inter-thread synchronization
     // TODO: use atomic variables instead to rely on language memory model guarantees
     status = posix_memalign((void **)&ep, ibdevx_CACHELINE, sizeof(struct ibdevx_ep));
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "ep allocation failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "ep allocation failed \n");
     memset((void *)ep, 0, sizeof(struct ibdevx_ep));
 
     if (!device->send_cq) {
         device->send_cq = ftable.create_cq(context, device->device_attr.max_cqe, NULL, NULL, 0);
-        NULL_ERROR_JMP(device->send_cq, status, NVSHMEMX_ERROR_INTERNAL, out,
-                       "cq creation failed \n");
+        NVSHMEMI_NULL_ERROR_JMP(device->send_cq, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                "cq creation failed \n");
     }
     assert(device->send_cq != NULL);
     ep->send_cq = device->send_cq;
@@ -538,17 +518,19 @@ static int ep_create(struct ibdevx_ep **ep_ptr, int devid, transport_ibdevx_stat
         srq_init_attr.attr.max_sge = 1;
 
         device->srq = ftable.create_srq(pd, &srq_init_attr);
-        NULL_ERROR_JMP(device->srq, status, NVSHMEMX_ERROR_INTERNAL, out, "srq creation failed \n");
+        NVSHMEMI_NULL_ERROR_JMP(device->srq, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                "srq creation failed \n");
 
         device->recv_cq = ftable.create_cq(context, ibdevx_srq_depth, NULL, NULL, 0);
-        NULL_ERROR_JMP(device->recv_cq, status, NVSHMEMX_ERROR_INTERNAL, out,
-                       "cq creation failed \n");
+        NVSHMEMI_NULL_ERROR_JMP(device->recv_cq, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                "cq creation failed \n");
     }
     assert(device->recv_cq != NULL);
     ep->recv_cq = device->recv_cq;
 
     status = nvshmemt_ibdevx_mlx5_qp_create(ep, device);
-    NZ_ERROR_JMP(status, status, out, "Unable to create qpair for ep in ibdevx transport.\n");
+    NVSHMEMI_NZ_ERROR_JMP(status, status, out,
+                          "Unable to create qpair for ep in ibdevx transport.\n");
 
     qp_map.insert(std::make_pair((unsigned int)ep->qpid, (long unsigned int)ep));
 
@@ -609,8 +591,8 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
 
     status =
         mlx5dv_devx_obj_modify(ep->devx_qp, cmd_in1, sizeof(cmd_in1), cmd_out1, sizeof(cmd_out1));
-    NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
-                 "Unable to set qp to state INIT with errno %d.\n", status);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "Unable to set qp to state INIT with errno %d.\n", status);
 
     DEVX_SET(init2rtr_qp_in, cmd_in2, opcode, MLX5_CMD_OP_INIT2RTR_QP);
     DEVX_SET(init2rtr_qp_in, cmd_in2, op_mod, 0x0);
@@ -640,13 +622,13 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
         ah_attr.port_num = portid;
         ah_attr.grh.dgid.global.subnet_prefix = ep_handle->spn;
         ah_attr.grh.dgid.global.interface_id = ep_handle->iid;
-        ah_attr.grh.sgid_index = nvshmemi_options.IB_GID_INDEX;
-        ah_attr.grh.traffic_class = nvshmemi_options.IB_TRAFFIC_CLASS;
-        ah_attr.sl = nvshmemi_options.IB_SL;
+        ah_attr.grh.sgid_index = ibdevx_state->options->IB_GID_INDEX;
+        ah_attr.grh.traffic_class = ibdevx_state->options->IB_TRAFFIC_CLASS;
+        ah_attr.sl = ibdevx_state->options->IB_SL;
         ah_attr.src_path_bits = 0;
 
         ah = ftable.create_ah(device->pd, &ah_attr);
-        NULL_ERROR_JMP(ah, status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to create ah.\n");
+        NVSHMEMI_NULL_ERROR_JMP(ah, status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to create ah.\n");
 
         dv.ah.in = ah;
         dv.ah.out = &dah;
@@ -656,19 +638,20 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
                sizeof(dah.av->rmac));
         DEVX_SET(qpc, qp_context, primary_address_path.hop_limit, 255);
         DEVX_SET(qpc, qp_context, primary_address_path.src_addr_index,
-                 nvshmemi_options.IB_GID_INDEX);
-        DEVX_SET(qpc, qp_context, primary_address_path.eth_prio, nvshmemi_options.IB_SL);
+                 ibdevx_state->options->IB_GID_INDEX);
+        DEVX_SET(qpc, qp_context, primary_address_path.eth_prio, ibdevx_state->options->IB_SL);
         DEVX_SET(qpc, qp_context, primary_address_path.udp_sport, ah_attr.dlid);
         DEVX_SET(qpc, qp_context, primary_address_path.dscp,
-                 nvshmemi_options.IB_TRAFFIC_CLASS >> 2);
+                 ibdevx_state->options->IB_TRAFFIC_CLASS >> 2);
 
         memcpy(DEVX_ADDR_OF(qpc, qp_context, primary_address_path.rgid_rip), &dah.av->rgid,
                sizeof(dah.av->rgid));
     } else {
-        DEVX_SET(qpc, qp_context, primary_address_path.tclass, nvshmemi_options.IB_TRAFFIC_CLASS);
+        DEVX_SET(qpc, qp_context, primary_address_path.tclass,
+                 ibdevx_state->options->IB_TRAFFIC_CLASS);
         DEVX_SET(qpc, qp_context, primary_address_path.rlid, ep_handle->lid);
         DEVX_SET(qpc, qp_context, primary_address_path.mlid, 0);
-        DEVX_SET(qpc, qp_context, primary_address_path.sl, nvshmemi_options.IB_SL);
+        DEVX_SET(qpc, qp_context, primary_address_path.sl, ibdevx_state->options->IB_SL);
         DEVX_SET(qpc, qp_context, primary_address_path.grh, false);
     }
 
@@ -680,8 +663,8 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
 
     status =
         mlx5dv_devx_obj_modify(ep->devx_qp, cmd_in2, sizeof(cmd_in2), cmd_out2, sizeof(cmd_out2));
-    NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
-                 "Unable to set qp to state R2R with errno %d.\n", status);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "Unable to set qp to state R2R with errno %d.\n", status);
 
     DEVX_SET(rtr2rts_qp_in, cmd_in3, opcode, MLX5_CMD_OP_RTR2RTS_QP);
     DEVX_SET(rtr2rts_qp_in, cmd_in3, opt_param_mask, 0x0);
@@ -701,8 +684,8 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
 
     status =
         mlx5dv_devx_obj_modify(ep->devx_qp, cmd_in3, sizeof(cmd_in3), cmd_out3, sizeof(cmd_out3));
-    NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
-                 "Unable to set qp to state R2S with errno %d.\n", status);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "Unable to set qp to state R2S with errno %d.\n", status);
 
     connected_qp_count++;
 out:
@@ -729,13 +712,13 @@ int setup_cst_loopback(transport_ibdevx_state_t *ibdevx_state, int dev_id) {
     struct ibdevx_ep_handle cst_ep_handle;
 
     status = ep_create(&ibdevx_cst_ep, dev_id, ibdevx_state);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_create cst failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_create cst failed \n");
 
     status = ep_get_handle(&cst_ep_handle, ibdevx_cst_ep);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_get_handle failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_get_handle failed \n");
 
     status = ep_connect(ibdevx_cst_ep, &cst_ep_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_connect failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_connect failed \n");
 out:
     return status;
 }
@@ -750,20 +733,22 @@ int nvshmemt_ibdevx_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
                                     ibdevx_state->dev_ids[ibdevx_state->selected_dev_id]);
 
     status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf, length,
-                                               local_only, ibdevx_state->dmabuf_support);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to register memory handle.");
+                                               local_only, ibdevx_state->dmabuf_support,
+                                               ibdevx_state->table, ibdevx_state->log_level);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "Unable to register memory handle.");
 
     if (local_dummy_mr.mr == NULL) {
         uint64_t *local_dummy_mem;
 
         local_dummy_mem = (uint64_t *)malloc(sizeof(*local_dummy_mem));
-        NULL_ERROR_JMP(local_dummy_mem, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                       "local dummy mem allocation failed \n");
+        NVSHMEMI_NULL_ERROR_JMP(local_dummy_mem, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                                "local dummy mem allocation failed \n");
         local_dummy_mr.mr = ftable.reg_mr(device->pd, local_dummy_mem, sizeof(*local_dummy_mem),
                                           IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                                               IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-        NULL_ERROR_JMP(local_dummy_mr.mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                       "mem registration failed \n");
+        NVSHMEMI_NULL_ERROR_JMP(local_dummy_mr.mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                                "mem registration failed \n");
         local_dummy_mr.lkey = local_dummy_mr.mr->lkey;
         local_dummy_mr.rkey = local_dummy_mr.mr->rkey;
     }
@@ -773,14 +758,23 @@ out:
 }
 
 int nvshmemt_ibdevx_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
-    return nvshmemt_ib_common_release_mem_handle(&ftable, mem_handle);
+    transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)t->state;
+    return nvshmemt_ib_common_release_mem_handle(&ftable, mem_handle, ibdevx_state->log_level);
 }
 
 int nvshmemt_ibdevx_finalize(nvshmem_transport_t transport) {
+    // TODO: Add cleanup of internal state to this function.
     int status = 0;
 
     // clear qp map
     qp_map.clear();
+
+    if (transport->device_pci_paths) {
+        for (int i = 0; i < transport->n_devices; i++) {
+            free(transport->device_pci_paths[i]);
+        }
+        free(transport->device_pci_paths);
+    }
 
     if (local_dummy_mr.mr) {
         void *mem = local_dummy_mr.mr->addr;
@@ -792,7 +786,7 @@ int nvshmemt_ibdevx_finalize(nvshmem_transport_t transport) {
     nvshmemt_ibv_ftable_fini(&ibv_handle);
 
     status = pthread_mutex_destroy(&ibdevx_mutex_send_progress);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_destroy failed\n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_destroy failed\n");
 
 out:
     return status;
@@ -842,9 +836,9 @@ int progress_send(transport_ibdevx_state_t *ibdevx_state) {
                                              NVSHMEMT_IBDEVX_MASK_UPPER_BYTE_32);
             } else {
                 volatile struct mlx5_err_cqe *err = (volatile struct mlx5_err_cqe *)cqe;
-                ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                          "Got ibdevx completion with error. hws: %x ves: %x, syn: %x",
-                          err->rsvd1[16], err->vendor_err_synd, err->syndrome);
+                NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                   "Got ibdevx completion with error. hws: %x ves: %x, syn: %x",
+                                   err->rsvd1[16], err->vendor_err_synd, err->syndrome);
             }
         }
     }
@@ -860,7 +854,7 @@ int nvshmemt_ibdevx_progress(nvshmem_transport_t t) {
     transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)transport->state;
 
     status = progress_send(ibdevx_state);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "progress_send failed, \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "progress_send failed, \n");
 
 out:
     return status;
@@ -883,8 +877,8 @@ int check_poll_avail(struct ibdevx_ep *ep, int wait_predicate) {
     /* poll until space becomes in local send qp */
     while (((ep->head_op_id - ep->tail_op_id) > outstanding_count)) {
         status = progress_send(ibdevx_state);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                     "progress_send failed, outstanding_count: %d\n", outstanding_count);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "progress_send failed, outstanding_count: %d\n", outstanding_count);
     }
 
 out:
@@ -926,7 +920,7 @@ int nvshmemt_ibdevx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb
     wqe_bb_idx_32 = ep->wqe_bb_idx;
 
     status = check_poll_avail(ep, WAIT_ANY);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
 
     wqe = (struct ibdevx_rw_wqe *)((char *)ep->wq_buf + ((wqe_bb_idx_64 % ibdevx_qp_depth)
                                                          << NVSHMEMT_IBDEVX_WQE_BB_SHIFT));
@@ -974,8 +968,8 @@ int nvshmemt_ibdevx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb
                 break;
             };
             default: {
-                ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                          "Invalid length argument to p: %u\n", bytecount);
+                NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
+                                   "Invalid length argument to p: %u\n", bytecount);
             };
         }
     }
@@ -987,7 +981,7 @@ int nvshmemt_ibdevx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb
 
     if (unlikely(!verb.is_nbi && verb.desc != NVSHMEMI_OP_P)) {
         check_poll_avail(ep, WAIT_ALL /*1*/);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
     }
 
 out:
@@ -1022,7 +1016,7 @@ static inline int nvshmemt_ibdevx_amo_32(struct nvshmem_transport *tcurr, int pe
                                                                 << NVSHMEMT_IBDEVX_WQE_BB_SHIFT));
 
     status = check_poll_avail(ep, WAIT_ANY);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
 
     wqe_size = sizeof(struct ibdevx_atomic_32_wqe);
 
@@ -1133,8 +1127,8 @@ static inline int nvshmemt_ibdevx_amo_32(struct nvshmem_transport *tcurr, int pe
             break;
         }
         default: {
-            ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "Opcode %d is invalid.\n",
-                      verb.desc);
+            NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "Opcode %d is invalid.\n",
+                               verb.desc);
         }
     }
 
@@ -1183,7 +1177,7 @@ static inline int nvshmemt_ibdevx_amo_64(struct nvshmem_transport *tcurr, int pe
 
     /* The 64 bit masked compare swap wqe takes up 80 bytes, or two entries in the WQ. */
     status = check_poll_avail(ep, WAIT_TWO);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
     ctrl = (struct mlx5_wqe_ctrl_seg *)wqe_1;
     raddr = (struct mlx5_wqe_raddr_seg *)((char *)ctrl + sizeof(struct mlx5_wqe_ctrl_seg));
     cs_data =
@@ -1303,8 +1297,8 @@ static inline int nvshmemt_ibdevx_amo_64(struct nvshmem_transport *tcurr, int pe
             break;
         }
         default: {
-            ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "Opcode %d is invalid.\n",
-                      verb.desc);
+            NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out, "Opcode %d is invalid.\n",
+                               verb.desc);
         }
     }
 
@@ -1344,8 +1338,8 @@ int nvshmemt_ibdevx_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr,
     } else if (bytesdesc.elembytes == 8) {
         return nvshmemt_ibdevx_amo_64(tcurr, pe, curetptr, verb, remote, bytesdesc, is_proxy);
     } else {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                  "Invalid atomic length %d specified.\n", bytesdesc.elembytes);
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
+                           "Invalid atomic length %d specified.\n", bytesdesc.elembytes);
     }
 
 out:
@@ -1384,7 +1378,7 @@ int nvshmemt_ibdevx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
     nvshmemt_ibdevx_post_send(ep, (void *)wqe, 1);
 
     status = check_poll_avail(ep, WAIT_ALL);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
 
 out:
     return status;
@@ -1402,7 +1396,7 @@ int nvshmemt_ibdevx_quiet(struct nvshmem_transport *tcurr, int pe, int is_proxy)
     }
 
     status = check_poll_avail(ep, WAIT_ALL /*1*/);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
 
 out:
     return status;
@@ -1413,12 +1407,12 @@ int nvshmemt_ibdevx_ep_create(struct ibdevx_ep **ep, int devid,
     int status = 0;
 
     status = ep_create(ep, devid, ibdevx_state);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_create failed\n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_create failed\n");
 
     // setup loopback connection on the first device used.
     if (!ibdevx_cst_ep) {
         status = setup_cst_loopback(ibdevx_state, devid);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cst setup failed \n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "cst setup failed \n");
     }
 
 out:
@@ -1429,7 +1423,7 @@ int nvshmemt_ibdevx_ep_get_handle(struct ibdevx_ep_handle *ep_handle_ptr, struct
     int status = 0;
 
     status = ep_get_handle(ep_handle_ptr, ep);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_get_handle failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_get_handle failed \n");
 
 out:
     return status;
@@ -1439,7 +1433,7 @@ int nvshmemt_ibdevx_ep_destroy(struct ibdevx_ep *ep) {
     int status = 0;
 
     status = check_poll_avail(ep, WAIT_ALL /*1*/);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
 
     // TODO: clean up qp, cq, etc.
 
@@ -1451,76 +1445,63 @@ int nvshmemt_ibdevx_ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep
     int status = 0;
 
     status = ep_connect(ep, ep_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_connect failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ep_connect failed \n");
 
 out:
     return status;
 }
 
-int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t) {
+int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t, int selected_dev_id) {
     /* transport side */
     struct ibdevx_ep_handle *local_ep_handles = NULL, *ep_handles = NULL;
     transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)t->state;
-    int status = 0, ndev;
+    int status = 0;
+
+    int n_pes = t->n_pes;
 
     /* allocate all EPs for transport, plus 1 for the proxy thread. */
     int ep_count = ibdevx_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
     ibdevx_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
+    ibdevx_state->selected_dev_id = selected_dev_id;
 
-    ibdevx_state->ep =
-        (struct ibdevx_ep **)calloc(nvshmemi_state->npes * ep_count, sizeof(struct ibdevx_ep *));
-    NULL_ERROR_JMP(ibdevx_state->ep, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "failed allocating space for endpoints \n");
+    ibdevx_state->ep = (struct ibdevx_ep **)calloc(n_pes * ep_count, sizeof(struct ibdevx_ep *));
+    NVSHMEMI_NULL_ERROR_JMP(ibdevx_state->ep, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "failed allocating space for endpoints \n");
 
-    local_ep_handles = (struct ibdevx_ep_handle *)calloc(nvshmemi_state->npes * ep_count,
-                                                         sizeof(struct ibdevx_ep_handle));
-    NULL_ERROR_JMP(local_ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "failed allocating space for local ep handles \n");
+    local_ep_handles =
+        (struct ibdevx_ep_handle *)calloc(n_pes * ep_count, sizeof(struct ibdevx_ep_handle));
+    NVSHMEMI_NULL_ERROR_JMP(local_ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "failed allocating space for local ep handles \n");
 
-    ep_handles = (struct ibdevx_ep_handle *)calloc(nvshmemi_state->npes * ep_count,
-                                                   sizeof(struct ibdevx_ep_handle));
-    NULL_ERROR_JMP(ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "failed allocating space for ep handles \n");
+    ep_handles =
+        (struct ibdevx_ep_handle *)calloc(n_pes * ep_count, sizeof(struct ibdevx_ep_handle));
+    NVSHMEMI_NULL_ERROR_JMP(ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "failed allocating space for ep handles \n");
 
-    /*if NVSHMEM_ENABLE_NIC_PE_MAPPING is not set, let transport manage the device binding
-     * and do round robin. #TODO remove these direct references to nvshmemi_options if we want
-     * to allow dl_open of transports.
-     */
-    if (nvshmemi_options.ENABLE_NIC_PE_MAPPING) {
-        ndev = ibdevx_state->n_dev_ids;
-
-        ibdevx_state->selected_dev_id = nvshmemi_state->mype_node % ndev;
-        INFO(NVSHMEM_INIT, "NVSHMEM_ENABLE_NIC_PE_MAPPING = 1, setting dev_id = %d",
-             ibdevx_state->selected_dev_id);
-    } else {
-        status = get_device_by_distance(&ibdevx_state->selected_dev_id, nvshmemi_state, t);
-        INFO(NVSHMEM_INIT, "Getting closest device by distance, device index = %d",
-             ibdevx_state->selected_dev_id);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "get_device_by_distance failed \n");
-    }
-
-    for (int j = 0; j < nvshmemi_state->npes; j++) {
+    for (int j = 0; j < n_pes; j++) {
         for (int k = 0; k < ep_count; k++) {
             nvshmemt_ibdevx_ep_create(&ibdevx_state->ep[j * ep_count + k],
                                       ibdevx_state->selected_dev_id, ibdevx_state);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport create ep failed \n");
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "transport create ep failed \n");
             status = nvshmemt_ibdevx_ep_get_handle(&local_ep_handles[j * ep_count + k],
                                                    ibdevx_state->ep[j * ep_count + k]);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "transport get ep handle failed \n");
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "transport get ep handle failed \n");
         }
     }
 
-    status = nvshmemi_boot_handle.alltoall((void *)local_ep_handles, (void *)ep_handles,
-                                           sizeof(struct ibdevx_ep_handle) * ep_count,
-                                           &nvshmemi_boot_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "allgather of ep handles failed \n");
+    status = t->boot_handle->alltoall((void *)local_ep_handles, (void *)ep_handles,
+                                      sizeof(struct ibdevx_ep_handle) * ep_count, t->boot_handle);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "allgather of ep handles failed \n");
 
-    for (int j = 0; j < nvshmemi_state->npes; j++) {
+    for (int j = 0; j < n_pes; j++) {
         for (int k = 0; k < ep_count; k++) {
             status = nvshmemt_ibdevx_ep_connect(ibdevx_state->ep[j * ep_count + k],
                                                 &ep_handles[j * ep_count + k]);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                         "transport create connect failed \n");
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "transport create connect failed \n");
         }
     }
 out:
@@ -1532,7 +1513,7 @@ out:
     return status;
 }
 
-int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
+int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, int api_version) {
     int status = 0;
     struct nvshmem_transport *transport = NULL;
     transport_ibdevx_state_t *ibdevx_state = NULL;
@@ -1545,46 +1526,16 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
     struct nvshmemt_hca_info hca_list[MAX_NUM_HCAS];
     struct nvshmemt_hca_info pe_hca_mapping[MAX_NUM_PES_PER_NODE];
     int hca_list_count = 0, pe_hca_map_count = 0, user_selection = 0;
-    int transport_skipped;
     int offset = 0;
     int log_qp_depth;
+    uint32_t atomic_host_endian_size = 0;
 
-    transport_skipped = strncasecmp(nvshmemi_options.REMOTE_TRANSPORT, DEVX_TRANSPORT_STRING,
-                                    TRANSPORT_STRING_MAX_LENGTH);
-
-    if (transport_skipped) {
-        INFO(NVSHMEM_INIT,
-             "IB disabled by user through environment "
-             "in favor of the %s transport.\n",
-             nvshmemi_options.REMOTE_TRANSPORT);
-        status = NVSHMEMI_ERROR_SKIPPED;
-        goto out;
-    }
-
-    if (nvshmemt_ibv_ftable_init(&ibv_handle, &ftable)) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                  "Unable to dlopen libibverbs. Skipping devx transport.");
-    }
-
-    if (nvshmemi_options.DISABLE_IB_NATIVE_ATOMICS) {
-        use_ib_native_atomics = 0;
-    }
-    ibdevx_srq_depth = nvshmemi_options.SRQ_DEPTH;
-    ibdevx_qp_depth = nvshmemi_options.QP_DEPTH;
-    log_qp_depth = (int)log2(ibdevx_qp_depth);
-    if (log_qp_depth < 1) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                  "Invalid qp size specified. Please select "
-                  "a value greater than or equal to 2.\n");
-    }
-    if (ibdevx_qp_depth > (1 << log_qp_depth)) {
-        if (log_qp_depth >= 30) {
-            ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                      "Invalid qp size specified. Please select "
-                      "a value less than or equal to 2^30.\n");
-        }
-        /* DEVX requires a power of 2. So round up to the nearest power here. */
-        ibdevx_qp_depth = 1 << (log_qp_depth + 1);
+    if (api_version != NVSHMEM_TRANSPORT_INTERFACE_VERSION) {
+        NVSHMEMI_ERROR_PRINT(
+            "NVSHMEM provided an incompatible version of the transport interface. "
+            "This transport supports a maximum API version of %d",
+            NVSHMEM_TRANSPORT_INTERFACE_VERSION);
+        return NVSHMEMX_ERROR_INVALID_VALUE;
     }
 
     memset(&local_dummy_mr, 0, sizeof(local_dummy_mr));
@@ -1595,47 +1546,87 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
         false; /* set it to true after everything has been successfully initialized */
 
     ibdevx_state = (transport_ibdevx_state_t *)calloc(1, sizeof(transport_ibdevx_state_t));
-    NULL_ERROR_JMP(ibdevx_state, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "p2p state allocation failed \n");
+    NVSHMEMI_NULL_ERROR_JMP(ibdevx_state, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "ibdevx state allocation failed \n");
+    transport->state = (void *)ibdevx_state;
 
-    dev_list = ftable.get_device_list(&num_devices);
-    NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out, "get_device_list failed \n");
+    ibdevx_state->options =
+        (struct nvshmemi_options_s *)calloc(1, sizeof(struct nvshmemi_options_s));
+    NVSHMEMI_NULL_ERROR_JMP(ibdevx_state, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "ibdevx options allocation failed \n");
 
-    ibdevx_state->devices = calloc(MAX_NUM_HCAS, sizeof(struct ibdevx_device));
-    NULL_ERROR_JMP(ibdevx_state->devices, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "get_device_list failed \n");
+    status = nvshmemi_env_options_init(ibdevx_state->options);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to initialize options.\n");
 
-    ibdevx_state->dev_ids = (int *)malloc(MAX_NUM_PES_PER_NODE * sizeof(int));
-    NULL_ERROR_JMP(ibdevx_state->dev_ids, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "malloc failed \n");
+    ibdevx_state->log_level = nvshmemt_common_get_log_level(ibdevx_state->options);
 
-    ibdevx_state->port_ids = (int *)malloc(MAX_NUM_PES_PER_NODE * sizeof(int));
-    NULL_ERROR_JMP(ibdevx_state->port_ids, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "malloc failed \n");
-
-    status = pthread_mutex_init(&ibdevx_mutex_send_progress, NULL);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_init failed \n");
-
-    if (nvshmemi_options.HCA_LIST_provided) {
-        user_selection = 1;
-        exclude_list = (nvshmemi_options.HCA_LIST[0] == '^');
-        hca_list_count = nvshmemt_parse_hca_list(nvshmemi_options.HCA_LIST, hca_list, MAX_NUM_HCAS);
+    if (nvshmemt_ibv_ftable_init(&ibv_handle, &ftable, ibdevx_state->log_level)) {
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                           "Unable to dlopen libibverbs. Skipping devx transport.");
     }
 
-    if (nvshmemi_options.HCA_PE_MAPPING_provided) {
+    if (ibdevx_state->options->DISABLE_IB_NATIVE_ATOMICS) {
+        use_ib_native_atomics = 0;
+    }
+    ibdevx_srq_depth = ibdevx_state->options->SRQ_DEPTH;
+    ibdevx_qp_depth = ibdevx_state->options->QP_DEPTH;
+    log_qp_depth = (int)log2(ibdevx_qp_depth);
+    if (log_qp_depth < 1) {
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
+                           "Invalid qp size specified. Please select "
+                           "a value greater than or equal to 2.\n");
+    }
+    if (ibdevx_qp_depth > (1 << log_qp_depth)) {
+        if (log_qp_depth >= 30) {
+            NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
+                               "Invalid qp size specified. Please select "
+                               "a value less than or equal to 2^30.\n");
+        }
+        /* DEVX requires a power of 2. So round up to the nearest power here. */
+        ibdevx_qp_depth = 1 << (log_qp_depth + 1);
+    }
+
+    dev_list = ftable.get_device_list(&num_devices);
+    NVSHMEMI_NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out,
+                            "get_device_list failed \n");
+
+    ibdevx_state->devices = calloc(MAX_NUM_HCAS, sizeof(struct ibdevx_device));
+    NVSHMEMI_NULL_ERROR_JMP(ibdevx_state->devices, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "get_device_list failed \n");
+
+    ibdevx_state->dev_ids = (int *)malloc(MAX_NUM_PES_PER_NODE * sizeof(int));
+    NVSHMEMI_NULL_ERROR_JMP(ibdevx_state->dev_ids, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "malloc failed \n");
+
+    ibdevx_state->port_ids = (int *)malloc(MAX_NUM_PES_PER_NODE * sizeof(int));
+    NVSHMEMI_NULL_ERROR_JMP(ibdevx_state->port_ids, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "malloc failed \n");
+
+    status = pthread_mutex_init(&ibdevx_mutex_send_progress, NULL);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_init failed \n");
+
+    if (ibdevx_state->options->HCA_LIST_provided) {
+        user_selection = 1;
+        exclude_list = (ibdevx_state->options->HCA_LIST[0] == '^');
+        hca_list_count = nvshmemt_parse_hca_list(ibdevx_state->options->HCA_LIST, hca_list,
+                                                 MAX_NUM_HCAS, ibdevx_state->log_level);
+    }
+
+    if (ibdevx_state->options->HCA_PE_MAPPING_provided) {
         if (hca_list_count) {
-            WARN_PRINT(
+            NVSHMEMI_WARN_PRINT(
                 "Found conflicting parameters NVSHMEM_HCA_LIST and NVSHMEM_HCA_PE_MAPPING, "
                 "ignoring "
                 "NVSHMEM_HCA_PE_MAPPING \n");
         } else {
             user_selection = 1;
-            pe_hca_map_count = nvshmemt_parse_hca_list(nvshmemi_options.HCA_PE_MAPPING,
-                                                       pe_hca_mapping, MAX_NUM_PES_PER_NODE);
+            pe_hca_map_count =
+                nvshmemt_parse_hca_list(ibdevx_state->options->HCA_LIST, pe_hca_mapping,
+                                        MAX_NUM_PES_PER_NODE, ibdevx_state->log_level);
         }
     }
 
-    INFO(NVSHMEM_INIT,
+    INFO(ibdevx_state->log_level,
          "Begin - Enumerating IB devices in the system ([<dev_id, device_name, num_ports>]) - ");
     for (int i = 0; i < num_devices; i++) {
         device = (struct ibdevx_device *)ibdevx_state->devices + i;
@@ -1643,27 +1634,34 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
 
         device->context = ftable.open_device(device->dev);
         if (!device->context) {
-            INFO(NVSHMEM_INIT, "open_device failed for IB device at index %d", i);
+            INFO(ibdevx_state->log_level, "open_device failed for IB device at index %d", i);
             continue;
         }
 
         const char *name = ftable.get_device_name(device->dev);
-        NULL_ERROR_JMP(name, status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_get_device_name failed \n");
+        NVSHMEMI_NULL_ERROR_JMP(name, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                "ibv_get_device_name failed \n");
         if (!strstr(name, "mlx5")) {
-            WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
+            NVSHMEMI_WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
             continue;
         }
 
         status = ftable.query_device(device->context, &device->device_attr);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_query_device failed \n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_query_device failed \n");
 
         if (!nvshmemt_ib_common_query_mlx5_caps(device->context)) {
-            WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
+            NVSHMEMI_WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
             continue;
         }
 
+        /* Report whether we need to do atomic endianness conversions on 8 byte operands. */
+        status = nvshmemt_ib_common_query_endianness_conversion_size(&atomic_host_endian_size,
+                                                                     device->context);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "nvshmemt_ib_common_query_endianness_conversion_size failed.\n");
+
         NVSHMEMT_IBDEVX_MAX_RD_ATOMIC = (device->device_attr).max_qp_rd_atom;
-        INFO(NVSHMEM_INIT,
+        INFO(ibdevx_state->log_level,
              "Enumerated IB devices in the system - device id=%d (of %d), name=%s, num_ports=%d", i,
              num_devices, name, device->device_attr.phys_port_cnt);
         int device_used = 0;
@@ -1699,27 +1697,28 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
                 continue;
             } else {
                 status = ftable.query_port(device->context, p, &device->port_attr[p - 1]);
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_port_query failed \n");
+                NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                      "ibv_port_query failed \n");
 
                 if ((device->port_attr[p - 1].state != IBV_PORT_ACTIVE) ||
                     (device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_INFINIBAND &&
                      device->port_attr[p - 1].link_layer != IBV_LINK_LAYER_ETHERNET)) {
                     if (user_selection) {
-                        WARN_PRINT(
+                        NVSHMEMI_WARN_PRINT(
                             "found inactive port or port with non-IB link layer protocol, "
                             "skipping...\n");
                     }
                     continue;
                 }
 
-                status = ftable.query_gid(device->context, p, nvshmemi_options.IB_GID_INDEX,
+                status = ftable.query_gid(device->context, p, ibdevx_state->options->IB_GID_INDEX,
                                           &device->gid[p - 1]);
-                NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out,
-                               "query_gid failed \n");
+                NVSHMEMI_NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                        "query_gid failed \n");
 
                 device->pd = ftable.alloc_pd(device->context);
-                NULL_ERROR_JMP(device->pd, status, NVSHMEMX_ERROR_INTERNAL, out,
-                               "ibv_alloc_pd failed \n");
+                NVSHMEMI_NULL_ERROR_JMP(device->pd, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                        "ibv_alloc_pd failed \n");
 
                 for (int k = 0; k < replicate_count; k++) {
                     ibdevx_state->dev_ids[offset] = i;
@@ -1733,50 +1732,62 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
 
         if (!device_used) {
             status = ftable.close_device(device->context);
-            NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_port_query failed \n");
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_port_query failed \n");
         }
     }
-    INFO(NVSHMEM_INIT, "End - Enumerating IB devices in the system");
+    INFO(ibdevx_state->log_level, "End - Enumerating IB devices in the system");
 
     ibdevx_state->n_dev_ids = offset;
-    INFO(NVSHMEM_INIT,
+    INFO(ibdevx_state->log_level,
          "Begin - Ordered list of devices for assignment (after processing user provdied env vars "
          "(if any))  - ");
     for (int i = 0; i < ibdevx_state->n_dev_ids; i++) {
-        INFO(NVSHMEM_INIT,
+        INFO(ibdevx_state->log_level,
              "Ordered list of devices for assignment - idx=%d (of %d), device id=%d, port_num=%d",
              i, ibdevx_state->n_dev_ids, ibdevx_state->dev_ids[i], ibdevx_state->port_ids[i]);
     }
-    INFO(NVSHMEM_INIT,
+    INFO(ibdevx_state->log_level,
          "End - Ordered list of devices for assignment (after processing user provdied env vars "
          "(if any))");
 
     if (!ibdevx_state->n_dev_ids) {
-        INFO(NVSHMEM_INIT, "no active IB device found, exiting");
+        INFO(ibdevx_state->log_level, "no active IB device found, exiting");
         status = NVSHMEMX_ERROR_INTERNAL;
         goto out;
+    }
+
+    transport->n_devices = ibdevx_state->n_dev_ids;
+    transport->device_pci_paths = (char **)calloc(transport->n_devices, sizeof(char *));
+    NVSHMEMI_NULL_ERROR_JMP(transport->device_pci_paths, status, NVSHMEMX_ERROR_INTERNAL, out,
+                            "Unable to allocate paths for IB transport.");
+    for (int i = 0; i < transport->n_devices; i++) {
+        status = get_pci_path(i, &transport->device_pci_paths[i], transport);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "Failed to get paths for PCI devices.");
     }
 
     // print devices that were not found
     if (hca_list_count) {
         for (int j = 0; j < hca_list_count; j++) {
             if (hca_list[j].found != 1) {
-                WARN_PRINT("cound not find user specified HCA name: %s port: %d, skipping\n",
-                           hca_list[j].name, hca_list[j].port);
+                NVSHMEMI_WARN_PRINT(
+                    "cound not find user specified HCA name: %s port: %d, skipping\n",
+                    hca_list[j].name, hca_list[j].port);
             }
         }
     } else if (pe_hca_map_count) {
         // filter devices based on user hca-pe mapping
         for (int j = 0; j < pe_hca_map_count; j++) {
             if (pe_hca_mapping[j].found != 1) {
-                WARN_PRINT("cound not find user specified HCA name: %s port: %d, skipping\n",
-                           pe_hca_mapping[j].name, pe_hca_mapping[j].port);
+                NVSHMEMI_WARN_PRINT(
+                    "cound not find user specified HCA name: %s port: %d, skipping\n",
+                    pe_hca_mapping[j].name, pe_hca_mapping[j].port);
             }
         }
     }
 
-    transport->host_ops.get_device_count = nvshmemt_ibdevx_get_device_count;
-    transport->host_ops.get_pci_path = nvshmemt_ibdevx_get_pci_path;
+    // TODO: When we introduce a new version of the interface, add logic for handling them.
+
     transport->host_ops.can_reach_peer = nvshmemt_ibdevx_can_reach_peer;
     transport->host_ops.connect_endpoints = nvshmemt_ibdevx_connect_endpoints;
     transport->host_ops.get_mem_handle = nvshmemt_ibdevx_get_mem_handle;
@@ -1791,16 +1802,27 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
     transport->host_ops.enforce_cst = nvshmemt_ibdevx_enforce_cst_at_target;
 
     transport->attr = NVSHMEM_TRANSPORT_ATTR_CONNECTED;
-    transport->state = (void *)ibdevx_state;
     transport->is_successfully_initialized = true;
+    transport->atomics_complete_on_quiet = true;
+    transport->max_op_len = 1ULL << 30;
+    transport->atomic_host_endian_min_size = atomic_host_endian_size;
+    transport->api_version = NVSHMEM_TRANSPORT_INTERFACE_VERSION;
 
     *t = transport;
 
+    ibdevx_state->table = table;
     ibdevx_state->dmabuf_support = false;
 #if CUDA_VERSION >= 11070
     int flag;
-    status = CUPFN(cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED,
-                                        nvshmemi_state->cudevice));
+    CUdevice gpu_device_id;
+
+    status = CUPFN(table, cuCtxGetDevice(&gpu_device_id));
+    if (status != CUDA_SUCCESS) {
+        status = NVSHMEMX_ERROR_INTERNAL;
+        goto out;
+    }
+    status = CUPFN(
+        table, cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, gpu_device_id));
     if (status != CUDA_SUCCESS) {
         status = 0;
         cudaGetLastError();
@@ -1808,6 +1830,15 @@ int nvshmemt_ibdevx_init(nvshmem_transport_t *t) {
         ibdevx_state->dmabuf_support = true;
     }
 #endif
+
+    if (ibdevx_state->dmabuf_support == false) {
+        if (nvshmemt_ib_common_nv_peer_mem_available() != NVSHMEMX_SUCCESS) {
+            NVSHMEMI_ERROR_PRINT(
+                "neither nv_peer_mem, or nvidia_peermem detected. Skipping transport.\n");
+            status = NVSHMEMX_ERROR_INTERNAL;
+            goto out;
+        }
+    }
 
 out:
 
@@ -1821,6 +1852,9 @@ out:
             }
             if (ibdevx_state->port_ids) {
                 free(ibdevx_state->port_ids);
+            }
+            if (ibdevx_state->options) {
+                free(ibdevx_state->options);
             }
             free(ibdevx_state);
         }

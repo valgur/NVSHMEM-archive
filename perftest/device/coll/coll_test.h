@@ -16,10 +16,10 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <unistd.h>
-#ifdef NVSHMEM_MPI_SUPPORT
+#ifdef NVSHMEMTEST_MPI_SUPPORT
 #include "mpi.h"
 #endif
-#ifdef NVSHMEM_SHMEM_SUPPORT
+#ifdef NVSHMEMTEST_SHMEM_SUPPORT
 #include "shmem.h"
 #include "shmemx.h"
 #endif
@@ -28,12 +28,14 @@
 #include <cuda.h>
 #include <sys/time.h>
 
+using namespace std;
+
 #define MAX_ITERS 100
 #define MAX_SKIP 10
 #define BARRIER_MAX_ITERS 1000
 #define BARRIER_MAX_SKIP 10
 #define MAX_NPES 128
-#define TEST_NUM_TPB_BLOCK 512
+#define TEST_NUM_TPB_BLOCK 256
 
 typedef struct run_opt {
     int run_thread;

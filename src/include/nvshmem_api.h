@@ -40,6 +40,7 @@ typedef struct {
     nvshmemx_init_handle_t handle;
 } nvshmemx_init_attr_t;
 
+void nvshmemx_gic_get_device_state(void **gic_device_state);
 void nvshmemx_get_device_state(nvshmemi_device_state_t **);
 int nvshmemx_internal_common_init();
 int nvshmemx_internal_init_thread(int requested_thread_support, int *provided_thread_support,
@@ -209,6 +210,13 @@ NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(FAND_FOR_FXOR, xor)
 
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_TYPE_P)
 #undef NVSHMEMI_DECL_TYPE_P
+
+#define NVSHMEMI_DECL_TYPE_PUT(NAME, TYPE)                                               \
+    NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_put(TYPE *dest, const TYPE *source, \
+                                                         size_t nelems, int pe);
+
+NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_DECL_TYPE_PUT)
+#undef NVSHMEMI_DECL_TYPE_PUT
 
 #define NVSHMEMI_DECL_TYPE_PUT(NAME, TYPE)                                               \
     NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_##NAME##_put(TYPE *dest, const TYPE *source, \

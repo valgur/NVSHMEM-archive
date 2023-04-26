@@ -31,76 +31,19 @@
 #include <sstream>
 #include <vector>
 #include <inttypes.h>
+#include "nvshmem_build_options.h"
+#include "nvshmemx_error.h"
 #include "error_codes_internal.h"
 #include "debug.h"
+#include "env_defs.h"
 
-#define likely(x) __builtin_expect((x), 1)
-#define unlikely(x) __builtin_expect((x), 0)
+#ifndef likely
+#define likely(x) (__builtin_expect(!!(x), 1))
+#endif
 
-#define ERROR_EXIT(...)                                                  \
-    do {                                                                 \
-        fprintf(stderr, "%s:%s:%d: ", __FILE__, __FUNCTION__, __LINE__); \
-        fprintf(stderr, __VA_ARGS__);                                    \
-        exit(-1);                                                        \
-    } while (0)
-
-#define ERROR_PRINT(...)                                                 \
-    do {                                                                 \
-        fprintf(stderr, "%s:%s:%d: ", __FILE__, __FUNCTION__, __LINE__); \
-        fprintf(stderr, __VA_ARGS__);                                    \
-    } while (0)
-
-#define WARN_PRINT(...)               \
-    do {                              \
-        fprintf(stdout, "WARN: ");    \
-        fprintf(stdout, __VA_ARGS__); \
-    } while (0)
-
-#define NULL_JMP(var, status, err, label) \
-    do {                                  \
-        if (var == NULL) {                \
-            status = err;                 \
-            goto label;                   \
-        }                                 \
-    } while (0)
-
-#define ERROR_JMP(status, err, label, ...)                                       \
-    do {                                                                         \
-        fprintf(stderr, "%s:%d: non-zero status: %d ", __FILE__, __LINE__, err); \
-        fprintf(stderr, __VA_ARGS__);                                            \
-        status = err;                                                            \
-        goto label;                                                              \
-    } while (0)
-
-#define NULL_ERROR_JMP(var, status, err, label, ...)                   \
-    do {                                                               \
-        if (unlikely(var == NULL)) {                                   \
-            fprintf(stderr, "%s:%d: NULL value ", __FILE__, __LINE__); \
-            fprintf(stderr, __VA_ARGS__);                              \
-            status = err;                                              \
-            goto label;                                                \
-        }                                                              \
-    } while (0)
-
-#define EQ_ERROR_JMP(status, expected, err, label, ...)                              \
-    do {                                                                             \
-        if (unlikely(status == expected)) {                                          \
-            fprintf(stderr, "%s:%d: error status: %d ", __FILE__, __LINE__, status); \
-            fprintf(stderr, __VA_ARGS__);                                            \
-            status = err;                                                            \
-            goto label;                                                              \
-        }                                                                            \
-    } while (0)
-
-#define NE_ERROR_JMP(status, expected, err, label, ...)                                 \
-    do {                                                                                \
-        if (unlikely(status != expected)) {                                             \
-            fprintf(stderr, "%s:%d: non-zero status: %d ", __FILE__, __LINE__, status); \
-            fprintf(stderr, __VA_ARGS__);                                               \
-            status = err;                                                               \
-            goto label;                                                                 \
-        }                                                                               \
-    } while (0)
+#ifndef unlikely
+#define unlikely(x) (__builtin_expect(!!(x), 0))
+#endif
 
 #define NZ_DEBUG_JMP(status, err, label, ...)                                               \
     do {                                                                                    \
@@ -111,55 +54,6 @@
             }                                                                               \
             status = err;                                                                   \
             goto label;                                                                     \
-        }                                                                                   \
-    } while (0)
-
-#define NZ_ERROR_JMP(status, err, label, ...)                                           \
-    do {                                                                                \
-        if (unlikely(status != 0)) {                                                    \
-            fprintf(stderr, "%s:%d: non-zero status: %d ", __FILE__, __LINE__, status); \
-            fprintf(stderr, __VA_ARGS__);                                               \
-            status = err;                                                               \
-            goto label;                                                                 \
-        }                                                                               \
-    } while (0)
-
-#define NZ_JMP(status, label, ...)                                                      \
-    do {                                                                                \
-        if (unlikely(status != 0)) {                                                    \
-            fprintf(stderr, "%s:%d: non-zero status: %d ", __FILE__, __LINE__, status); \
-            fprintf(stderr, __VA_ARGS__);                                               \
-            goto label;                                                                 \
-        }                                                                               \
-    } while (0)
-
-#define NZ_EXIT(status, ...)                                                                   \
-    do {                                                                                       \
-        if (unlikely(status != 0)) {                                                           \
-            fprintf(stderr, "%s:%d: non-zero status: %d: %s, exiting... ", __FILE__, __LINE__, \
-                    status, strerror(errno));                                                  \
-            fprintf(stderr, __VA_ARGS__);                                                      \
-            exit(-1);                                                                          \
-        }                                                                                      \
-    } while (0)
-
-#define NULL_EXIT(ptr, ...)                                                                       \
-    do {                                                                                          \
-        if (unlikely(!ptr)) {                                                                     \
-            fprintf(stderr, "%s:%d: null ptr, error string: %s, exiting... ", __FILE__, __LINE__, \
-                    strerror(errno));                                                             \
-            fprintf(stderr, __VA_ARGS__);                                                         \
-            exit(-1);                                                                             \
-        }                                                                                         \
-    } while (0)
-
-#define NE_EXIT(status, expected, ...)                                                      \
-    do {                                                                                    \
-        if (unlikely(status != expected)) {                                                 \
-            fprintf(stderr, "%s:%d: error status: %d: %s, exiting... ", __FILE__, __LINE__, \
-                    status, strerror(errno));                                               \
-            fprintf(stderr, __VA_ARGS__);                                                   \
-            exit(-1);                                                                       \
         }                                                                                   \
     } while (0)
 
@@ -272,38 +166,6 @@ char *nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent,
                     const int strip_backticks);
 
 extern const char *p_err_str;
-
-typedef int nvshmemi_env_int;
-typedef long nvshmemi_env_long;
-typedef size_t nvshmemi_env_size;
-typedef bool nvshmemi_env_bool;
-typedef const char *nvshmemi_env_string;
-
-#define NVSHFMT_int(_v) _v
-#define NVSHFMT_long(_v) _v
-#define NVSHFMT_size(_v) _v
-#define NVSHFMT_bool(_v) (_v) ? "true" : "false"
-#define NVSHFMT_string(_v) _v
-
-enum nvshmemi_env_categories {
-    NVSHMEMI_ENV_CAT_OPENSHMEM,
-    NVSHMEMI_ENV_CAT_OTHER,
-    NVSHMEMI_ENV_CAT_COLLECTIVES,
-    NVSHMEMI_ENV_CAT_TRANSPORT,
-    NVSHMEMI_ENV_CAT_HIDDEN,
-    NVSHMEMI_ENV_CAT_NVTX,
-    NVSHMEMI_ENV_CAT_BOOTSTRAP
-};
-
-struct nvshmemi_options_s {
-#define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC) nvshmemi_env_##KIND NAME;
-#include "env_defs.h"
-#undef NVSHMEMI_ENV_DEF
-
-#define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC) bool NAME##_provided;
-#include "env_defs.h"
-#undef NVSHMEMI_ENV_DEF
-};
 
 extern struct nvshmemi_options_s nvshmemi_options;
 

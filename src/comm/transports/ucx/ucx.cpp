@@ -6,6 +6,7 @@
 
 #include "transport_common.h"
 #include "ucx.h"
+#include <assert.h>
 
 static void *ibv_handle;
 
@@ -32,23 +33,22 @@ static bool use_local_atomics = 0;
 
 int nvshmemt_ucx_progress(nvshmem_transport_t transport);
 
-static nvshmemt_ucx_mem_handle_info_t get_mem_handle_info(transport_ucx_state_t *ucx_state,
-                                                          void *gpu_ptr) {
+static nvshmemt_ucx_mem_handle_info_t *get_mem_handle_info(nvshmem_transport_t transport,
+                                                           transport_ucx_state_t *ucx_state,
+                                                           void *gpu_ptr) {
     /* assumes that gpu_ptr is in symmetric heap */
-    assert(!ucx_state->mem_handle_info_cache.empty());
-    nvshmemt_ucx_mem_handle_info_t mem_handle_info;
-    size_t offset = (char *)gpu_ptr - (char *)nvshmemi_state->heap_base;
-    size_t addr_idx = offset >> log2_cumem_granularity;
-    size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
+    assert(ucx_state->cache);
+    nvshmemt_ucx_mem_handle_info_t *mem_handle_info;
 
-    mem_handle_info = ucx_state->mem_handle_info_cache[handle_idx];
+    mem_handle_info = (nvshmemt_ucx_mem_handle_info_t *)nvshmemt_mem_handle_cache_get(
+        transport, ucx_state->cache, gpu_ptr);
 
     return mem_handle_info;
 }
 
 static void nvshmemt_ucx_send_request_cb(void *request, ucs_status_t status, void *user_data) {
     if (status != UCS_OK) {
-        ERROR_PRINT("UCX send request completed with error.\n");
+        NVSHMEMI_ERROR_PRINT("UCX send request completed with error.\n");
     }
 
     if (user_data) {
@@ -66,22 +66,22 @@ static void nvshmemt_ucx_atomic_request_cb(void *request, ucs_status_t status, v
 
 #ifdef NVSHMEM_USE_GDRCOPY
     if (status != UCS_OK) {
-        ERROR_PRINT("UCX AMO request completed with error.\n");
+        NVSHMEMI_ERROR_PRINT("UCX AMO request completed with error.\n");
     }
 
     if (use_gdrcopy) {
         if (buffer) {
             if (buffer->amo_has_retval) {
-                transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)buffer->ucx_state;
-                ;
-                nvshmemt_ucx_mem_handle_info_t mem_handle_info =
-                    get_mem_handle_info(ucx_state, buffer->amo_device_retptr);
+                nvshmem_transport_t transport = (nvshmem_transport_t)buffer->transport;
+                transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)transport->state;
+                nvshmemt_ucx_mem_handle_info_t *mem_handle_info =
+                    get_mem_handle_info(transport, ucx_state, buffer->amo_device_retptr);
                 g_elem_t *elem;
                 void *valid_cpu_ptr;
 
                 valid_cpu_ptr =
-                    (void *)((char *)mem_handle_info.cpu_ptr +
-                             ((char *)buffer->amo_device_retptr - (char *)mem_handle_info.ptr));
+                    (void *)((char *)mem_handle_info->cpu_ptr +
+                             ((char *)buffer->amo_device_retptr - (char *)mem_handle_info->ptr));
                 elem = (g_elem_t *)valid_cpu_ptr;
                 elem->data = buffer->retvalue;
                 elem->flag = buffer->amo_retflag;
@@ -100,11 +100,11 @@ static void nvshmemt_ucx_send_am_request_cb(void *request, ucs_status_t status, 
     nvshmemt_ucx_am_header_t *header_info = (nvshmemt_ucx_am_header_t *)user_data;
 
     if (status != UCS_OK) {
-        ERROR_PRINT("UCX send request completed with error.\n");
+        NVSHMEMI_ERROR_PRINT("UCX send request completed with error.\n");
     }
 
     if (header_info == NULL) {
-        ERROR_PRINT("UCX send request completed with error.\n");
+        NVSHMEMI_ERROR_PRINT("UCX send request completed with error.\n");
         return;
     }
 
@@ -150,7 +150,7 @@ static ucs_status_t nvshmemt_ucx_recv_send_am_data_cb(void *arg, const void *hea
             dynamic_allocation = true;
             header_info = (nvshmemt_ucx_am_header_t *)calloc(1, sizeof(nvshmemt_ucx_am_header_t));
             if (header_info == NULL) {
-                ERROR_EXIT("Unable to allocate memory in UCX transport.\n");
+                NVSHMEMI_ERROR_EXIT("Unable to allocate memory in UCX transport.\n");
             }
         }
         memcpy(header_info, buffer_header, sizeof(nvshmemt_ucx_am_header_t));
@@ -180,17 +180,17 @@ ucs_status_t ucx_recv_resp_am_data_cb(void *arg, const void *header, size_t head
     bool is_proxy;
 
     if (!header_length) {
-        ERROR_PRINT("Got NULL header in resp_am_data cb.\n");
+        NVSHMEMI_ERROR_PRINT("Got NULL header in resp_am_data cb.\n");
         goto out;
     }
     if (header_length == sizeof(nvshmemt_ucx_am_header_t)) {
         header_info = (nvshmemt_ucx_am_header_t *)header;
-        nvshmemt_ucx_mem_handle_info_t mem_handle_info =
-            get_mem_handle_info(ucx_state, header_info->header.resp_h.retptr);
+        nvshmemt_ucx_mem_handle_info_t *mem_handle_info =
+            get_mem_handle_info(transport, ucx_state, header_info->header.resp_h.retptr);
 
         valid_cpu_ptr =
-            (void *)((char *)mem_handle_info.cpu_ptr +
-                     ((char *)header_info->header.resp_h.retptr - (char *)mem_handle_info.ptr));
+            (void *)((char *)mem_handle_info->cpu_ptr +
+                     ((char *)header_info->header.resp_h.retptr - (char *)mem_handle_info->ptr));
         recv_elem_ptr = (volatile g_elem_t *)valid_cpu_ptr;
         recv_elem_ptr->data = header_info->header.resp_h.retval;
         recv_elem_ptr->flag = header_info->header.resp_h.retflag;
@@ -198,7 +198,7 @@ ucs_status_t ucx_recv_resp_am_data_cb(void *arg, const void *header, size_t head
     } else if (header_length == sizeof(bool)) {
         is_proxy = *((bool *)header);
     } else {
-        ERROR_PRINT("Got bad header size (%lu) in resp_am_data cb.\n", header_length);
+        NVSHMEMI_ERROR_PRINT("Got bad header size (%lu) in resp_am_data cb.\n", header_length);
         goto out;
     }
 
@@ -215,25 +215,27 @@ out:
 int nvshmemt_ucx_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
     nvshmemt_ucx_mem_handle_t *handle = (nvshmemt_ucx_mem_handle_t *)mem_handle;
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)t->state;
+    nvshmemt_ucx_mem_handle_info_t *handle_info = NULL;
     ucs_status_t ucs_rc;
     int status = 0;
 
-    for (std::vector<nvshmemt_ucx_mem_handle_info_t>::iterator it =
-             ucx_state->mem_handle_info_cache.begin();
-         it != ucx_state->mem_handle_info_cache.end(); it++) {
-        if (handle->mem_handle == it->mem_handle) {
-#ifdef NVSHMEM_USE_GDRCOPY
-            if (use_gdrcopy) {
-                status = gdrcopy_ftable.unmap(gdr_desc, it->mh, it->cpu_ptr_base, it->size);
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unmap failed\n");
+    if (!handle->local_only) {
+        handle_info = (nvshmemt_ucx_mem_handle_info_t *)nvshmemt_mem_handle_cache_get(
+            t, ucx_state->cache, handle->ptr);
+    }
 
-                status = gdrcopy_ftable.unpin_buffer(gdr_desc, it->mh);
-                NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
-            }
-#endif
-            ucx_state->mem_handle_info_cache.erase(it);
-            break;
+    if (handle_info) {
+#ifdef NVSHMEM_USE_GDRCOPY
+        if (use_gdrcopy) {
+            status = gdrcopy_ftable.unmap(gdr_desc, handle_info->mh, handle_info->cpu_ptr_base,
+                                          handle_info->size);
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unmap failed\n");
+
+            status = gdrcopy_ftable.unpin_buffer(gdr_desc, handle_info->mh);
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
         }
+#endif
+        free(handle_info);
     }
 
     ucs_rc = ucp_mem_unmap(ucx_state->library_context, handle->mem_handle);
@@ -250,6 +252,7 @@ int nvshmemt_ucx_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_tr
         ucp_rkey_destroy(handle->ep_rkey_proxy);
     }
 
+    nvshmemt_mem_handle_cache_remove(t, ucx_state->cache, handle->ptr);
 out:
     return status;
 }
@@ -260,7 +263,7 @@ int nvshmemt_ucx_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     ucs_status_t ucs_rc;
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)t->state;
     nvshmemt_ucx_mem_handle_t *handle = (nvshmemt_ucx_mem_handle_t *)mem_handle;
-    nvshmemt_ucx_mem_handle_info_t handle_info;
+    nvshmemt_ucx_mem_handle_info_t *handle_info = NULL;
     ucp_mem_map_params_t params;
     int status = 0;
     void *rkey = NULL;
@@ -268,8 +271,8 @@ int nvshmemt_ucx_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     handle->ep_rkey_proxy = NULL;
     handle->ep_rkey_host = NULL;
     handle->mem_handle = NULL;
-    handle_info.ptr = buf;
-    handle_info.size = length;
+    handle->local_only = local_only;
+    handle->ptr = buf;
     params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS | UCP_MEM_MAP_PARAM_FIELD_LENGTH |
                         UCP_MEM_MAP_PARAM_FIELD_FLAGS;
     params.flags = 0;
@@ -278,44 +281,58 @@ int nvshmemt_ucx_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
 
     ucs_rc = ucp_mem_map(ucx_state->library_context, &params, &handle->mem_handle);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to map memory in UCX transport.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to map memory in UCX transport.\n");
     }
 
-    /* Needed for lookup later. */
-    handle_info.mem_handle = handle->mem_handle;
     ucs_rc = ucp_rkey_pack(ucx_state->library_context, handle->mem_handle, &rkey,
                            &handle->rkey_packed_buf_len);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to pack rkey for memory region in UCX transport.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to pack rkey for memory region in UCX transport.\n");
     }
+
+    if (!local_only) {
+        handle_info =
+            (nvshmemt_ucx_mem_handle_info_t *)calloc(1, sizeof(nvshmemt_ucx_mem_handle_info_t));
+        NVSHMEMI_NULL_ERROR_JMP(handle_info, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, error,
+                                "Cannot allocate memory handle info.\n");
+
+        /* Needed for lookup later. */
+        handle_info->mem_handle = handle;
+        handle_info->ptr = buf;
+        handle_info->size = length;
+    }
+
 #ifdef NVSHMEM_USE_GDRCOPY
     if (use_gdrcopy && !local_only) {
         status =
-            gdrcopy_ftable.pin_buffer(gdr_desc, (unsigned long)buf, length, 0, 0, &handle_info.mh);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "gdrcopy pin_buffer failed \n");
+            gdrcopy_ftable.pin_buffer(gdr_desc, (unsigned long)buf, length, 0, 0, &handle_info->mh);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                              "gdrcopy pin_buffer failed \n");
 
-        status = gdrcopy_ftable.map(gdr_desc, handle_info.mh, &handle_info.cpu_ptr_base, length);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "gdrcopy map failed \n");
+        status = gdrcopy_ftable.map(gdr_desc, handle_info->mh, &handle_info->cpu_ptr_base, length);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "gdrcopy map failed \n");
 
         gdr_info_t info;
-        status = gdrcopy_ftable.get_info(gdr_desc, handle_info.mh, &info);
-        NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "gdrcopy get_info failed \n");
+        status = gdrcopy_ftable.get_info(gdr_desc, handle_info->mh, &info);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "gdrcopy get_info failed \n");
 
         // remember that mappings start on a 64KB boundary, so let's
         // calculate the offset from the head of the mapping to the
         // beginning of the buffer
-        handle_info.cpu_ptr =
-            (void *)((char *)handle_info.cpu_ptr_base + ((char *)buf - (char *)info.va));
-    } else {
-        /* If we aren't using GDRCopy, we need to initialize these values. */
-        handle_info.cpu_ptr = NULL;
-        handle_info.cpu_ptr_base = NULL;
-        memset(&handle_info.mh, 0, sizeof(gdr_mh_t));
+        handle_info->cpu_ptr =
+            (void *)((char *)handle_info->cpu_ptr_base + ((char *)buf - (char *)info.va));
     }
 #endif
-    if (!local_only) ucx_state->mem_handle_info_cache.push_back(handle_info);
+    if (!local_only) {
+        if (ucx_state->cache == NULL) {
+            status = nvshmemt_mem_handle_cache_init(t, &ucx_state->cache);
+            NVSHMEMI_NZ_ERROR_JMP(status, status, error, "mem handle cache initialization failed.");
+        }
+        status = nvshmemt_mem_handle_cache_add(t, ucx_state->cache, buf, (void *)handle_info);
+        NVSHMEMI_NZ_ERROR_JMP(status, status, error, "Unable to add key to mem handle info cache");
+    }
     /* TODO: Find a way that doesn't rely on the rkey being smaller than an arbitrary value. */
     assert(handle->rkey_packed_buf_len < NVSHMEMT_UCP_RKEY_PACKED_MAX_LEN);
 
@@ -329,10 +346,17 @@ error:
         ucp_mem_unmap(ucx_state->library_context, handle->mem_handle);
     }
 
+    if (handle_info) {
+        if (ucx_state->cache) {
+            nvshmemt_mem_handle_cache_remove(t, ucx_state->cache, buf);
+        }
+        free(handle_info);
+    }
+
     return status;
 }
 
-int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t) {
+int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t, int selected_device_id) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)t->state;
     ucx_ep_handle_t local_ep_handle, *ep_handles = NULL;
     ucs_status_t ucs_rc;
@@ -341,54 +365,55 @@ int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t) {
     size_t addr_len;
     int i, j;
 
+    int n_pes = t->n_pes;
     int status = 0, ep_count;
 
     ep_count = ucx_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
     ucx_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
 
-    ucx_state->endpoints = (ucp_ep_h *)calloc(nvshmemi_state->npes * ep_count, sizeof(ucp_ep_h));
-    NULL_ERROR_JMP(ucx_state->endpoints, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "Failed to allocate endpoints for UCX transport.\n");
+    ucx_state->endpoints = (ucp_ep_h *)calloc(n_pes * ep_count, sizeof(ucp_ep_h));
+    NVSHMEMI_NULL_ERROR_JMP(ucx_state->endpoints, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "Failed to allocate endpoints for UCX transport.\n");
 
-    ep_handles = (ucx_ep_handle_t *)calloc(nvshmemi_state->npes, sizeof(ucx_ep_handle_t));
-    NULL_ERROR_JMP(ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                   "Failed to allocate endpoint handles for UCX transport.\n");
+    ep_handles = (ucx_ep_handle_t *)calloc(n_pes, sizeof(ucx_ep_handle_t));
+    NVSHMEMI_NULL_ERROR_JMP(ep_handles, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "Failed to allocate endpoint handles for UCX transport.\n");
 
     ucs_rc = ucp_worker_get_address(ucx_state->worker_context, &local_addr, &addr_len);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                  "Failed to get local address for endpoint in UCX transport.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                           "Failed to get local address for endpoint in UCX transport.\n");
     }
 
     if (addr_len > NVSHMEMT_UCP_ADDR_MAX_LEN) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                  "Address allocated by UCX is too large. Exiting.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                           "Address allocated by UCX is too large. Exiting.\n");
     }
     local_ep_handle.addr_len = addr_len;
     memcpy(local_ep_handle.addr, local_addr, addr_len);
     ucp_worker_release_address(ucx_state->worker_context, local_addr);
 
-    status = nvshmemi_boot_handle.allgather(&local_ep_handle, ep_handles, sizeof(ucx_ep_handle_t),
-                                            &nvshmemi_boot_handle);
-    NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                 "Failed to gather ep_handles in UCX transport.\n");
+    status = t->boot_handle->allgather(&local_ep_handle, ep_handles, sizeof(ucx_ep_handle_t),
+                                       t->boot_handle);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "Failed to gather ep_handles in UCX transport.\n");
 
     params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
-    for (i = 0; i < nvshmemi_state->npes; i++) {
+    for (i = 0; i < n_pes; i++) {
         for (j = 0; j < ep_count; j++) {
             params.address = (ucp_address_t *)ep_handles[i].addr;
             ucs_rc = ucp_ep_create(ucx_state->worker_context, &params,
                                    &ucx_state->endpoints[i * ep_count + j]);
             if (ucs_rc != UCS_OK) {
-                ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                          "Failed to connect endpoint in UCX transport.\n");
+                NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                   "Failed to connect endpoint in UCX transport.\n");
             }
         }
     }
 
 out:
     if (status != 0) {
-        for (i = 0; i < nvshmemi_state->npes; i++) {
+        for (i = 0; i < n_pes; i++) {
             for (j = 0; j < ep_count; j++) {
                 if (ucx_state->endpoints[i * ep_count + j] != NULL) {
                     ucp_ep_close_nb(ucx_state->endpoints[i * ep_count + j],
@@ -487,7 +512,7 @@ int nvshmemt_ucx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
     if (unlikely(*rkey_ptr == NULL)) {
         ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, rkey_ptr);
         if (ucs_rc != UCS_OK) {
-            ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
+            NVSHMEMI_ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
         }
     }
     rkey = *rkey_ptr;
@@ -517,7 +542,7 @@ int nvshmemt_ucx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
                 nvshmemt_ucx_bounce_buffers_in_use--;
                 buffer->in_use = false;
             }
-            ERROR_PRINT("Failed in UCX Transport during RMA operation.\n");
+            NVSHMEMI_ERROR_PRINT("Failed in UCX Transport during RMA operation.\n");
             return NVSHMEMX_ERROR_INTERNAL;
         }
     } else {
@@ -584,8 +609,8 @@ int nvshmemt_ucx_handle_amo(struct nvshmem_transport *transport, ucp_ep_h ep, nv
             break;
         }
         default: {
-            ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "RMA/AMO verb %d not implemented\n",
-                      op);
+            NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                               "RMA/AMO verb %d not implemented\n", op);
         }
     }
 
@@ -612,8 +637,8 @@ int nvshmemt_ucx_handle_amo(struct nvshmem_transport *transport, ucp_ep_h ep, nv
         if (UCS_PTR_IS_ERR(ucs_rc)) {
             nvshmemt_ucx_recv_headers_in_use--;
             header->in_use = false;
-            ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                      "Failed in UCX Transport during AMO.\n");
+            NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                               "Failed in UCX Transport during AMO.\n");
         }
         /* If ucp_am_send_nbx returns NULL, then we won't get a CB and we need to free the header
          * now. */
@@ -636,10 +661,10 @@ int nvshmemt_ucx_process_amos(struct nvshmem_transport *transport) {
     while (!pending_recv_headers.empty()) {
         header = (nvshmemt_ucx_am_header_t *)pending_recv_headers.front();
         send_header = &header->header.send_h;
-        nvshmemt_ucx_mem_handle_info_t mem_handle_info =
-            get_mem_handle_info(ucx_state, send_header->addr);
-        ptr = (void *)((char *)mem_handle_info.cpu_ptr +
-                       ((char *)send_header->addr - (char *)mem_handle_info.ptr));
+        nvshmemt_ucx_mem_handle_info_t *mem_handle_info =
+            get_mem_handle_info(transport, ucx_state, send_header->addr);
+        ptr = (void *)((char *)mem_handle_info->cpu_ptr +
+                       ((char *)send_header->addr - (char *)mem_handle_info->ptr));
         status = 0;
 
         switch (send_header->op_size) {
@@ -659,7 +684,7 @@ int nvshmemt_ucx_process_amos(struct nvshmem_transport *transport) {
                     send_header->cmp, send_header->retptr, send_header->retflag, header->is_proxy);
                 break;
             default:
-                ERROR_PRINT("UCX bad size supplied for atomic.\n");
+                NVSHMEMI_ERROR_PRINT("UCX bad size supplied for atomic.\n");
                 status = NVSHMEMX_ERROR_INTERNAL;
         }
         pending_recv_headers.pop_front();
@@ -670,7 +695,7 @@ int nvshmemt_ucx_process_amos(struct nvshmem_transport *transport) {
             ucp_am_data_release(ucx_state->worker_context, (void *)header);
         }
         if (status != 0) {
-            ERROR_PRINT("Failed to respond to atomic op in UCX.\n");
+            NVSHMEMI_ERROR_PRINT("Failed to respond to atomic op in UCX.\n");
             return status;
         }
     }
@@ -715,7 +740,7 @@ int nvshmemt_ucx_local_amo(struct nvshmem_transport *transport, int pe, void *cu
                                  sizeof(nvshmemt_ucx_am_header_t), &param);
         if (ucs_rc != NULL) {
             if (UCS_PTR_IS_ERR(ucs_rc)) {
-                ERROR_PRINT("Failed in UCX Transport during AMO.\n");
+                NVSHMEMI_ERROR_PRINT("Failed in UCX Transport during AMO.\n");
                 header->in_use = false;
                 nvshmemt_ucx_recv_headers_in_use--;
                 return NVSHMEMX_ERROR_INTERNAL;
@@ -735,8 +760,8 @@ int nvshmemt_ucx_local_amo(struct nvshmem_transport *transport, int pe, void *cu
         return 0;
     }
 #endif
-    ERROR_PRINT("AMO %d not supported with the current configuration (GDRCopy Disabled)\n",
-                verb.desc);
+    NVSHMEMI_ERROR_PRINT("AMO %d not supported with the current configuration (GDRCopy Disabled)\n",
+                         verb.desc);
     return NVSHMEMX_ERROR_INTERNAL;
 }
 
@@ -775,7 +800,7 @@ int nvshmemt_ucx_remote_amo(struct nvshmem_transport *transport, int pe, void *c
     if (unlikely(*rkey_ptr == NULL)) {
         ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, rkey_ptr);
         if (ucs_rc != UCS_OK) {
-            ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
+            NVSHMEMI_ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
         }
     }
     rkey = *rkey_ptr;
@@ -809,7 +834,7 @@ int nvshmemt_ucx_remote_amo(struct nvshmem_transport *transport, int pe, void *c
         return 0;
     }
 
-    ERROR_PRINT("Error in ucx atomic.\n");
+    NVSHMEMI_ERROR_PRINT("Error in ucx atomic.\n");
     return NVSHMEMX_ERROR_INTERNAL;
 
 fetch_atomic:
@@ -831,6 +856,7 @@ fetch_atomic:
             buffer->amo_retflag = remote->retflag;
             buffer->retvalue = 0;
             buffer->ucx_state = ucx_state;
+            buffer->transport = transport;
             param.reply_buffer = &buffer->retvalue;
         } else if (verb.desc == NVSHMEMI_AMO_SIGNAL || verb.desc == NVSHMEMI_AMO_SIGNAL_SET ||
                    verb.desc == NVSHMEMI_AMO_SET) {
@@ -878,7 +904,7 @@ fetch_atomic:
                 break;
             }
             default: {
-                ERROR_PRINT("RMA/AMO verb %d not implemented\n", verb.desc);
+                NVSHMEMI_ERROR_PRINT("RMA/AMO verb %d not implemented\n", verb.desc);
                 return NVSHMEMX_ERROR_INTERNAL;
             }
         }
@@ -892,7 +918,7 @@ fetch_atomic:
                     nvshmemt_ucx_bounce_buffers_in_use--;
                     buffer->in_use = false;
                 }
-                ERROR_PRINT("Failed in UCX Transport during RMA operation.\n");
+                NVSHMEMI_ERROR_PRINT("Failed in UCX Transport during RMA operation.\n");
                 return NVSHMEMX_ERROR_INTERNAL;
             }
         } else if (buffer) {
@@ -903,8 +929,8 @@ fetch_atomic:
         return 0;
     }
 #endif
-    ERROR_PRINT("AMO %d not supported with the current configuration (GDRCopy Disabled)\n",
-                verb.desc);
+    NVSHMEMI_ERROR_PRINT("AMO %d not supported with the current configuration (GDRCopy Disabled)\n",
+                         verb.desc);
     return NVSHMEMX_ERROR_INTERNAL;
 }
 
@@ -946,7 +972,7 @@ int nvshmemt_ucx_quiet(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
     ucs_status = ucp_worker_flush_nbx(ucx_state->worker_context, &param);
     if (ucs_status != NULL) {
         if (UCS_PTR_IS_ERR(ucs_status)) {
-            ERROR_PRINT("Failed in UCX Transport during quiet.\n");
+            NVSHMEMI_ERROR_PRINT("Failed in UCX Transport during quiet.\n");
             return NVSHMEMX_ERROR_INTERNAL;
         } else {
             ucs_status_t ucs_rc;
@@ -955,7 +981,7 @@ int nvshmemt_ucx_quiet(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
                 ucs_rc = ucp_request_check_status(ucs_status);
             } while (ucs_rc == UCS_INPROGRESS);
             if (ucs_rc != UCS_OK) {
-                ERROR_PRINT("Failed in UCX Transport during quiet.\n");
+                NVSHMEMI_ERROR_PRINT("Failed in UCX Transport during quiet.\n");
                 return NVSHMEMX_ERROR_INTERNAL;
             }
             /* request handle is freed in the callback. */
@@ -980,12 +1006,26 @@ int nvshmemt_ucx_progress(nvshmem_transport_t transport) {
 
 int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)transport->state;
+    nvshmemt_ucx_mem_handle_info_t *handle_info;
     nvshmemt_ucx_am_header_t *recv_header;
+    size_t mem_handle_cache_size;
     ucs_status_ptr_t ucs_rptr;
     ucs_status_t ucs_rc;
     int i, j, ep_count;
 
+    int n_pes = transport->n_pes;
     free(transport);
+
+    mem_handle_cache_size = nvshmemt_mem_handle_cache_get_size(ucx_state->cache);
+    for (size_t i = 0; i < mem_handle_cache_size; i++) {
+        handle_info = (nvshmemt_ucx_mem_handle_info_t *)nvshmemt_mem_handle_cache_get_by_idx(
+            ucx_state->cache, i);
+        if (handle_info) {
+            free(handle_info);
+        }
+    }
+
+    nvshmemt_mem_handle_cache_fini(ucx_state->cache);
 
     while (!free_recv_headers.empty()) {
         recv_header = (nvshmemt_ucx_am_header_t *)free_recv_headers.front();
@@ -997,7 +1037,8 @@ int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
     }
 
     if (!pending_recv_headers.empty()) {
-        ERROR_PRINT("Discovered uncompleted active messages during UCX transport shutdown.\n");
+        NVSHMEMI_ERROR_PRINT(
+            "Discovered uncompleted active messages during UCX transport shutdown.\n");
         while (!pending_recv_headers.empty()) {
             recv_header = (nvshmemt_ucx_am_header_t *)pending_recv_headers.front();
             free_recv_headers.pop_front();
@@ -1014,14 +1055,14 @@ int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
 
     if (ucx_state) {
         ep_count = ucx_state->ep_count;
-        for (i = 0; i < nvshmemi_state->npes; i++) {
+        for (i = 0; i < n_pes; i++) {
             for (j = 0; j < ep_count; j++) {
                 if (ucx_state->endpoints[i * ep_count + j] != NULL) {
                     ucs_rptr = ucp_ep_close_nb(ucx_state->endpoints[i * ep_count + j],
                                                UCP_EP_CLOSE_MODE_FLUSH);
                     if (ucs_rptr != NULL) {
                         if (UCS_PTR_IS_ERR(ucs_rptr)) {
-                            ERROR_PRINT("Unable to close ep in UCX transport.\n");
+                            NVSHMEMI_ERROR_PRINT("Unable to close ep in UCX transport.\n");
                         } else {
                             do {
                                 ucp_worker_progress(ucx_state->worker_context);
@@ -1033,6 +1074,12 @@ int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
                 }
             }
         }
+
+#ifdef NVSHMEM_USE_GDRCOPY
+        if (use_gdrcopy) {
+            nvshmemt_gdrcopy_ftable_fini(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
+        }
+#endif
 
         free(ucx_state->endpoints);
 
@@ -1055,18 +1102,15 @@ int nvshmemt_ucx_finalize(nvshmem_transport_t transport) {
         free(ucx_state);
     }
 
-#ifdef NVSHMEM_USE_GDRCOPY
-    if (use_gdrcopy) {
-        nvshmemt_gdrcopy_ftable_fini(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
-    }
-#endif
-
     return 0;
 }
 
 int nvshmemt_ucx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)tcurr->state;
-    nvshmemt_ucx_mem_handle_info_t *mem_handle_info = &ucx_state->mem_handle_info_cache.back();
+    nvshmemt_ucx_mem_handle_info_t *mem_handle_info;
+
+    mem_handle_info =
+        (nvshmemt_ucx_mem_handle_info_t *)nvshmemt_mem_handle_cache_get_by_idx(ucx_state->cache, 0);
 
     if (!mem_handle_info) return 0;
 #ifdef NVSHMEM_USE_GDRCOPY
@@ -1077,7 +1121,7 @@ int nvshmemt_ucx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
         return 0;
     }
 #endif
-    int mype = nvshmemi_state->mype;
+    int mype = tcurr->my_pe;
     int ep_index = (ucx_state->ep_count * mype + ucx_state->proxy_ep_idx);
     ucp_ep_h ep = ucx_state->endpoints[ep_index];
     ucp_request_param_t param;
@@ -1087,13 +1131,11 @@ int nvshmemt_ucx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
     ucp_rkey_h rkey;
     int local_int;
 
-    mem_handle =
-        (nvshmemt_ucx_mem_handle_t *)&nvshmemi_state
-            ->handles[0][nvshmemi_state->mype * NVSHMEM_TRANSPORT_COUNT + NVSHMEM_TRANSPORT_ID_UCX];
+    mem_handle = mem_handle_info->mem_handle;
     if (unlikely(mem_handle->ep_rkey_host == NULL)) {
         ucs_rc = ucp_ep_rkey_unpack(ep, mem_handle->rkey_packed_buf, &mem_handle->ep_rkey_host);
         if (ucs_rc != UCS_OK) {
-            ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
+            NVSHMEMI_ERROR_EXIT("Unable to unpack rkey in UCS transport! Exiting.\n");
         }
     }
     rkey = mem_handle->ep_rkey_host;
@@ -1107,16 +1149,16 @@ int nvshmemt_ucx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
     /* Wait for completion of get. */
     if (ucs_ptr_rc != NULL) {
         if (UCS_PTR_IS_ERR(ucs_ptr_rc)) {
-            ERROR_PRINT("UCX CST request completed with error.\n");
-            return NVSHMEMI_INTERNAL_ERROR;
+            NVSHMEMI_ERROR_PRINT("UCX CST request completed with error.\n");
+            return NVSHMEMX_ERROR_INTERNAL;
         } else {
             do {
                 ucs_rc = ucp_request_check_status(ucs_ptr_rc);
                 ucp_worker_progress(ucx_state->worker_context);
             } while (ucs_rc == UCS_INPROGRESS);
             if (ucs_rc != UCS_OK) {
-                ERROR_PRINT("UCX CST request completed with error.\n");
-                return NVSHMEMI_INTERNAL_ERROR;
+                NVSHMEMI_ERROR_PRINT("UCX CST request completed with error.\n");
+                return NVSHMEMX_ERROR_INTERNAL;
             }
         }
     }
@@ -1126,11 +1168,11 @@ int nvshmemt_ucx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
 
 int nvshmemt_ucx_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id, int transport_count,
                            int npes, int mype) {
-    INFO(NVSHMEM_TRANSPORT, "UCX show info not implemented");
+    NVSHMEMI_ERROR_PRINT("UCX show info not implemented");
     return 0;
 }
 
-int nvshmemt_ucx_init(nvshmem_transport_t *t) {
+int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, int api_version) {
     ucs_status_t ucs_rc;
     ucp_params_t params;
 
@@ -1143,30 +1185,41 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
     transport_ucx_state_t *ucx_state = NULL;
     ucp_mem_map_params_t mem_map_params;
 
+    int log_level;
+
     int status = 0;
-    int transport_skipped;
 
     int num_ib_devices;
     struct ibv_device **dev_list = NULL;
 
-    transport_skipped = strncasecmp(nvshmemi_options.REMOTE_TRANSPORT, UCX_TRANSPORT_STRING,
-                                    TRANSPORT_STRING_MAX_LENGTH);
-    if (transport_skipped) {
-        INFO(NVSHMEM_INIT,
-             "UCX disabled by user through environment "
-             "in favor of the %s transport.\n",
-             nvshmemi_options.REMOTE_TRANSPORT);
-        status = NVSHMEMI_ERROR_SKIPPED;
-        return status;
+    struct nvshmemi_options_s options;
+
+    if (api_version != NVSHMEM_TRANSPORT_INTERFACE_VERSION) {
+        NVSHMEMI_ERROR_PRINT(
+            "NVSHMEM provided an incompatible version of the transport interface. "
+            "This transport supports a maximum API version of %d",
+            NVSHMEM_TRANSPORT_INTERFACE_VERSION);
+        return NVSHMEMX_ERROR_INVALID_VALUE;
     }
 
+    status = nvshmemi_env_options_init(&options);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                          "Unable to initialize env options.");
+
+    log_level = nvshmemt_common_get_log_level(&options);
+
 #ifdef NVSHMEM_USE_GDRCOPY
-    use_gdrcopy = nvshmemt_gdrcopy_ftable_init(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle);
+    if (options.DISABLE_GDRCOPY) {
+        use_gdrcopy = false;
+    } else {
+        use_gdrcopy =
+            nvshmemt_gdrcopy_ftable_init(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle, log_level);
+    }
 #endif
 
     ibv_handle = dlopen("libibverbs.so.1", RTLD_LAZY);
     if (ibv_handle == NULL) {
-        INFO(NVSHMEM_INIT,
+        INFO(log_level,
              "libibverbs not found on the system; Assuming local atomics are required.\n");
         use_local_atomics = true;
     } else {
@@ -1174,7 +1227,7 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
         LOAD_SYM(ibv_handle, "ibv_free_device_list", free_device_list);
         dev_list = get_device_list(&num_ib_devices);
         if (dev_list == NULL || num_ib_devices == 0) {
-            INFO(NVSHMEM_INIT,
+            INFO(log_level,
                  "libibverbs reported no active NICs; Assuming local atomics are required.\n");
             use_local_atomics = true;
         }
@@ -1186,19 +1239,21 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
     /* This environment variable is needed to enable g/get operations <= 64 bytes */
     status = setenv("UCX_RC_TX_INLINE_RESP", "0", 1);
     if (status) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to set UCX environment variable UCX_RC_TX_INLINE_RESP.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to set UCX environment variable UCX_RC_TX_INLINE_RESP.\n");
     }
 
     transport = (nvshmem_transport_t)calloc(1, sizeof(struct nvshmem_transport));
-    NULL_ERROR_JMP(transport, status, NVSHMEMX_ERROR_INTERNAL, error,
-                   "Failed to allocate transport struct for UCX.\n");
+    NVSHMEMI_NULL_ERROR_JMP(transport, status, NVSHMEMX_ERROR_INTERNAL, error,
+                            "Failed to allocate transport struct for UCX.\n");
 
     transport->is_successfully_initialized = false;
 
     ucx_state = (transport_ucx_state_t *)calloc(1, sizeof(transport_ucx_state_t));
-    NULL_ERROR_JMP(ucx_state, status, NVSHMEMX_ERROR_INTERNAL, error,
-                   "Failed to allocate ucx_state struct for UCX.\n");
+    NVSHMEMI_NULL_ERROR_JMP(ucx_state, status, NVSHMEMX_ERROR_INTERNAL, error,
+                            "Failed to allocate ucx_state struct for UCX.\n");
+
+    ucx_state->log_level = log_level;
 
     /* Initialize the free recv headers pool. */
     for (int i = 0; i < NVSHMEMT_UCX_ATOMIC_POOL_SIZE; i++) {
@@ -1208,8 +1263,8 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
 
     ucs_rc = ucp_config_read(NULL, NULL, &ucx_state->library_config);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to read UCP configuration for UCX.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to read UCP configuration for UCX.\n");
     }
 
     if (use_local_atomics) {
@@ -1218,21 +1273,22 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
         ucs_rc = ucp_config_modify(ucx_state->library_config, "TLS", "rc");
     }
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to modify configuration for UCX.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to modify configuration for UCX.\n");
     }
 
     ucs_rc = ucp_config_modify(ucx_state->library_config, "ZCOPY_THRESH", "0");
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to modify configuration for UCX.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to modify configuration for UCX.\n");
     }
 
     params.field_mask = UCP_PARAM_FIELD_FEATURES;
     params.features = UCP_FEATURE_RMA | UCP_FEATURE_AM | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64;
     ucs_rc = ucp_init(&params, ucx_state->library_config, &ucx_state->library_context);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "Failed to initialize UCP for UCX.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to initialize UCP for UCX.\n");
     }
 
     /* Register the P buffers ahead of time to avoid unnecessary latency */
@@ -1245,8 +1301,8 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
     ucs_rc = ucp_mem_map(ucx_state->library_context, &mem_map_params,
                          &ucx_state->bounce_buffer_mem_handle);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to map memory in UCX transport.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to map memory in UCX transport.\n");
     }
 
     /* The regular worker thread needs to operate in multi mode because it has to
@@ -1258,19 +1314,20 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
     ucs_rc =
         ucp_worker_create(ucx_state->library_context, &worker_params, &ucx_state->worker_context);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to initialize UCP worker for UCX.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to initialize UCP worker for UCX.\n");
     }
 
     worker_attr.field_mask = UCP_WORKER_ATTR_FIELD_MAX_AM_HEADER;
     ucp_worker_query(ucx_state->worker_context, &worker_attr);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error, "Failed to get worker params for UCX.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to get worker params for UCX.\n");
     }
 
     if (worker_attr.max_am_header < sizeof(nvshmemt_ucx_am_header_t)) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Worker am header is too small in UCX transport.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Worker am header is too small in UCX transport.\n");
     }
 
     am_param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_CB |
@@ -1287,16 +1344,16 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
     am_param.arg = transport;
     ucs_rc = ucp_worker_set_am_recv_handler(ucx_state->worker_context, &am_param);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to initialize UCP worker active message for UCX.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to initialize UCP worker active message for UCX.\n");
     }
 
     am_param.cb = ucx_recv_resp_am_data_cb;
     am_param.id = NVSHMEMT_UCX_ATOMIC_RESP;
     ucs_rc = ucp_worker_set_am_recv_handler(ucx_state->worker_context, &am_param);
     if (ucs_rc != UCS_OK) {
-        ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
-                  "Failed to initialize UCP worker active message for UCX.\n");
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Failed to initialize UCP worker active message for UCX.\n");
     }
 #endif
 
@@ -1320,6 +1377,9 @@ int nvshmemt_ucx_init(nvshmem_transport_t *t) {
     transport->attr = NVSHMEM_TRANSPORT_ATTR_CONNECTED;
     transport->state = (void *)ucx_state;
     transport->is_successfully_initialized = true;
+    transport->api_version = NVSHMEM_TRANSPORT_INTERFACE_VERSION;
+    transport->device_pci_paths = NULL;
+    transport->n_devices = 0;
 
     *t = transport;
 

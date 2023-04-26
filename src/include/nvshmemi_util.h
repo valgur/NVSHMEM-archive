@@ -19,6 +19,9 @@ typedef enum {
     NVSHMEMI_THREADGROUP_BLOCK = 2
 } threadgroup_t;
 
+#define NVSHMEMI_MIN(x, y) ((x) < (y) ? (x) : (y))
+#define NVSHMEMI_MAX(x, y) ((x) > (y) ? (x) : (y))
+
 #ifdef __CUDA_ARCH__
 
 __device__ inline int nvshmemi_thread_id_in_warp() {
@@ -107,7 +110,7 @@ __device__ inline void nvshmemi_threadgroup_sync() {
 static inline void nvshmemi_bit_set(unsigned char *ptr, size_t size, size_t index) {
     assert(size > 0 && (index < size * CHAR_BIT));
 
-    size_t which_byte = index / size;
+    size_t which_byte = index / CHAR_BIT;
     ptr[which_byte] |= (1 << (index % CHAR_BIT));
 
     return;
@@ -116,7 +119,7 @@ static inline void nvshmemi_bit_set(unsigned char *ptr, size_t size, size_t inde
 static inline void nvshmemi_bit_clear(unsigned char *ptr, size_t size, size_t index) {
     assert(size > 0 && (index < size * CHAR_BIT));
 
-    size_t which_byte = index / size;
+    size_t which_byte = index / CHAR_BIT;
     ptr[which_byte] &= ~(1 << (index % CHAR_BIT));
 
     return;

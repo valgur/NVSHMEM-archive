@@ -20,7 +20,7 @@ int nvshmemi_broadcast_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *so
     nvshmemi_team_t *teami = nvshmemi_team_pool[team];
     if (nvshmemi_use_nccl && nvshmemi_get_nccl_dt<TYPE>() != ncclNumTypes) {
         NCCL_CHECK(nccl_ftable.Broadcast(source, dest, nelems, nvshmemi_get_nccl_dt<TYPE>(),
-                                         PE_root, teami->nccl_comm, stream));
+                                         PE_root, (ncclComm_t)teami->nccl_comm, stream));
     } else
 #endif
     {

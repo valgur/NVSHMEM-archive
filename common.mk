@@ -28,7 +28,6 @@ NVSHMEM_HOME ?= /usr/local/nvshmem/
 NVSHMEM_DEBUG ?= 0
 NVSHMEM_VERBOSE ?= 0
 NVSHMEM_DEVEL ?= 0
-NVSHMEM_COMPLEX_SUPPORT ?= 0
 
 # whether to build with UCX support. If yes, UCX_HOME should be set
 NVSHMEM_UCX_SUPPORT ?= 0
@@ -65,12 +64,13 @@ NVSHMEM_LSHMEM ?= -loshmem
 NVSHMEM_TEST_STATIC_LIB ?= 0
 # Whether to build the PMIX bootstrap
 NVSHMEM_PMIX_SUPPORT ?= 0
+NVSHMEM_ENABLE_ALL_DEVICE_INLINING ?= 0
 
 MPI_LIBS := $(NVSHMEM_LMPI)
 SHMEM_LIBS := $(NVSHMEM_LSHMEM)
 LDFLAGS := -L$(CUDA_LIB) -lcudart_static -L$(CUDA_DRV) -lnvidia-ml
 TESTCUFLAGS  := -dc -ccbin $(CXX) -std=c++11 -Xcompiler -fPIC
-TESTLDFLAGS := -ccbin $(CXX) -lcuda -L$(CUDA_LIB) -L$(CUDA_DRV) -lnvidia-ml -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
+TESTLDFLAGS := -ccbin $(CXX) -std=c++11 -lcuda -L$(CUDA_LIB) -L$(CUDA_DRV) -lnvidia-ml -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
 ifeq ($(NVSHMEM_TEST_STATIC_LIB), 1)
 TESTLDFLAGS += -lnvshmem
 else
@@ -103,42 +103,19 @@ NVCC_GENCODE ?= $(NVCC_GENCODE_DEFAULT)
 
 TESTCUFLAGS += $(NVCC_GENCODE)
 
-ifeq ($(NVSHMEM_COMPLEX_SUPPORT), 1)
-CXXFLAGS  += -DNVSHMEM_COMPLEX_SUPPORT
-NVCUFLAGS += -DNVSHMEM_COMPLEX_SUPPORT
-endif
-
 ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1)
-TESTINC += -I$(SHMEM_HOME)/include -DNVSHMEM_SHMEM_SUPPORT
+TESTINC += -I$(SHMEM_HOME)/include -DNVSHMEMTEST_SHMEM_SUPPORT
 TESTLDFLAGS += -L$(SHMEM_HOME)/lib $(SHMEM_LIBS)
 endif
 TESTINC += -I$(NVSHMEM_HOME)/include
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
-TESTINC += -I$(MPI_HOME)/include -DNVSHMEM_MPI_SUPPORT
+TESTINC += -I$(MPI_HOME)/include -DNVSHMEMTEST_MPI_SUPPORT
 TESTLDFLAGS += -L$(MPI_HOME)/lib $(MPI_LIBS)
-endif
-
-ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
-LDFLAGS += -L$(UCX_HOME)/lib -lucs -lucp
-TESTLDFLAGS += -L$(UCX_HOME)/lib -lucs -lucp
-endif
-
-ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
-LDFLAGS += -lmlx5
-TESTLDFLAGS += -lmlx5
-endif
-
-ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
-LDFLAGS += -lmlx5
-TESTLDFLAGS += -lmlx5
 endif
 
 ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
 LIBFABRIC_LIBDIR = $(LIBFABRIC_HOME)/$(shell if [ -d $(LIBFABRIC_HOME)/lib ] ; then echo lib ; else echo lib64 ; fi)
-
-LDFLAGS += -L$(LIBFABRIC_LIBDIR) -lfabric
-TESTLDFLAGS += -L$(LIBFABRIC_LIBDIR) -lfabric
 endif
 
 # NVCC doesn't support redefining -O (even with the same value) so we need to scrub it from cu flag variables.
@@ -152,8 +129,8 @@ NVCUFLAGS += -O3
 CXXFLAGS  += -O3
 else
 TESTCUFLAGS  += -O0 -g -G -D_NVSHMEM_DEBUG
-NVCUFLAGS += -O0 -g -G -DENABLE_TRACE -D_NVSHMEM_DEBUG
-CXXFLAGS  += -O0 -g -DENABLE_TRACE -D_NVSHMEM_DEBUG
+NVCUFLAGS += -O0 -g -G -DNVSHMEM_TRACE -D_NVSHMEM_DEBUG
+CXXFLAGS  += -O0 -g -DNVSHMEM_TRACE -D_NVSHMEM_DEBUG
 endif
 
 ifneq ($(NVSHMEM_VERBOSE), 0)
