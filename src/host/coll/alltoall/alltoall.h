@@ -1,0 +1,52 @@
+/*
+ * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+ *
+ * See COPYRIGHT for license information
+ */
+
+#ifndef NVSHMEMI_ALLTOALL_COMMON_CPU_H
+#define NVSHMEMI_ALLTOALL_COMMON_CPU_H
+#include <driver_types.h>
+#include <stddef.h>
+
+#include "common/nvshmem_types.h"
+#include "internal/common/nvshmem_internal.h"
+#include "internal/util.h"
+#include "cpu_coll.h"
+#ifdef NVSHMEM_USE_NCCL
+#include "nccl.h"
+#endif
+
+template <typename TYPE>
+void nvshmemi_call_alltoall_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
+                                             size_t nelems, cudaStream_t stream);
+
+template <typename TYPE>
+int nvshmemi_alltoall_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems,
+                                cudaStream_t stream) {
+#ifdef NVSHMEM_USE_NCCL
+    nvshmemi_team_t *teami = nvshmemi_team_pool[team];
+    int team_n_pes = nvshmem_team_n_pes(team);
+    if (nvshmemi_use_nccl && nvshmemi_get_nccl_dt<TYPE>() != ncclNumTypes &&
+        ((nccl_version >= 2700 && team_n_pes <= 4096 /* NCCL limit for Group API */) ||
+         (nccl_version >= 2800 && team_n_pes <= 32768 /* NCCL limit for Group API */))) {
+        size_t rank_offset = nelems * sizeof(TYPE);
+        NCCL_CHECK(nccl_ftable.GroupStart());
+        for (int pe = 0; pe < team_n_pes; pe++) {
+            NCCL_CHECK(nccl_ftable.Send(((char *)source) + pe * rank_offset, nelems,
+                                        nvshmemi_get_nccl_dt<TYPE>(), pe,
+                                        (ncclComm_t)teami->nccl_comm, stream));
+            NCCL_CHECK(nccl_ftable.Recv(((char *)dest) + pe * rank_offset, nelems,
+                                        nvshmemi_get_nccl_dt<TYPE>(), pe,
+                                        (ncclComm_t)teami->nccl_comm, stream));
+        }
+        NCCL_CHECK(nccl_ftable.GroupEnd());
+    } else
+#endif /* NVSHMEM_USE_NCCL */
+    {
+        nvshmemi_call_alltoall_on_stream_kernel<TYPE>(team, dest, source, nelems, stream);
+    }
+    return 0;
+}
+
+#endif /* NVSHMEMI_ALLTOALL_COMMON_CPU_H */

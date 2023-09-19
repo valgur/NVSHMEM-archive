@@ -6,7 +6,8 @@
 
 #ifndef QUERY_DEVICE_CUH
 #define QUERY_DEVICE_CUH
-//#include "nvshmem_internal.h"
+
+#include "common/nvshmem_common.cuh"
 
 #ifdef __CUDA_ARCH__
 __device__ inline int nvshmem_my_pe(void) { return nvshmemi_device_state_d.mype; }

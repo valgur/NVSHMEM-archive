@@ -7,15 +7,12 @@
 #ifndef TRANSFER_DEVICE_CUH
 #define TRANSFER_DEVICE_CUH
 
-#include "nvshmem_build_options.h"
-#include "nvshmem_common.cuh"
-#include "nvshmemi_util.h"
-#include "nvshmemi_constants.h"
-#include "nvshmemx_api.h"
+#include "device/nvshmemi_common_device_defines.cuh"
+#include "common/nvshmem_common.cuh"
 #include "device/pt-to-pt/proxy_device.cuh"
 
 #ifdef NVSHMEM_IBGDA_SUPPORT
-#include "nvshmemi_ibgda.h"
+#include "common/nvshmem_common_ibgda.h"
 #include "device/pt-to-pt/ibgda_device.cuh"
 #endif
 
@@ -59,12 +56,22 @@
 #endif
 
 #ifdef __CUDA_ARCH__
+__device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_syncapi_update_mem() {
+    __threadfence(); /* 1. Ensures consitency op is not called before the prior test/wait condition
+                        has been met
+                        2. Needed to prevent reorder of instructions after sync api (when the
+                        following if condition is false) */
+    if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_PROXY) {
+        nvshmemi_proxy_enforce_consistency_at_target(true);
+    }
+}
+
 template <typename T>
 NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_rma_p(void *rptr, const T value,
                                                                       int pe) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        nvshmemi_gic_rma_p<T>(rptr, value, pe);
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        nvshmemi_ibgda_rma_p<T>(rptr, value, pe);
     } else
 #endif
     {
@@ -80,8 +87,8 @@ TRANSFER_REPT_FOR_STANDARD_RMA_TYPES(TRANSFER_DECL_RMA_P)
 template <typename T>
 NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE T nvshmemi_transfer_rma_g(void *rptr, int pe) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        return nvshmemi_gic_rma_g<T>(rptr, pe);
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        return nvshmemi_ibgda_rma_g<T>(rptr, pe);
     } else
 #endif
     {
@@ -99,8 +106,8 @@ template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
 NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_rma(void *rptr, void *lptr,
                                                                     size_t bytes, int pe) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        nvshmemi_gic_rma<SCOPE, channel_op>(rptr, lptr, bytes, pe);
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        nvshmemi_ibgda_rma<SCOPE, channel_op>(rptr, lptr, bytes, pe);
     } else
 #endif
     {
@@ -128,8 +135,8 @@ NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_put_sig
     void *rptr, void *lptr, size_t bytes, void *sig_addr, uint64_t signal, nvshmemi_amo_t sig_op,
     int pe, bool is_nbi) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        nvshmemi_gic_put_signal<SCOPE>(rptr, lptr, bytes, sig_addr, signal, sig_op, pe, is_nbi);
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        nvshmemi_ibgda_put_signal<SCOPE>(rptr, lptr, bytes, sig_addr, signal, sig_op, pe, is_nbi);
     } else
 #endif
     {
@@ -161,8 +168,8 @@ template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
 NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_rma_nbi(void *rptr, void *lptr,
                                                                         size_t bytes, int pe) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        nvshmemi_gic_rma_nbi<SCOPE, channel_op>(rptr, lptr, bytes, pe);
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        nvshmemi_ibgda_rma_nbi<SCOPE, channel_op>(rptr, lptr, bytes, pe);
     } else
 #endif
     {
@@ -185,8 +192,8 @@ NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE T nvshmemi_transfer_amo_fetch(
                                                                        T compare, int pe,
                                                                        nvshmemi_amo_t op) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        return nvshmemi_gic_amo_fetch<T>(rptr, value, compare, pe, op);
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        return nvshmemi_ibgda_amo_fetch<T>(rptr, value, compare, pe, op);
     } else
 #endif
     {
@@ -209,8 +216,8 @@ NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_amo_non
                                                                              int pe,
                                                                              nvshmemi_amo_t op) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        nvshmemi_gic_amo_nonfetch<T>(rptr, value, pe, op);
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        nvshmemi_ibgda_amo_nonfetch<T>(rptr, value, pe, op);
     } else
 #endif
     {
@@ -231,8 +238,8 @@ NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_quiet(b
     // quiet_on_stream also shares this code path.
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        nvshmemi_gic_quiet<SCOPE>();
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        nvshmemi_ibgda_quiet<SCOPE>();
         if (use_membar) {
             if (!myIdx) {
                 __threadfence_system();
@@ -258,8 +265,8 @@ TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_QUIET);
 template <threadgroup_t SCOPE>
 NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_fence() {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        nvshmemi_gic_fence<SCOPE>();
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        nvshmemi_ibgda_fence<SCOPE>();
     }
 #endif
     if ((nvshmemi_device_state_d.proxy == NVSHMEMI_PROXY_FULL) &&
@@ -281,8 +288,8 @@ TRANSFER_REPT_FOR_ALL_SCOPES(TRANSFER_DECL_FENCE);
 NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_INLINE void nvshmemi_transfer_enforce_consistency_at_target(
     bool use_membar) {
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    if (nvshmemi_device_state_d.gic_is_initialized) {
-        nvshmemi_gic_enforce_consistency_at_target(use_membar);
+    if (nvshmemi_device_state_d.ibgda_is_initialized) {
+        nvshmemi_ibgda_enforce_consistency_at_target(use_membar);
     } else
 #endif
     {

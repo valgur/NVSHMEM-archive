@@ -42,16 +42,19 @@ install -m 755 -d $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.$
 install -m 755 -d $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/src/perftest/host/pt-to-pt
 install -m 755 -d $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/scripts/
 install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}
+install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/common
 install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/device/pt-to-pt/
 install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/device/coll/
 install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/device/team/
 install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/device/init/
+install -m 755 -d $RPM_BUILD_ROOT/%{_includedir}/host
 install -m 644 include/*.h $RPM_BUILD_ROOT/%{_includedir}
-install -m 644 include/*.cuh $RPM_BUILD_ROOT/%{_includedir}
+install -m 644 include/common/* $RPM_BUILD_ROOT/%{_includedir}/common/
 install -m 644 include/device/pt-to-pt/* $RPM_BUILD_ROOT/%{_includedir}/device/pt-to-pt/
 install -m 644 include/device/coll/* $RPM_BUILD_ROOT/%{_includedir}/device/coll/
 install -m 644 include/device/team/* $RPM_BUILD_ROOT/%{_includedir}/device/team/
 install -m 644 include/device/init/* $RPM_BUILD_ROOT/%{_includedir}/device/init/
+install -m 644 include/host/* $RPM_BUILD_ROOT/%{_includedir}/host/
 install -m 644 share/nvshmem/src/bootstrap-plugins/* $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/src/bootstrap-plugins/
 install -m 644 examples/Makefile $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/src/examples/
 install -m 644 examples/*.c* $RPM_BUILD_ROOT/%{_prefix}/share/libnvshmem-${nvshmem:Major}.${nvshmem:Minor}.${nvshmem:Patch}/src/examples/
@@ -100,12 +103,14 @@ rm -rf $RPM_BUILD_ROOT
 %doc NVSHMEM-SLA.txt
 %defattr(-,root,root,-)
 %{_includedir}/*.h
-%{_includedir}/*.cuh
+%{_includedir}/common/*.h
+%{_includedir}/common/*.cuh
 %{_includedir}/device/coll/*.cuh
 %{_includedir}/device/pt-to-pt/*.h
 %{_includedir}/device/pt-to-pt/*.cuh
 %{_includedir}/device/team/*.cuh
 %{_includedir}/device/init/*.cuh
+%{_includedir}/host/*.h
 %{_libdir}/libnvshmem.a
 %{_libdir}/libnvshmem_device.a
 %{_libdir}/*.so*

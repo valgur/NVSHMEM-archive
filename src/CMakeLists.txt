@@ -1,5 +1,6 @@
 # this requires cmake 3.19
 include(CheckCompilerFlag)
+include(CheckSourceCompiles)
 
 check_compiler_flag(CUDA -t4 NVCC_THREADS)
 
@@ -12,24 +13,30 @@ add_library(
   nvshmem_bootstrap_pmi SHARED
 )
 set(ACTIVE_BOOTSTRAPS nvshmem_bootstrap_pmi)
-target_sources(nvshmem_bootstrap_pmi PRIVATE bootstrap/bootstrap_pmi.cpp pmi/simple-pmi/simple_pmi.cpp pmi/simple-pmi/simple_pmiutil.cpp)
+target_sources(nvshmem_bootstrap_pmi PRIVATE modules/bootstrap/pmi/bootstrap_pmi.cpp
+                                             modules/bootstrap/pmi/simple-pmi/simple_pmi.cpp
+                                             modules/bootstrap/pmi/simple-pmi/simple_pmiutil.cpp)
 target_include_directories(nvshmem_bootstrap_pmi
                            PRIVATE include
-                                   bootstrap
-                                   pmi/simple-pmi
+			           include/modules/bootstrap
+                                   include/modules/common
+                                   modules/bootstrap/pmi/simple-pmi
 )
 
 add_library(
   nvshmem_bootstrap_pmi2 SHARED
 )
 set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_pmi2)
-target_sources(nvshmem_bootstrap_pmi2 PRIVATE bootstrap/bootstrap_pmi.cpp pmi/pmi-2/pmi2_api.c pmi/pmi-2/pmi2_util.c)
+target_sources(nvshmem_bootstrap_pmi2 PRIVATE modules/bootstrap/pmi/bootstrap_pmi.cpp
+                                              modules/bootstrap/pmi/pmi-2/pmi2_api.c
+                                              modules/bootstrap/pmi/pmi-2/pmi2_util.c)
 target_compile_definitions(nvshmem_bootstrap_pmi2 PRIVATE NVSHMEM_BUILD_PMI2)
 target_link_options(nvshmem_bootstrap_pmi2 PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_bootstrap.sym")
 target_include_directories(nvshmem_bootstrap_pmi2
                            PRIVATE include
-                                   bootstrap
-                                   pmi/pmi-2
+			           include/modules/bootstrap
+                                   include/modules/common
+                                   modules/bootstrap/pmi/pmi-2
 )
 
 if(NVSHMEM_PMIX_SUPPORT)
@@ -37,13 +44,14 @@ if(NVSHMEM_PMIX_SUPPORT)
     nvshmem_bootstrap_pmix SHARED
   )
   set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_pmix)
-  target_sources(nvshmem_bootstrap_pmix PRIVATE bootstrap/bootstrap_pmix.c)
+  target_sources(nvshmem_bootstrap_pmix PRIVATE modules/bootstrap/pmix/bootstrap_pmix.c)
   find_library(PMIX_lib NAMES pmix HINTS "${PMIX_HOME}/lib")
   target_link_libraries(nvshmem_bootstrap_pmix PRIVATE ${PMIX_lib})
   target_include_directories(nvshmem_bootstrap_pmix
-                             PRIVATE ${PMIX_HOME}/include
-                             include
-                             bootstrap
+                             PRIVATE include
+			             ${PMIX_HOME}/include
+                                     include/modules/bootstrap
+                                     include/modules/common
   )
 else()
 set(NVSHMEM_DEFAULT_PMIX OFF)
@@ -55,11 +63,12 @@ if(NVSHMEM_MPI_SUPPORT)
   )
   set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_mpi)
   set_target_properties(nvshmem_bootstrap_mpi PROPERTIES C_STANDARD 11)
-  target_sources(nvshmem_bootstrap_mpi PRIVATE bootstrap/bootstrap_mpi.c)
+  target_sources(nvshmem_bootstrap_mpi PRIVATE modules/bootstrap/mpi/bootstrap_mpi.c)
   target_link_libraries(nvshmem_bootstrap_mpi PRIVATE MPI::MPI_C)
   target_include_directories(nvshmem_bootstrap_mpi
                              PRIVATE include
-                             bootstrap
+			             include/modules/bootstrap
+                                     include/modules/common
   )
 endif()
 
@@ -69,11 +78,12 @@ if(NVSHMEM_SHMEM_SUPPORT)
   )
   set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_shmem)
   set_target_properties(nvshmem_bootstrap_shmem PROPERTIES C_STANDARD 11)
-  target_sources(nvshmem_bootstrap_shmem PRIVATE bootstrap/bootstrap_shmem.c)
+  target_sources(nvshmem_bootstrap_shmem PRIVATE modules/bootstrap/shmem/bootstrap_shmem.c)
   target_link_libraries(nvshmem_bootstrap_shmem PRIVATE shmem)
   target_include_directories(nvshmem_bootstrap_shmem
                              PRIVATE include
-                             bootstrap
+			             include/modules/bootstrap
+                                     include/modules/common
   )
 endif()
 
@@ -94,6 +104,10 @@ add_library(
   nvshmem_device STATIC
 )
 
+set(INTERLIB_VERSION_MAJOR 1)
+set(INTERLIB_VERSION_MINOR 0)
+set(INTERLIB_VERSION_PATCH 0)
+
 add_library(
   nvshmem_host SHARED
 )
@@ -112,30 +126,12 @@ set_target_properties(nvshmem nvshmem_host nvshmem_device
 		      SOVERSION ${PROJECT_VERSION_MAJOR}
 )
 
-macro(nvshmem_library_set_base_link LIBNAME)
-  target_include_directories(
-    ${LIBNAME}
-    PRIVATE include
-            util
-            bootstrap
-            comm
-            coll/host
-            coll/device
-            coll
-            comm/transports/common
-            topo
-    INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-              $<INSTALL_INTERFACE:include>
-  )
-
-  target_link_libraries(${LIBNAME} PRIVATE CUDA::cudart CUDA::cuda_driver nvidia-ml)
-endmacro()
-
 macro(nvshmem_library_set_base_config LIBNAME)
   target_compile_definitions(${LIBNAME}
     PRIVATE $<$<CONFIG:Debug>:_NVSHMEM_DEBUG;NVSHMEM_TRACE;NVSHMEM_IBGDA_DEBUG>
     $<IF:$<STREQUAL:"${CMAKE_HOST_SYSTEM_PROCESSOR}","x86_64">,NVSHMEM_X86_64,>
     $<IF:$<STREQUAL:"${CMAKE_HOST_SYSTEM_PROCESSOR}","ppc64le">,__STDC_LIMIT_MACROS;__STDC_CONSTANT_MACROS;NVSHMEM_PPC64LE,>
+    $<IF:$<STREQUAL:"${CMAKE_HOST_SYSTEM_PROCESSOR}","aarch64">,NVSHMEM_AARCH64,>
     PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:__STDC_LIMIT_MACROS;__STDC_CONSTANT_MACROS>
   )
 
@@ -163,65 +159,111 @@ macro(nvshmem_library_set_base_config LIBNAME)
 endmacro()
 
 set(NVSHMEM_DEVICE_SOURCES
-    coll/device/gpu_coll.cu
-    coll/device/recexchalgo.cu
-    comm/device/proxy_device.cu
-    init/init_device.cu
-    launch/collective_launch_device.cu
+    device/coll/gpu_coll.cu
+    device/proxy/proxy_device.cu
+    device/init/init_device.cu
+    device/launch/collective_launch_device.cu
 )
 
 set(NVSHMEM_DEVICE_SOURCES_NOMAXREGCOUNT
-    coll/device/kernels/alltoall.cu
-    coll/device/kernels/barrier.cu
-    coll/device/kernels/broadcast.cu
-    coll/device/kernels/fcollect.cu
-    coll/device/kernels/reduce.cu
-    comm/host/cuda_interface_sync.cu
-    comm/host/proxy/rma.cu
-    comm/host/quiet_on_stream.cu
+    device/coll/alltoall/alltoall.cu
+    device/coll/barrier/barrier.cu
+    device/coll/broadcast/broadcast.cu
+    device/coll/fcollect/fcollect.cu
+    device/coll/rdxn/reduce_and.cu
+    device/coll/rdxn/reduce_or.cu
+    device/coll/rdxn/reduce_xor.cu
+    device/coll/rdxn/reduce_min.cu
+    device/coll/rdxn/reduce_max.cu
+    device/coll/rdxn/reduce_prod.cu
+    device/coll/rdxn/reduce_sum.cu
+    device/coll/rdxn/reduce_team.cu
+    device/comm/cuda_interface_sync.cu
+    device/comm/quiet_on_stream.cu
+    device/comm/rma.cu
 )
 
 set(NVSHMEM_HOST_SOURCES
-    bootstrap/bootstrap.cpp
-    bootstrap/bootstrap_loader.cpp
-    coll/host/cpu_coll.cpp
-    coll/host/alltoall.cpp
-    coll/host/alltoall_on_stream.cpp
-    coll/host/barrier.cpp
-    coll/host/barrier_on_stream.cpp
-    coll/host/broadcast.cpp
-    coll/host/broadcast_on_stream.cpp
-    coll/host/fcollect.cpp
-    coll/host/fcollect_on_stream.cpp
-    coll/host/rdxn.cpp
-    coll/host/rdxn_on_stream.cpp
-    comm/host/putget.cpp
-    comm/host/fence.cpp
-    comm/host/quiet.cpp
-    comm/host/sync.cpp
-    comm/host/amo.cpp
-    comm/proxy/proxy.cpp
-    comm/transport.cpp
-    comm/transports/p2p/p2p.cpp
-    init/cudawrap.cpp
-    init/init.cu
-    init/init_nvtx.cpp
-    init/query_host.cpp
-    launch/collective_launch.cpp
-    mem/mem.cpp
-    team/team.cu
-    team/team_internal.cu
-    topo/topo.cpp
+    host/bootstrap/bootstrap.cpp
+    host/bootstrap/bootstrap_loader.cpp
+    host/coll/cpu_coll.cpp
+    host/coll/alltoall/alltoall.cpp
+    host/coll/alltoall/alltoall_on_stream.cpp
+    host/coll/barrier/barrier.cpp
+    host/coll/barrier/barrier_on_stream.cpp
+    host/coll/broadcast/broadcast.cpp
+    host/coll/broadcast/broadcast_on_stream.cpp
+    host/coll/fcollect/fcollect.cpp
+    host/coll/fcollect/fcollect_on_stream.cpp
+    host/coll/rdxn/rdxn.cpp
+    host/coll/rdxn/rdxn_on_stream.cpp
+    host/comm/putget.cpp
+    host/comm/fence.cpp
+    host/comm/quiet.cpp
+    host/comm/sync.cpp
+    host/comm/amo.cpp
+    host/proxy/proxy.cpp
+    host/transport/transport.cpp
+    host/transport/p2p/p2p.cpp
+    host/init/cudawrap.cpp
+    host/init/init.cu
+    host/init/init_nvtx.cpp
+    host/init/query_host.cpp
+    host/launch/collective_launch.cpp
+    host/mem/mem.cpp
+    host/team/team.cu
+    host/team/team_internal.cpp
+    host/team/team_internal_cuda.cu
+    host/topo/topo.cpp
     util/cs.cpp
     util/debug.cpp
     util/env_vars.cpp
     util/util.cpp
     util/sockets.cpp
+    util/shared_memory.cpp
 )
 
-nvshmem_library_set_base_link(nvshmem)
-nvshmem_library_set_base_link(nvshmem_host)
-nvshmem_library_set_base_link(nvshmem_device)
+target_include_directories(
+  nvshmem
+  PRIVATE include
+          include/modules/bootstrap
+	  include/modules/common
+	  include/modules/transport
+          device/coll
+          host/coll
+          host/topo
+  INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+)
+
+target_include_directories(
+  nvshmem_device
+  PRIVATE include
+          include/modules/bootstrap
+	  include/modules/common
+	  include/modules/transport
+          device/coll
+          host/coll
+  INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+)
+
+target_include_directories(
+  nvshmem_host
+  PRIVATE include
+          include/modules/bootstrap
+	  include/modules/common
+	  include/modules/transport
+          device/coll
+          host/coll
+          host/topo
+  INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(nvshmem PRIVATE CUDA::cudart_static nvidia-ml)
+target_link_libraries(nvshmem_device PRIVATE CUDA::cudart_static nvidia-ml)
+target_link_libraries(nvshmem_host PRIVATE CUDA::cudart_static nvidia-ml)
 nvshmem_library_set_base_config(nvshmem)
 nvshmem_library_set_base_config(nvshmem_host)
 nvshmem_library_set_base_config(nvshmem_device)
@@ -240,16 +282,16 @@ if(NVSHMEM_UCX_SUPPORT)
   )
   nvshmem_library_set_base_config(nvshmem_transport_ucx)
   target_sources(nvshmem_transport_ucx PRIVATE
-                 comm/transports/ucx/ucx.cpp
-                 comm/transports/common/transport_common.cpp
+                 modules/transport/ucx/ucx.cpp
+                 modules/transport/common/transport_common.cpp
   )
   target_link_options(nvshmem_transport_ucx PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_ucx PRIVATE include comm/transports/common)
-  target_link_libraries(nvshmem_transport_ucx PRIVATE ucx::ucs ucx::ucp CUDA::cudart)
+  target_include_directories(nvshmem_transport_ucx PRIVATE include include/modules/common include/modules/transport modules/transport/common)
+  target_link_libraries(nvshmem_transport_ucx PRIVATE ucx::ucs ucx::ucp CUDA::cudart_static)
   if(NVSHMEM_USE_GDRCOPY)
     target_include_directories(nvshmem_transport_ucx PRIVATE ${GDRCOPY_INCLUDE})
     target_sources(nvshmem_transport_ucx PRIVATE
-                   comm/transports/common/transport_gdr_common.cpp
+                   modules/transport/common/transport_gdr_common.cpp
     )
   endif()
   set(ACTIVE_TRANSPORTS ${ACTIVE_TRANSPORTS} nvshmem_transport_ucx)
@@ -261,17 +303,17 @@ if(NVSHMEM_IBRC_SUPPORT)
   )
   nvshmem_library_set_base_config(nvshmem_transport_ibrc)
   target_sources(nvshmem_transport_ibrc PRIVATE
-                 comm/transports/ibrc/ibrc.cpp
-                 comm/transports/common/transport_common.cpp
-                 comm/transports/common/transport_ib_common.cpp
+                 modules/transport/ibrc/ibrc.cpp
+                 modules/transport/common/transport_common.cpp
+                 modules/transport/common/transport_ib_common.cpp
   )
   target_link_options(nvshmem_transport_ibrc PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_ibrc PRIVATE include comm/transports/common)
-  target_link_libraries(nvshmem_transport_ibrc PRIVATE CUDA::cudart)
+  target_include_directories(nvshmem_transport_ibrc PRIVATE include include/modules/common include/modules/transport modules/transport/common)
+  target_link_libraries(nvshmem_transport_ibrc PRIVATE CUDA::cudart_static)
   if(NVSHMEM_USE_GDRCOPY)
     target_include_directories(nvshmem_transport_ibrc PRIVATE ${GDRCOPY_INCLUDE})
     target_sources(nvshmem_transport_ibrc PRIVATE
-                   comm/transports/common/transport_gdr_common.cpp
+                   modules/transport/common/transport_gdr_common.cpp
     )
   endif()
   set(ACTIVE_TRANSPORTS ${ACTIVE_TRANSPORTS} nvshmem_transport_ibrc)
@@ -287,39 +329,39 @@ if(NVSHMEM_IBDEVX_SUPPORT)
   )
   nvshmem_library_set_base_config(nvshmem_transport_ibdevx)
   target_sources(nvshmem_transport_ibdevx PRIVATE
-                 comm/transports/ibdevx/ibdevx.cpp
-                 comm/transports/common/transport_common.cpp
-                 comm/transports/common/transport_ib_common.cpp
-                 comm/transports/common/transport_mlx5_common.cpp
+                 modules/transport/ibdevx/ibdevx.cpp
+                 modules/transport/common/transport_common.cpp
+                 modules/transport/common/transport_ib_common.cpp
+                 modules/transport/common/transport_mlx5_common.cpp
   )
   target_link_options(nvshmem_transport_ibdevx PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_ibdevx PRIVATE include comm/transports/common)
-  target_link_libraries(nvshmem_transport_ibdevx PRIVATE ${MLX5_lib} CUDA::cudart)
+  target_include_directories(nvshmem_transport_ibdevx PRIVATE include include/modules/common include/modules/transport modules/transport/common)
+  target_link_libraries(nvshmem_transport_ibdevx PRIVATE ${MLX5_lib} CUDA::cudart_static)
   set(ACTIVE_TRANSPORTS ${ACTIVE_TRANSPORTS} nvshmem_transport_ibdevx)
 endif()
 
 if(NVSHMEM_IBGDA_SUPPORT)
-  set(NVSHMEM_DEVICE_SOURCES
-      ${NVSHMEM_DEVICE_SOURCES}
-      init/ibgda_init_device.cu
-  )
-  set(NVSHMEM_HOST_SOURCES
-      ${NVSHMEM_HOST_SOURCES}
-      init/ibgda_init.cu
+  check_source_compiles(C
+    "#include <infiniband/mlx5dv.h>
+    int main(void) { int x = MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED; return 1; }"
+    HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED
   )
   add_library(
     nvshmem_transport_ibgda SHARED
   )
   nvshmem_library_set_base_config(nvshmem_transport_ibgda)
   target_sources(nvshmem_transport_ibgda PRIVATE
-                 comm/transports/ibgda/ibgda.cpp
-                 comm/transports/common/transport_common.cpp
-                 comm/transports/common/transport_ib_common.cpp
-                 comm/transports/common/transport_mlx5_common.cpp
+                 modules/transport/ibgda/ibgda.cpp
+                 modules/transport/common/transport_common.cpp
+                 modules/transport/common/transport_ib_common.cpp
+                 modules/transport/common/transport_mlx5_common.cpp
   )
   target_link_options(nvshmem_transport_ibgda PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_ibgda PRIVATE include comm/transports/common)
-  target_link_libraries(nvshmem_transport_ibgda PRIVATE ${MLX5_lib} CUDA::cudart)
+  target_include_directories(nvshmem_transport_ibgda PRIVATE include include/modules/common include/modules/transport modules/transport/common)
+  target_link_libraries(nvshmem_transport_ibgda PRIVATE ${MLX5_lib} CUDA::cudart_static)
+  if(HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED)
+    target_compile_definitions(nvshmem_transport_ibgda PRIVATE HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED=${HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED})
+  endif()
   set(ACTIVE_TRANSPORTS ${ACTIVE_TRANSPORTS} nvshmem_transport_ibgda)
 endif()
 
@@ -330,12 +372,18 @@ if(NVSHMEM_LIBFABRIC_SUPPORT)
   )
   nvshmem_library_set_base_config(nvshmem_transport_libfabric)
   target_sources(nvshmem_transport_libfabric PRIVATE
-                 comm/transports/libfabric/libfabric.cpp
-                 comm/transports/common/transport_common.cpp
+                 modules/transport/libfabric/libfabric.cpp
+                 modules/transport/common/transport_common.cpp
   )
   target_link_options(nvshmem_transport_libfabric PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_libfabric PRIVATE include comm/transports/common "${LIBFABRIC_HOME}/include/")
-  target_link_libraries(nvshmem_transport_libfabric PRIVATE ${FABRIC_lib} CUDA::cudart)
+  target_include_directories(nvshmem_transport_libfabric PRIVATE include include/modules/common include/modules/transport modules/transport/common "${LIBFABRIC_HOME}/include/")
+  target_link_libraries(nvshmem_transport_libfabric PRIVATE ${FABRIC_lib} CUDA::cudart_static)
+  if(NVSHMEM_USE_GDRCOPY)
+    target_include_directories(nvshmem_transport_libfabric PRIVATE ${GDRCOPY_INCLUDE})
+    target_sources(nvshmem_transport_libfabric PRIVATE
+                   modules/transport/common/transport_gdr_common.cpp
+    )
+  endif()
   set(ACTIVE_TRANSPORTS ${ACTIVE_TRANSPORTS} nvshmem_transport_libfabric)
 endif()
 
@@ -358,12 +406,12 @@ endif()
 if(NVSHMEM_USE_DLMALLOC)
   set(NVSHMEM_HOST_SOURCES
       ${NVSHMEM_HOST_SOURCES}
-      mem/dlmalloc.cpp
+      host/mem/dlmalloc.cpp
   )
 else()
 set(NVSHMEM_HOST_SOURCES
     ${NVSHMEM_HOST_SOURCES}
-    mem/custom_malloc.cpp
+    host/mem/custom_malloc.cpp
   )
 endif()
 ## End dependecies
@@ -374,7 +422,7 @@ set(INCEXPORTS
     ${INCEXPORTS}
     device/pt-to-pt/transfer_device.cuh
 )
-configure_file(include/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_BINARY_DIR}/include/device/pt-to-pt/transfer_device.cuh COPYONLY)
+configure_file(include/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/include/device/pt-to-pt/transfer_device.cuh COPYONLY)
 else()
 set(INCEXPORTS
     ${INCEXPORTS}
@@ -382,9 +430,9 @@ set(INCEXPORTS
 )
 set(NVSHMEM_DEVICE_SOURCES
     ${NVSHMEM_DEVICE_SOURCES}
-    comm/device/transfer_device.cu
+    device/comm/transfer_device.cu
 )
-configure_file(include/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/comm/device/transfer_device.cu COPYONLY)
+configure_file(include/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/device/comm/transfer_device.cu COPYONLY)
 endif()
 ## End inlining requirements
 
@@ -403,18 +451,23 @@ add_library(NVSHMEM::nvshmem ALIAS nvshmem)
 
 # Start nvshmem-info definitions.
 add_executable(nvshmem-info)
-target_sources(nvshmem-info PRIVATE util/nvshmem-info.cpp)
+target_sources(nvshmem-info PRIVATE bin/nvshmem-info.cpp)
 set_target_properties(nvshmem-info PROPERTIES CXX_STANDARD_REQUIRED ON CXX_STANDARD 11 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
-target_link_libraries(nvshmem-info CUDA::cudart CUDA::cuda_driver nvidia-ml nvshmem)
+target_link_libraries(nvshmem-info CUDA::cudart_static CUDA::cuda_driver nvidia-ml nvshmem)
 target_include_directories(nvshmem-info PRIVATE include)
 # End nvshmem-info definitions.
 
 # Start header configuration and export
-configure_file(include/nvshmem_version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/nvshmem_version.h @ONLY)
-configure_file(include/nvshmem_build_options.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/nvshmem_build_options.h)
+configure_file(include/common/nvshmem_version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/common/nvshmem_version.h @ONLY)
+configure_file(include/common/nvshmem_build_options.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/common/nvshmem_build_options.h)
 
 set(INCEXPORTS
     ${INCEXPORTS}
+    device/nvshmemi_common_device.cuh
+    device/nvshmemi_common_device_defines.cuh
+    device/nvshmemi_wait_until_apis.cuh
+    device/nvshmem_defines.h
+    device/nvshmemx_defines.h
     device/coll/alltoall.cuh
     device/coll/barrier.cuh
     device/coll/broadcast.cuh
@@ -422,33 +475,26 @@ set(INCEXPORTS
     device/coll/fcollect.cuh
     device/coll/reduce.cuh
     device/coll/utils.cuh
+    device/init/query_device.cuh
     device/pt-to-pt/ibgda_device.cuh
     device/pt-to-pt/proxy_device.cuh
     device/pt-to-pt/utils_device.h
     device/team/team_device.cuh
-    device/init/query_device.cuh
+    common/nvshmem_build_options.h
+    common/nvshmem_common.cuh
+    common/nvshmem_common_ibgda.h
+    common/nvshmem_common_proxy.h
+    common/nvshmem_common_transport.h
+    common/nvshmem_constants.h
+    common/nvshmem_types.h
+    common/nvshmem_version.h
+    host/nvshmem_api.h
+    host/nvshmem_coll_api.h
+    host/nvshmemx_api.h
+    host/nvshmemx_coll_api.h
+    host/nvshmemx_error.h
     nvshmem.h
-    nvshmem_api.h
-    nvshmem_bootstrap_defines.h
-    nvshmem_bootstrap.h
-    nvshmem_build_options.h
-    nvshmem_coll_api.h
-    nvshmem_common.cuh
-    nvshmem_constants.h
-    nvshmem_defines.h
-    nvshmem_types.h
-    nvshmem_version.h
-    nvshmemi_constants.h
-    nvshmemi_transport_defines.h
-    nvshmemi_proxy.h
-    nvshmemi_ibgda.h
-    nvshmemi_team.h
-    nvshmemi_util.h
     nvshmemx.h
-    nvshmemx_api.h
-    nvshmemx_coll_api.h
-    nvshmemx_defines.h
-    nvshmemx_error.h
 )
 
 foreach(INC ${INCEXPORTS})
@@ -458,27 +504,42 @@ endforeach(INC ${INCEXPORTS})
 
 # start share configuration
 set(SHAREEXPORTS
-    bootstrap_loader.cpp
-    bootstrap_mpi.c
-    bootstrap_pmi.cpp
-    bootstrap_pmix.c
-    bootstrap_shmem.c
-    bootstrap_util.h
-    bootstrap.cpp
+    host/bootstrap/bootstrap_loader.cpp
+    modules/bootstrap/mpi/bootstrap_mpi.c
+    modules/bootstrap/pmi/bootstrap_pmi.cpp
+    modules/bootstrap/pmix/bootstrap_pmix.c
+    modules/bootstrap/shmem/bootstrap_shmem.c
+    host/bootstrap/bootstrap.cpp
 )
 
 foreach(SHARE ${SHAREEXPORTS})
-  configure_file(bootstrap/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/bootstrap-plugins/${SHARE} COPYONLY)
+  get_filename_component(SHAREFILE ${SHARE} NAME)
+  configure_file(${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/bootstrap-plugins/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREEXPORTS})
 
+set(SHAREINCEXPORTS
+    modules/common/nvshmemi_bootstrap_defines.h
+    modules/bootstrap/bootstrap_util.h
+    modules/bootstrap/nvshmemi_bootstrap.h
+)
+
+foreach(SHARE ${SHAREINCEXPORTS})
+  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/bootstrap-plugins/${SHARE} COPYONLY)
+  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/include/${SHARE} COPYONLY)
+endforeach(SHARE ${SHAREINCEXPORTS})
+
 set(TRANSPORTINCEXPORTS
-    transport.h
-    env_defs.h
-    cudawrap.h
+    modules/transport/transport.h
+    modules/transport/env_defs_internal.h
+    modules/transport/env_defs.h
+    modules/transport/cudawrap.h
+    modules/common/nvshmemi_bootstrap_defines.h
+    modules/transport/nvshmemi_transport_defines.h
 )
 
 foreach(SHARE ${TRANSPORTINCEXPORTS})
   configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/transport-plugins/common/${SHARE} COPYONLY)
+  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/include/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREEXPORTS})
 
 set(TRANSPORTEXPORTS
@@ -503,7 +564,7 @@ set(TRANSPORTEXPORTS
 )
 
 foreach(SHARE ${TRANSPORTEXPORTS})
-  configure_file(comm/transports/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/transport-plugins/${SHARE} COPYONLY)
+  configure_file(modules/transport/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/transport-plugins/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREEXPORTS})
 
 # end share configuration
@@ -547,6 +608,7 @@ install(
 install(
   DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/
   DESTINATION include/
+  PATTERN "modules" EXCLUDE
 )
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../examples/
@@ -599,9 +661,11 @@ if(NVSHMEM_BUILD_DEB_PACKAGE)
 endif()
 
 if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
-  set(PACKAGE_SUFFIX "amd64")
-else()
+  set(PACKAGE_SUFFIX "x86_64")
+elseif(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "ppc64le")
   set(PACKAGE_SUFFIX "ppc64le")
+else()
+  set(PACKAGE_SUFFIX "aarch64")
 endif()
 
 set(CPACK_SOURCE_INSTALLED_DIRECTORIES "${CMAKE_SOURCE_DIR}/;/")
@@ -621,8 +685,8 @@ set(CPACK_SOURCE_IGNORE_FILES
 /README;\
 /testcommon.py;\
 /examples/examples_install/;\
-/include/nvshmem_build_options.h$;\
-/include/nvshmem_version.h$;\
+/include/common/nvshmem_build_options.h$;\
+/include/common/nvshmem_version.h$;\
 /perftest/perftest_install/;\
 /scripts/cronjob_peak.sh;\
 /scripts/cronjob_prom.sh;\

@@ -29,8 +29,8 @@ __global__ void pull(int *data_d, int len, int pe, int iter) {
 
     for (i = 0; i < iter; i++) {
         if (!pe) {
-            for (j = 0; j < len; j += THREADS) {
-                if (j + tid < len) *(data_d + j + tid) = nvshmem_int_g(data_d + j + tid, peer);
+            for (j = tid; j < len; j += THREADS) {
+                *(data_d + j) = nvshmem_int_g(data_d + j, peer);
             }
 
             __syncthreads();

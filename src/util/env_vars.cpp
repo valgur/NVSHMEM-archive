@@ -15,14 +15,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <alloca.h>
-#include <inttypes.h>
-#include <errno.h>
+#include <assert.h>
 
-#include "nvshmem_nvtx.hpp"
-#include "util.h"
-#include "nvshmem_internal.h"
-#include "nvshmem.h"
+#include "internal/host/nvshmem_nvtx.hpp"
+#include "internal/util.h"
+#include "modules/transport/env_defs_internal.h"
+#include "common/nvshmem_common.cuh"  // IWYU pragma: keep
 
 struct nvshmemi_options_s nvshmemi_options;
 
@@ -76,7 +74,7 @@ void nvshmemi_options_print(int style) {
 #define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)       \
     NVSHMEMI_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, \
                                NVSHMEMI_ENV_CAT_OPENSHMEM, style)
-#include "env_defs.h"
+#include "modules/transport/env_defs.h"
 #undef NVSHMEMI_ENV_DEF
     printf("\n");
 
@@ -84,7 +82,7 @@ void nvshmemi_options_print(int style) {
 #define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)       \
     NVSHMEMI_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, \
                                NVSHMEMI_ENV_CAT_BOOTSTRAP, style)
-#include "env_defs.h"
+#include "modules/transport/env_defs.h"
 #undef NVSHMEMI_ENV_DEF
     printf("\n");
 
@@ -92,7 +90,7 @@ void nvshmemi_options_print(int style) {
 #define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)                               \
     NVSHMEMI_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, NVSHMEMI_ENV_CAT_OTHER, \
                                style)
-#include "env_defs.h"
+#include "modules/transport/env_defs.h"
 #undef NVSHMEMI_ENV_DEF
     printf("\n");
 
@@ -100,7 +98,7 @@ void nvshmemi_options_print(int style) {
 #define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)       \
     NVSHMEMI_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, \
                                NVSHMEMI_ENV_CAT_COLLECTIVES, style)
-#include "env_defs.h"
+#include "modules/transport/env_defs.h"
 #undef NVSHMEMI_ENV_DEF
     printf("\n");
 
@@ -108,7 +106,7 @@ void nvshmemi_options_print(int style) {
 #define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)       \
     NVSHMEMI_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, \
                                NVSHMEMI_ENV_CAT_TRANSPORT, style)
-#include "env_defs.h"
+#include "modules/transport/env_defs.h"
 #undef NVSHMEMI_ENV_DEF
     printf("\n");
 
@@ -117,7 +115,7 @@ void nvshmemi_options_print(int style) {
 #define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)                                \
     NVSHMEMI_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, NVSHMEMI_ENV_CAT_HIDDEN, \
                                style)
-#include "env_defs.h"
+#include "modules/transport/env_defs.h"
 #undef NVSHMEMI_ENV_DEF
         printf("\n");
     }
@@ -128,7 +126,7 @@ void nvshmemi_options_print(int style) {
 #define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)                              \
     NVSHMEMI_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, NVSHMEMI_ENV_CAT_NVTX, \
                                style)
-#include "env_defs.h"
+#include "modules/transport/env_defs.h"
 
         if (style == NVSHMEMI_OPTIONS_STYLE_RST) printf(".. code-block:: none\n\n");
 

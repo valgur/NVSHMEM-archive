@@ -12,6 +12,9 @@
 #else
 #include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
 #endif
+#include "device/nvshmemi_wait_until_apis.cuh"
+#include "device/nvshmemi_common_device_defines.cuh"
+#include "device/nvshmemi_common_device.cuh"
 #include "utils.cuh"
 
 #ifdef __CUDA_ARCH__
@@ -223,7 +226,7 @@ __device__ inline void nvshmemi_bcast_nonLL_tree_threadgroup(nvshmem_team_t team
     const int my_pe_in_team = nvshmem_team_my_pe(team);
 
     if (PE_root != my_pe_in_team) {
-        nvshmemi_signal_wait_until((uint64_t *)(pWrk + recv_offset), NVSHMEM_CMP_EQ, ll_flag);
+        nvshmemi_wait_until<uint64_t>((uint64_t *)(pWrk + recv_offset), NVSHMEM_CMP_EQ, ll_flag);
     }
     nvshmemi_threadgroup_sync<SCOPE>();
     /* Do remote transfers first */

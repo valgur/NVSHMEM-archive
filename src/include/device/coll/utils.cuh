@@ -7,17 +7,17 @@
 #ifndef _NVSHMEMI_DEVICE_COLL_UTILS_H_
 #define _NVSHMEMI_DEVICE_COLL_UTILS_H_
 
+#if not defined __CUDACC_RTC__
 #include <type_traits>
-#include "cuda.h"
-//#include "nvshmem_internal.h"
+#else
+#include <cuda/std/type_traits>
+#endif
 #ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
 #include "device/pt-to-pt/transfer_device.cuh"
 #else
 #include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
 #endif
 #include "device/team/team_device.cuh"
-
-using namespace std;
 
 #define GPU_BITS_COPY_THREADGROUP_DIRECT(TYPENAME, TYPE, dest, src, nelems, myIdx, groupSize) \
     do {                                                                                      \
@@ -29,8 +29,13 @@ using namespace std;
 
 #ifdef __CUDA_ARCH__
 template <typename T, rdxn_ops_t op>
-__device__ inline typename enable_if<is_integral<T>::value, T>::type perform_gpu_rdxn(T op1,
-                                                                                      T op2) {
+#if not defined __CUDACC_RTC__
+__device__ inline typename std::enable_if<std::is_integral<T>::value, T>::type perform_gpu_rdxn(
+    T op1, T op2) {
+#else
+__device__ inline typename cuda::std::enable_if<cuda::std::is_integral<T>::value, T>::type
+perform_gpu_rdxn(T op1, T op2) {
+#endif
     switch (op) {
         case RDXN_OPS_SUM:
             return op1 + op2;
@@ -54,8 +59,13 @@ __device__ inline typename enable_if<is_integral<T>::value, T>::type perform_gpu
 }
 
 template <typename T, rdxn_ops_t op>
-__device__ inline typename enable_if<!is_integral<T>::value, T>::type perform_gpu_rdxn(T op1,
-                                                                                       T op2) {
+#if not defined __CUDACC_RTC__
+__device__ inline typename std::enable_if<!std::is_integral<T>::value, T>::type perform_gpu_rdxn(
+    T op1, T op2) {
+#else
+__device__ inline typename cuda::std::enable_if<!cuda::std::is_integral<T>::value, T>::type
+perform_gpu_rdxn(T op1, T op2) {
+#endif
     switch (op) {
         case RDXN_OPS_SUM:
             return op1 + op2;

@@ -6,16 +6,22 @@
 
 #define __STDC_FORMAT_MACROS 1
 
+#include <stdint.h>  // IWYU pragma: keep
+// IWYU pragma: no_include <bits/stdint-uintn.h>
+#include <execinfo.h>
 #include <inttypes.h>
+#include <sched.h>
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include <unistd.h>
-#include "util.h"
-#include "nvshmem_internal.h"
-#include <execinfo.h>
-#include <signal.h>
-#include "error_codes_internal.h"
+
+#include "internal/common/debug.h"
+#include "internal/error_codes_internal.h"
+#include "internal/common/nvshmem_internal.h"
+#include "modules/common/nvshmemi_bootstrap_defines.h"
+#include "host/nvshmemx_error.h"
 
 static void sig_handler(int sig) {
     void *array[10];

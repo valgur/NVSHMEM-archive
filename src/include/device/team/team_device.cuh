@@ -1,10 +1,13 @@
 #ifndef TEAM_UTILS_DEVICE_CUH
 #define TEAM_UTILS_DEVICE_CUH
 
+#if not defined __CUDACC_RTC__
 #include <stdio.h>
-#include <math.h>
 #include <assert.h>
-#include "nvshmemi_team.h"
+#else
+#include <cuda/std/cassert>
+#endif
+#include "common/nvshmem_common.cuh"
 
 #ifdef __CUDA_ARCH__
 

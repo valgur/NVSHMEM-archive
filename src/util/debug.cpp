@@ -10,17 +10,21 @@
  * See COPYRIGHT.txt for license information
  */
 
-#include <cstring>
-#include <cstdio>
-#include <sys/types.h>
+#include <cuda_runtime.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <syscall.h>
 #include <unistd.h>
-#include <limits.h>
-
-#include <sys/syscall.h>
-#define gettid() (pid_t) syscall(SYS_gettid)
-
 #include <cstdarg>
-#include "util.h"
+#include <cstdio>
+#ifdef NVSHMEM_TRACE
+#include <chrono>
+#include <type_traits>
+#endif
+
+#include "internal/common/debug.h"
+#include "internal/util.h"
+#define nvshmemi_gettid() (pid_t) syscall(SYS_gettid)
 
 extern "C" {
 void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const char *filefunc,
@@ -39,11 +43,11 @@ void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const
     pthread_mutex_lock(&nvshmem_debug_output_lock);
     if (level == NVSHMEM_LOG_WARN && nvshmem_debug_level >= NVSHMEM_LOG_WARN)
         len = snprintf(buffer, sizeof(buffer), "\n%s:%d:%d [%d] %s:%d NVSHMEM WARN ", hostname,
-                       getpid(), gettid(), cudaDev, filefunc, line);
+                       getpid(), nvshmemi_gettid(), cudaDev, filefunc, line);
     else if (level == NVSHMEM_LOG_INFO && nvshmem_debug_level >= NVSHMEM_LOG_INFO &&
              (flags & nvshmem_debug_mask))
         len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] NVSHMEM INFO ", hostname, getpid(),
-                       gettid(), cudaDev);
+                       nvshmemi_gettid(), cudaDev);
 #ifdef NVSHMEM_TRACE
     else if (level == NVSHMEM_LOG_TRACE && nvshmem_debug_level >= NVSHMEM_LOG_TRACE &&
              (flags & nvshmem_debug_mask)) {
@@ -51,7 +55,7 @@ void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const
         double timestamp =
             std::chrono::duration_cast<std::chrono::duration<double>>(delta).count() * 1000;
         len = snprintf(buffer, sizeof(buffer), "%s:%d:%d [%d] %f %s:%d NVSHMEM TRACE ", hostname,
-                       getpid(), gettid(), cudaDev, timestamp, filefunc, line);
+                       getpid(), nvshmemi_gettid(), cudaDev, timestamp, filefunc, line);
     }
 #endif
     if (len) {
@@ -66,8 +70,8 @@ void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const
 
     // If nvshmem_debug_level == NVSHMEM_LOG_ABORT then WARN() will also call abort()
     if (level == NVSHMEM_LOG_WARN && nvshmem_debug_level == NVSHMEM_LOG_ABORT) {
-        fprintf(stderr, "\n%s:%d:%d [%d] %s:%d NVSHMEM ABORT\n", hostname, getpid(), gettid(),
-                cudaDev, filefunc, line);
+        fprintf(stderr, "\n%s:%d:%d [%d] %s:%d NVSHMEM ABORT\n", hostname, getpid(),
+                nvshmemi_gettid(), cudaDev, filefunc, line);
         abort();
     }
 }

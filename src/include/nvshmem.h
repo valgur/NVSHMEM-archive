@@ -13,10 +13,13 @@
 #ifndef _NVSHMEM_H_
 #define _NVSHMEM_H_
 
-#include "nvshmem_build_options.h"
-#include "nvshmem_api.h"
-#include "nvshmem_defines.h"
-
-#include "nvshmemx.h"
+#include "common/nvshmem_build_options.h"
+/* NVRTC only compiles device code. Leave out host headers */
+#if not defined __CUDACC_RTC__
+#include "host/nvshmem_api.h"
+#include "host/nvshmemx_api.h"
+#endif
+#include "device/nvshmem_defines.h"
+#include "device/nvshmemx_defines.h"
 
 #endif

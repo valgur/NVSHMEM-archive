@@ -5,7 +5,9 @@
  */
 
 #include <pthread.h>
-#include "util.h"
+#include <stddef.h>
+
+#include "host/nvshmemx_error.h"
 
 pthread_mutex_t global_mutex;
 

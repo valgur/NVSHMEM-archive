@@ -4,6 +4,8 @@
  * See COPYRIGHT for license information
  */
 
+#include "device/nvshmemi_common_device_defines.cuh"
+
 #ifndef _NVSHMEMI_TRANSFER_H_
 #define _NVSHMEMI_TRANSFER_H_
 template <typename T>
@@ -35,4 +37,5 @@ __device__ void nvshmemi_transfer_quiet(bool use_membar);
 template <threadgroup_t SCOPE>
 __device__ void nvshmemi_transfer_fence();
 __device__ void nvshmemi_transfer_enforce_consistency_at_target(bool use_membar);
+__device__ void nvshmemi_transfer_syncapi_update_mem();
 #endif /* _NVSHMEMI_TRANSFER_H_ */

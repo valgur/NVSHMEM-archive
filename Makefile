@@ -55,6 +55,11 @@ else
 ifeq ($(ARCH), ppc64le)
 CXXFLAGS   += -fPIC -I$(CUDA_INC) -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS
 BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_PPC64LE\\n"
+else
+ifeq ($(ARCH), aarch64)
+CXXFLAGS   += -fPIC -I$(CUDA_INC)
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_AARCH64\\n"
+endif
 endif
 endif
 NVCUFLAGS  += -Xcompiler -fPIC -ccbin $(CXX) $(NVCC_GENCODE) -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS
@@ -202,29 +207,12 @@ ${NVSHMEM_BUILDDIR}/%.txt: %.txt
 	cp $< $@
 
 INCEXPORTS_NVSHMEM  := nvshmem.h nvshmemx.h
-INCEXPORTS := nvshmem.h \
-              nvshmem_api.h \
-              nvshmem_bootstrap_defines.h \
-              nvshmem_bootstrap.h \
-              nvshmem_coll_api.h \
-              nvshmem_common.cuh \
-              nvshmem_constants.h \
-              nvshmem_defines.h \
-              nvshmem_types.h \
-              nvshmemi_util.h \
-              nvshmemi_team.h \
-              nvshmemx.h \
-              nvshmemx_api.h \
-              nvshmemx_coll_api.h \
-              nvshmemi_constants.h \
-              nvshmemi_transport_defines.h \
-              nvshmemx_defines.h \
-              nvshmemx_error.h \
-              nvshmemi_proxy.h \
-              nvshmemi_ibgda.h \
-              device/pt-to-pt/ibgda_device.cuh \
-              device/pt-to-pt/proxy_device.cuh \
-              device/pt-to-pt/utils_device.h \
+INCEXPORTS := common/nvshmem_common.cuh \
+              common/nvshmem_common_ibgda.h \
+              common/nvshmem_common_proxy.h \
+              common/nvshmem_common_transport.h \
+              common/nvshmem_constants.h \
+              common/nvshmem_types.h \
               device/coll/defines.cuh \
               device/coll/utils.cuh \
               device/coll/alltoall.cuh \
@@ -232,18 +220,38 @@ INCEXPORTS := nvshmem.h \
               device/coll/fcollect.cuh \
               device/coll/barrier.cuh \
               device/coll/reduce.cuh \
+              device/init/query_device.cuh \
+              device/pt-to-pt/ibgda_device.cuh \
+              device/pt-to-pt/proxy_device.cuh \
+              device/pt-to-pt/utils_device.h \
               device/team/team_device.cuh \
-              device/init/query_device.cuh
+              device/nvshmemi_wait_until_apis.cuh \
+              device/nvshmemi_common_device.cuh \
+              device/nvshmemi_common_device_defines.cuh \
+              device/nvshmem_defines.h \
+              device/nvshmemx_defines.h \
+              host/nvshmem_api.h \
+              host/nvshmem_coll_api.h \
+              host/nvshmemx_error.h \
+              host/nvshmemx_api.h \
+              host/nvshmemx_coll_api.h \
+              nvshmem.h \
+              nvshmemx.h
 
-PLUGINEXPORTS := src/bootstrap/bootstrap_pmix.c \
-                 src/bootstrap/bootstrap_pmi.cpp \
-                 src/bootstrap/bootstrap_mpi.c \
-                 src/bootstrap/bootstrap_util.h \
-                 src/bootstrap/bootstrap_shmem.c
+PLUGINEXPORTS := src/modules/bootstrap/pmix/bootstrap_pmix.c \
+                 src/modules/bootstrap/pmi/bootstrap_pmi.cpp \
+                 src/modules/bootstrap/mpi/bootstrap_mpi.c \
+                 src/modules/bootstrap/shmem/bootstrap_shmem.c \
+                 src/include/modules/bootstrap/bootstrap_util.h \
+                 src/include/modules/bootstrap/nvshmemi_bootstrap.h \
+                 src/include/modules/common/nvshmemi_bootstrap_defines.h
 
-TRANSPORTINCEXPORTS := transport.h \
-                       env_defs.h  \
-                       cudawrap.h  \
+TRANSPORTINCEXPORTS := src/include/modules/transport.h \
+                       src/include/modules/transport/env_defs.h  \
+                       src/include/modules/transport/env_defs_internal.h  \
+                       src/include/modules/transport/cudawrap.h  \
+                       src/include/modules/common/nvshmemi_bootstrap_defines.h \
+                       src/include/modules/transport/nvshmemi_transport_defines.h \
 
 TRANSPORTEXPORTS := common/mlx5_ifc.h              \
                     common/mlx5_prm.h              \
@@ -260,93 +268,98 @@ TRANSPORTEXPORTS := common/mlx5_ifc.h              \
                     ucx/ucx.cpp                    \
                     ucx/ucx.h                      \
 
-HOSTLIBSRCFILES := bootstrap/bootstrap.cpp \
-               bootstrap/bootstrap_loader.cpp
+HOSTLIBSRCFILES := host/bootstrap/bootstrap.cpp \
+                   host/bootstrap/bootstrap_loader.cpp
 
-ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
-HOSTLIBSRCFILES += init/ibgda_init.cu
-DEVICELIBSRCFILES += init/ibgda_init_device.cu
-endif
-
-HOSTLIBSRCFILES += coll/host/cpu_coll.cpp \
-                   coll/host/alltoall.cpp \
-                   coll/host/alltoall_on_stream.cpp \
-                   coll/host/barrier.cpp \
-                   coll/host/barrier_on_stream.cpp \
-                   coll/host/broadcast.cpp \
-                   coll/host/broadcast_on_stream.cpp \
-                   coll/host/fcollect.cpp \
-                   coll/host/fcollect_on_stream.cpp \
-                   coll/host/rdxn.cpp \
-                   coll/host/rdxn_on_stream.cpp \
-                   comm/host/putget.cpp \
-                   comm/host/fence.cpp \
-                   comm/proxy/proxy.cpp \
-                   comm/host/quiet.cpp \
-                   comm/host/sync.cpp \
-                   comm/host/amo.cpp \
-                   comm/transport.cpp \
-                   comm/transports/p2p/p2p.cpp \
-                   init/init.cu \
-                   init/cudawrap.cpp \
-                   init/init_nvtx.cpp \
-                   init/query_host.cpp \
-                   launch/collective_launch.cpp \
-                   mem/mem.cpp \
-                   team/team.cu \
-                   team/team_internal.cu \
-                   topo/topo.cpp \
+HOSTLIBSRCFILES += host/coll/cpu_coll.cpp \
+                   host/coll/alltoall/alltoall.cpp \
+                   host/coll/alltoall/alltoall_on_stream.cpp \
+                   host/coll/barrier/barrier.cpp \
+                   host/coll/barrier/barrier_on_stream.cpp \
+                   host/coll/broadcast/broadcast.cpp \
+                   host/coll/broadcast/broadcast_on_stream.cpp \
+                   host/coll/fcollect/fcollect.cpp \
+                   host/coll/fcollect/fcollect_on_stream.cpp \
+                   host/coll/rdxn/rdxn.cpp \
+                   host/coll/rdxn/rdxn_on_stream.cpp \
+                   host/comm/putget.cpp \
+                   host/comm/fence.cpp \
+                   host/proxy/proxy.cpp \
+                   host/comm/quiet.cpp \
+                   host/comm/sync.cpp \
+                   host/comm/amo.cpp \
+                   host/transport/transport.cpp \
+                   host/transport/p2p/p2p.cpp \
+                   host/init/init.cu \
+                   host/init/cudawrap.cpp \
+                   host/init/init_nvtx.cpp \
+                   host/init/query_host.cpp \
+                   host/launch/collective_launch.cpp \
+                   host/mem/mem.cpp \
+                   host/team/team.cu \
+                   host/team/team_internal.cpp \
+                   host/team/team_internal_cuda.cu \
+                   host/topo/topo.cpp \
                    util/cs.cpp \
                    util/debug.cpp \
                    util/env_vars.cpp \
                    util/util.cpp \
+                   util/shared_memory.cpp \
                    util/sockets.cpp
 
-DEVICELIBSRCFILES += coll/device/gpu_coll.cu \
-                     coll/device/recexchalgo.cu \
-                     comm/device/proxy_device.cu \
-                     launch/collective_launch_device.cu \
-                     init/init_device.cu
+DEVICELIBSRCFILES += device/coll/gpu_coll.cu \
+                     device/proxy/proxy_device.cu \
+                     device/launch/collective_launch_device.cu \
+                     device/init/init_device.cu
 
 ifeq ($(NVSHMEM_ENABLE_ALL_DEVICE_INLINING), 1)
 INCEXPORTS += device/pt-to-pt/transfer_device.cuh
 else
 INCEXPORTS += device/pt-to-pt/nvshmemi_transfer_api.cuh
-DEVICELIBSRCFILES += comm/device/transfer_device.cu
+DEVICELIBSRCFILES += device/comm/transfer_device.cu
 endif
 
 
 ifeq ($(NVSHMEM_USE_DLMALLOC), 1)
-HOSTLIBSRCFILES += mem/dlmalloc.cpp
+HOSTLIBSRCFILES += host/mem/dlmalloc.cpp
 else
-HOSTLIBSRCFILES += mem/custom_malloc.cpp
+HOSTLIBSRCFILES += host/mem/custom_malloc.cpp
 endif
 
 DEVICELIBSRCFILES_NOMAXRREGCOUNT = \
-               coll/device/kernels/alltoall.cu \
-               coll/device/kernels/barrier.cu \
-               coll/device/kernels/broadcast.cu \
-               coll/device/kernels/fcollect.cu \
-               coll/device/kernels/reduce.cu \
-               comm/host/cuda_interface_sync.cu \
-               comm/host/proxy/rma.cu \
-               comm/host/quiet_on_stream.cu
+               device/coll/alltoall/alltoall.cu \
+               device/coll/barrier/barrier.cu \
+               device/coll/broadcast/broadcast.cu \
+               device/coll/fcollect/fcollect.cu \
+               device/coll/rdxn/reduce_and.cu \
+               device/coll/rdxn/reduce_or.cu \
+               device/coll/rdxn/reduce_xor.cu \
+               device/coll/rdxn/reduce_min.cu \
+               device/coll/rdxn/reduce_max.cu \
+               device/coll/rdxn/reduce_prod.cu \
+               device/coll/rdxn/reduce_sum.cu \
+               device/coll/rdxn/reduce_team.cu \
+               device/comm/cuda_interface_sync.cu \
+               device/comm/quiet_on_stream.cu \
+               device/comm/rma.cu
 
 HOSTLIBNAME   := libnvshmem_host.so
 DEVICELIBNAME := libnvshmem_device.a
 LIBNAME       := libnvshmem.a
 
 INCDIR := $(NVSHMEM_BUILDDIR)/include
+BOOTSTRAPINC := -Isrc/include/modules/bootstrap -I src/include/modules/common
+TRANSPORTINC := -Isrc/include/modules/transport -I src/include/modules/common
 LIBDIR := $(NVSHMEM_BUILDDIR)/lib
 BINDIR := $(NVSHMEM_BUILDDIR)/bin
 PLUGINSDIR := $(NVSHMEM_BUILDDIR)/share/nvshmem/src/bootstrap-plugins
 TRANSPORTSDIR := $(NVSHMEM_BUILDDIR)/share/nvshmem/src/transport-plugins
 OBJDIR_NVSHMEM := $(NVSHMEM_BUILDDIR)/obj_nvshmem
 
-TRANSPORT_INCDIR = src/comm/transports/common
+TRANSPORT_INCDIR = src/modules/transport/common
 TRANSPORT_OBJDIR_NVSHMEM := $(NVSHMEM_BUILDDIR)/obj_nvshmem/transport
 
-BUILT_HEADERS := $(INCDIR)/nvshmem_version.h $(INCDIR)/nvshmem_build_options.h
+BUILT_HEADERS := $(INCDIR)/common/nvshmem_version.h $(INCDIR)/common/nvshmem_build_options.h
 
 INCTARGETS := $(patsubst %, $(INCDIR)/%, $(INCEXPORTS))
 
@@ -361,11 +374,11 @@ DEVICELIBOBJ    := $(patsubst %.cu, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cu, $(DEVI
 DEVICELIBOBJ_NOMAXRREGCOUNT = $(patsubst %.cu, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cu, $(DEVICELIBSRCFILES_NOMAXRREGCOUNT)))
 DEVICELIBOBJ_NOMAXRREGCOUNT += $(patsubst %.cpp, $(OBJDIR_NVSHMEM)/%.o, $(filter %.cpp, $(DEVICELIBSRCFILES_NOMAXRREGCOUNT)))
 
-LIBINC     := -Isrc/include -Isrc/util -Isrc/bootstrap -Isrc/coll/host -Isrc/coll/device -Isrc/coll -Isrc/topo
+LIBINC     := -Isrc/include $(BOOTSTRAPINC) $(TRANSPORTINC) -Isrc/util -Isrc/host/coll -Isrc/device/coll -Isrc/host/topo
 LIBINC     += -Isrc/pmi/pmi-2 -Isrc/pmi/simple-pmi -I$(INCDIR)
 
 ifeq ($(NVSHMEM_USE_GDRCOPY), 1)
-TRANSPORT_GDR_HELPER_FILES = src/comm/transports/common/transport_gdr_common.cpp
+TRANSPORT_GDR_HELPER_FILES = src/modules/transport/common/transport_gdr_common.cpp
 TRANSPORT_GDR_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_gdr_common.o
 else 
 TRANSPORT_GDR_HELPER_FILES =
@@ -375,7 +388,7 @@ endif
 TRANSPORTS =
 
 ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
-UCX_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp $(TRANSPORT_GDR_HELPER_FILES)
+UCX_TRANSPORT_HELPER_FILES = src/modules/transport/common/transport_common.cpp $(TRANSPORT_GDR_HELPER_FILES)
 UCX_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o $(TRANSPORT_GDR_OUTPUT_FILES)
 UCX_TRANSPORT_REALNAME := nvshmem_transport_ucx.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
 UCX_TRANSPORT_SONAME := nvshmem_transport_ucx.so.$(TRANSPORT_VERSION_MAJOR)
@@ -387,11 +400,11 @@ IBRC_TRANSPORT_REALNAME := nvshmem_transport_ibrc.so.$(TRANSPORT_VERSION_MAJOR).
 IBRC_TRANSPORT_SONAME := nvshmem_transport_ibrc.so.$(TRANSPORT_VERSION_MAJOR)
 IBRC_TRANSPORT := nvshmem_transport_ibrc.so
 TRANSPORTS += $(LIBDIR)/$(IBRC_TRANSPORT_REALNAME)
-IBRC_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp $(TRANSPORT_GDR_HELPER_FILES) src/comm/transports/common/transport_ib_common.cpp
+IBRC_TRANSPORT_HELPER_FILES = src/modules/transport/common/transport_common.cpp $(TRANSPORT_GDR_HELPER_FILES) src/modules/transport/common/transport_ib_common.cpp
 IBRC_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o $(TRANSPORT_GDR_OUTPUT_FILES) $(TRANSPORT_OBJDIR_NVSHMEM)/transport_ib_common.o
 endif
 ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
-IBDEVX_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp src/comm/transports/common/transport_ib_common.cpp src/comm/transports/common/transport_mlx5_common.cpp
+IBDEVX_TRANSPORT_HELPER_FILES = src/modules/transport/common/transport_common.cpp src/modules/transport/common/transport_ib_common.cpp src/modules/transport/common/transport_mlx5_common.cpp
 IBDEVX_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o $(TRANSPORT_OBJDIR_NVSHMEM)/transport_ib_common.o $(TRANSPORT_OBJDIR_NVSHMEM)/transport_mlx5_common.o
 IBDEVX_TRANSPORT_REALNAME := nvshmem_transport_ibdevx.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
 IBDEVX_TRANSPORT_SONAME := nvshmem_transport_ibdevx.so.$(TRANSPORT_VERSION_MAJOR)
@@ -399,7 +412,7 @@ IBDEVX_TRANSPORT := nvshmem_transport_ibdevx.so
 TRANSPORTS += $(LIBDIR)/$(IBDEVX_TRANSPORT_REALNAME)
 endif
 ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
-IBGDA_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp src/comm/transports/common/transport_ib_common.cpp src/comm/transports/common/transport_mlx5_common.cpp
+IBGDA_TRANSPORT_HELPER_FILES = src/modules/transport/common/transport_common.cpp src/modules/transport/common/transport_ib_common.cpp src/modules/transport/common/transport_mlx5_common.cpp
 IBGDA_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o $(TRANSPORT_OBJDIR_NVSHMEM)/transport_ib_common.o $(TRANSPORT_OBJDIR_NVSHMEM)/transport_mlx5_common.o
 IBGDA_TRANSPORT_REALNAME := nvshmem_transport_ibgda.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
 IBGDA_TRANSPORT_SONAME := nvshmem_transport_ibgda.so.$(TRANSPORT_VERSION_MAJOR)
@@ -407,8 +420,8 @@ IBGDA_TRANSPORT := nvshmem_transport_ibgda.so
 TRANSPORTS += $(LIBDIR)/$(IBGDA_TRANSPORT_REALNAME)
 endif
 ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
-LIBFABRIC_TRANSPORT_HELPER_FILES = src/comm/transports/common/transport_common.cpp
-LIBFABRIC_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o
+LIBFABRIC_TRANSPORT_HELPER_FILES = src/modules/transport/common/transport_common.cpp  $(TRANSPORT_GDR_HELPER_FILES)
+LIBFABRIC_TRANSPORT_OUTPUT_FILES = $(TRANSPORT_OBJDIR_NVSHMEM)/transport_common.o  $(TRANSPORT_GDR_HELPER_FILES)
 LIBFABRIC_TRANSPORT_REALNAME := nvshmem_transport_libfabric.so.$(TRANSPORT_VERSION_MAJOR).$(TRANSPORT_VERSION_MINOR).$(TRANSPORT_VERSION_MINOR)
 LIBFABRIC_TRANSPORT_SONAME := nvshmem_transport_libfabric.so.$(TRANSPORT_VERSION_MAJOR)
 LIBFABRIC_TRANSPORT := nvshmem_transport_libfabric.so
@@ -417,7 +430,7 @@ endif
 
 PLUGINEXPORTTARGETS := $(addprefix $(PLUGINSDIR)/, $(notdir $(PLUGINEXPORTS)))
 TRANSPORTEXPORTTARGETS := $(addprefix $(TRANSPORTSDIR)/, $(TRANSPORTEXPORTS))
-TRANSPORTINCEXPORTTARGETS := $(addprefix $(TRANSPORTSDIR)/common/, $(TRANSPORTINCEXPORTS))
+TRANSPORTINCEXPORTTARGETS := $(addprefix $(TRANSPORTSDIR)/common/, $(notdir $(TRANSPORTINCEXPORTS)))
 
 PMI_PLUGIN := nvshmem_bootstrap_pmi.so
 PMI_PLUGIN_SONAME := $(PMI_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR))
@@ -467,11 +480,35 @@ $(LIBDIR)/$(DEVICELIBTARGET) : $(DEVICELIBOBJ) $(DEVICELIBOBJ_NOMAXRREGCOUNT)
 	@mkdir -p $(LIBDIR)
 	$(NVCC) -lib -o $@ $(DEVICELIBOBJ) $(DEVICELIBOBJ_NOMAXRREGCOUNT)
 
-$(PLUGINSDIR)/%: src/bootstrap/%
+$(PLUGINSDIR)/%: src/modules/bootstrap/pmi/%
 	@mkdir -p $(PLUGINSDIR)
 	cp -f $< $@
 
-$(TRANSPORTSDIR)/common/%: src/comm/transports/common/%
+$(PLUGINSDIR)/%: src/modules/bootstrap/pmix/%
+	@mkdir -p $(PLUGINSDIR)
+	cp -f $< $@
+
+$(PLUGINSDIR)/%: src/modules/bootstrap/mpi/%
+	@mkdir -p $(PLUGINSDIR)
+	cp -f $< $@
+
+$(PLUGINSDIR)/%: src/modules/bootstrap/shmem/%
+	@mkdir -p $(PLUGINSDIR)
+	cp -f $< $@
+
+$(PLUGINSDIR)/%: src/include/%
+	@mkdir -p $(PLUGINSDIR)
+	cp -f $< $@
+
+$(PLUGINSDIR)/%: src/include/modules/bootstrap/%
+	@mkdir -p $(PLUGINSDIR)
+	cp -f $< $@
+
+$(PLUGINSDIR)/%: src/include/modules/common/%
+	@mkdir -p $(PLUGINSDIR)
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/common/%: src/modules/transport/common/%
 	@mkdir -p $(TRANSPORTSDIR)/common
 	cp -f $< $@
 
@@ -479,103 +516,111 @@ $(TRANSPORTSDIR)/common/%: src/include/%
 	@mkdir -p $(TRANSPORTSDIR)/common
 	cp -f $< $@
 
-$(TRANSPORTSDIR)/ibgda/%: src/comm/transports/ibgda/%
+$(TRANSPORTSDIR)/common/%: src/include/modules/common/%
+	@mkdir -p $(TRANSPORTSDIR)/common
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/common/%: src/include/modules/transport/%
+	@mkdir -p $(TRANSPORTSDIR)/common
+	cp -f $< $@
+
+$(TRANSPORTSDIR)/ibgda/%: src/modules/transport/ibgda/%
 	@mkdir -p $(TRANSPORTSDIR)/ibgda
 	cp -f $< $@
 
-$(TRANSPORTSDIR)/ibdevx/%: src/comm/transports/ibdevx/%
+$(TRANSPORTSDIR)/ibdevx/%: src/modules/transport/ibdevx/%
 	@mkdir -p $(TRANSPORTSDIR)/ibdevx
 	cp -f $< $@
 
-$(TRANSPORTSDIR)/ibrc/%: src/comm/transports/ibrc/%
+$(TRANSPORTSDIR)/ibrc/%: src/modules/transport/ibrc/%
 	@mkdir -p $(TRANSPORTSDIR)/ibrc
 	cp -f $< $@
 
-$(TRANSPORTSDIR)/libfabric/%: src/comm/transports/libfabric/%
+$(TRANSPORTSDIR)/libfabric/%: src/modules/transport/libfabric/%
 	@mkdir -p $(TRANSPORTSDIR)/libfabric
 	cp -f $< $@
 
-$(TRANSPORTSDIR)/ucx/%: src/comm/transports/ucx/%
+$(TRANSPORTSDIR)/ucx/%: src/modules/transport/ucx/%
 	@mkdir -p $(TRANSPORTSDIR)/ucx
 	cp -f $< $@
 
-$(LIBDIR)/$(PMI_PLUGIN_TARGET): src/bootstrap/bootstrap_pmi.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmiutil.o
+$(LIBDIR)/$(PMI_PLUGIN_TARGET): src/modules/bootstrap/pmi/bootstrap_pmi.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/simple-pmi/simple_pmiutil.o
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI_PLUGIN_TARGET) -fpic -I$(INCDIR) -Isrc/pmi/simple-pmi $< -o $@ $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/pmi/simple-pmi/simple_pmiutil.o
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI_PLUGIN_TARGET) -fpic -I$(INCDIR) $(BOOTSTRAPINC) -Isrc/include -Isrc/modules/bootstrap/pmi/simple-pmi $< -o $@ $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/simple-pmi/simple_pmi.o $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/simple-pmi/simple_pmiutil.o
 	ln -sf $(PMI_PLUGIN_SONAME) $(LIBDIR)/$(PMI_PLUGIN)
 	ln -sf $(PMI_PLUGIN_TARGET) $(LIBDIR)/$(PMI_PLUGIN_SONAME)
 
-$(LIBDIR)/$(PMI2_PLUGIN_TARGET): src/bootstrap/bootstrap_pmi.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_util.o
+$(LIBDIR)/$(PMI2_PLUGIN_TARGET): src/modules/bootstrap/pmi/bootstrap_pmi.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/pmi-2/pmi2_util.o
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI2_PLUGIN_TARGET) -fpic -Xlinker --version-script=nvshmem_bootstrap.sym -DNVSHMEM_BUILD_PMI2 -I$(INCDIR) -Isrc/pmi/pmi-2 $< -o $@ $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/pmi/pmi-2/pmi2_util.o
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI2_PLUGIN_TARGET) -fpic -Xlinker --version-script=nvshmem_bootstrap.sym -DNVSHMEM_BUILD_PMI2 -I$(INCDIR) $(BOOTSTRAPINC) -Isrc/include -Isrc/modules/bootstrap/pmi/pmi-2 $< -o $@ $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/pmi-2/pmi2_util.o
 	ln -sf $(PMI2_PLUGIN_SONAME) $(LIBDIR)/$(PMI2_PLUGIN)
 	ln -sf $(PMI2_PLUGIN_TARGET) $(LIBDIR)/$(PMI2_PLUGIN_SONAME)
 
 ifeq ($(NVSHMEM_PMIX_SUPPORT), 1)
-$(LIBDIR)/$(PMIX_PLUGIN_TARGET): src/bootstrap/bootstrap_pmix.c $(BUILT_HEADERS)
+$(LIBDIR)/$(PMIX_PLUGIN_TARGET): src/modules/bootstrap/pmix/bootstrap_pmix.c $(BUILT_HEADERS)
 	@mkdir -p $(LIBDIR)
-	$(CC) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMIX_PLUGIN_TARGET) -fpic -I$(INCDIR) -I$(PMIX_HOME)/include $< -L$(PMIX_HOME)/lib -lpmix -o $@
+	$(CC) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMIX_PLUGIN_TARGET) -fpic -I$(INCDIR) $(BOOTSTRAPINC) -Isrc/include -I$(PMIX_HOME)/include $< -L$(PMIX_HOME)/lib -lpmix -o $@
 	ln -sf $(PMIX_PLUGIN_SONAME) $(LIBDIR)/$(PMIX_PLUGIN)
 	ln -sf $(PMIX_PLUGIN_TARGET) $(LIBDIR)/$(PMIX_PLUGIN_SONAME)
 endif
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
-$(LIBDIR)/$(MPI_PLUGIN_TARGET): src/bootstrap/bootstrap_mpi.c $(BUILT_HEADERS)
+$(LIBDIR)/$(MPI_PLUGIN_TARGET): src/modules/bootstrap/mpi/bootstrap_mpi.c $(BUILT_HEADERS)
 	@mkdir -p $(LIBDIR)
-	$(MPICC) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(MPI_PLUGIN_TARGET) -fpic -I$(INCDIR) -Isrc/include -Isrc/bootstrap $< -o $@
+	$(MPICC) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(MPI_PLUGIN_TARGET) -fpic -I$(INCDIR) $(BOOTSTRAPINC) -Isrc/include -Isrc/bootstrap $< -o $@
 	ln -sf $(MPI_PLUGIN_SONAME) $(LIBDIR)/$(MPI_PLUGIN)
 	ln -sf $(MPI_PLUGIN_TARGET) $(LIBDIR)/$(MPI_PLUGIN_SONAME)
 endif
 
 ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1)
-$(LIBDIR)/$(SHMEM_PLUGIN_TARGET): src/bootstrap/bootstrap_shmem.c $(BUILT_HEADERS)
+$(LIBDIR)/$(SHMEM_PLUGIN_TARGET): src/modules/bootstrap/shmem/bootstrap_shmem.c $(BUILT_HEADERS)
 	@mkdir -p $(LIBDIR)
-	$(OSHCC) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(SHMEM_PLUGIN_TARGET) -fpic -I$(INCDIR) -Isrc/include -Isrc/bootstrap $< -o $@
+	$(OSHCC) $(CFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(SHMEM_PLUGIN_TARGET) -fpic -I$(INCDIR) $(BOOTSTRAPINC) -Isrc/include -Isrc/bootstrap $< -o $@
 	ln -sf $(SHMEM_PLUGIN_SONAME) $(LIBDIR)/$(SHMEM_PLUGIN)
 	ln -sf $(SHMEM_PLUGIN_TARGET) $(LIBDIR)/$(SHMEM_PLUGIN_SONAME)
 endif
 
-$(TRANSPORT_OBJDIR_NVSHMEM)/%.o: src/comm/transports/common/%.cpp
+$(TRANSPORT_OBJDIR_NVSHMEM)/%.o: src/modules/transport/common/%.cpp
 	@mkdir -p $(TRANSPORT_OBJDIR_NVSHMEM)
-	$(CXX) -c -I$(INCDIR) -Isrc/include $(CXXFLAGS) $< -o $@
+	$(CXX) -c $(TRANSPORTINC) -I$(INCDIR) -Isrc/include $(CXXFLAGS) $< -o $@
 
 ifeq ($(NVSHMEM_UCX_SUPPORT), 1)
-$(LIBDIR)/$(UCX_TRANSPORT_REALNAME): src/comm/transports/ucx/ucx.cpp $(UCX_TRANSPORT_OUTPUT_FILES)
+$(LIBDIR)/$(UCX_TRANSPORT_REALNAME): src/modules/transport/ucx/ucx.cpp $(UCX_TRANSPORT_OUTPUT_FILES)
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(UCX_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(UCX_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -L$(UCX_HOME)/lib -lucs -lucp
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(UCX_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym $(TRANSPORTINC) -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(UCX_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -L$(UCX_HOME)/lib -lucs -lucp
 	ln -sf $(UCX_TRANSPORT_REALNAME) $(LIBDIR)/$(UCX_TRANSPORT_SONAME)
 	ln -sf $(UCX_TRANSPORT_SONAME) $(LIBDIR)/$(UCX_TRANSPORT)
 endif
 ifeq ($(NVSHMEM_IBRC_SUPPORT), 1)
-$(LIBDIR)/$(IBRC_TRANSPORT_REALNAME): src/comm/transports/ibrc/ibrc.cpp $(IBRC_TRANSPORT_OUTPUT_FILES)
+$(LIBDIR)/$(IBRC_TRANSPORT_REALNAME): src/modules/transport/ibrc/ibrc.cpp $(IBRC_TRANSPORT_OUTPUT_FILES)
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBRC_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBRC_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBRC_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym $(TRANSPORTINC) -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBRC_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static
 	ln -sf $(IBRC_TRANSPORT_REALNAME) $(LIBDIR)/$(IBRC_TRANSPORT_SONAME)
 	ln -sf $(IBRC_TRANSPORT_SONAME) $(LIBDIR)/$(IBRC_TRANSPORT)
 endif
 ifeq ($(NVSHMEM_IBDEVX_SUPPORT), 1)
-$(LIBDIR)/$(IBDEVX_TRANSPORT_REALNAME): src/comm/transports/ibdevx/ibdevx.cpp $(IBDEVX_TRANSPORT_OUTPUT_FILES)
+$(LIBDIR)/$(IBDEVX_TRANSPORT_REALNAME): src/modules/transport/ibdevx/ibdevx.cpp $(IBDEVX_TRANSPORT_OUTPUT_FILES)
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBDEVX_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBDEVX_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -lmlx5
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBDEVX_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym $(TRANSPORTINC) -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBDEVX_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -lmlx5
 	ln -sf $(IBDEVX_TRANSPORT_REALNAME) $(LIBDIR)/$(IBDEVX_TRANSPORT_SONAME)
 	ln -sf $(IBDEVX_TRANSPORT_SONAME) $(LIBDIR)/$(IBDEVX_TRANSPORT)
 endif
 ifeq ($(NVSHMEM_IBGDA_SUPPORT), 1)
-$(LIBDIR)/$(IBGDA_TRANSPORT_REALNAME): src/comm/transports/ibgda/ibgda.cpp $(IBGDA_TRANSPORT_OUTPUT_FILES)
+$(LIBDIR)/$(IBGDA_TRANSPORT_REALNAME): src/modules/transport/ibgda/ibgda.cpp $(IBGDA_TRANSPORT_OUTPUT_FILES)
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBGDA_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBGDA_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -lmlx5
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(IBGDA_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym $(TRANSPORTINC) -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(IBGDA_TRANSPORT_OUTPUT_FILES) -L$(CUDA_LIB) -lcudart_static -lmlx5
 	ln -sf $(IBGDA_TRANSPORT_REALNAME) $(LIBDIR)/$(IBGDA_TRANSPORT_SONAME)
 	ln -sf $(IBGDA_TRANSPORT_SONAME) $(LIBDIR)/$(IBGDA_TRANSPORT)
 endif
 ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)
-$(LIBDIR)/$(LIBFABRIC_TRANSPORT_REALNAME): src/comm/transports/libfabric/libfabric.cpp $(LIBFABRIC_TRANSPORT_OUTPUT_FILES)
+$(LIBDIR)/$(LIBFABRIC_TRANSPORT_REALNAME): src/modules/transport/libfabric/libfabric.cpp $(LIBFABRIC_TRANSPORT_OUTPUT_FILES)
 	@mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(LIBFABRIC_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(LIBFABRIC_TRANSPORT_OUTPUT_FILES) -L$(LIBFABRIC_LIBDIR) -lfabric -L$(CUDA_LIB) -lcudart_static
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(LIBFABRIC_TRANSPORT_SONAME) -fpic -Xlinker --version-script=nvshmem_transport.sym $(TRANSPORTINC) -I$(TRANSPORT_INCDIR) -I$(INCDIR) -Isrc/include $< -o $@ $(LIBFABRIC_TRANSPORT_OUTPUT_FILES) -L$(LIBFABRIC_LIBDIR) -lfabric -L$(CUDA_LIB) -lcudart_static
 	ln -sf $(LIBFABRIC_TRANSPORT_REALNAME) $(LIBDIR)/$(LIBFABRIC_TRANSPORT_SONAME)
 	ln -sf $(LIBFABRIC_TRANSPORT_SONAME) $(LIBDIR)/$(LIBFABRIC_TRANSPORT)
 endif
 
-$(BINDIR)/nvshmem-info: src/util/nvshmem-info.cpp $(LIBDIR)/$(LIBTARGET)
+$(BINDIR)/nvshmem-info: src/bin/nvshmem-info.cpp $(LIBDIR)/$(LIBTARGET)
 	@mkdir -p $(BINDIR)
 	$(NVCC) $(NVCUFLAGS) -Isrc/include -I$(INCDIR) $< -o $@ $(LDFLAGS) -L$(LIBDIR) -lnvshmem
 
@@ -587,7 +632,7 @@ $(INCDIR)/%.cuh : src/include/%.cuh
 	@mkdir -p `dirname $@`
 	cp -f $< $@
 
-$(INCDIR)/nvshmem_version.h :
+$(INCDIR)/common/nvshmem_version.h :
 	@mkdir -p $(INCDIR)
 	@echo "#ifndef NVSHMEM_VERSION_H" > $@
 	@echo "#define NVSHMEM_VERSION_H" >> $@
@@ -600,11 +645,13 @@ $(INCDIR)/nvshmem_version.h :
 	@echo "#define NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION $(BOOTSTRAP_VERSION_MAJOR)" >> $@
 	@echo "#define NVSHMEM_BOOTSTRAP_PLUGIN_MINOR_VERSION $(BOOTSTRAP_VERSION_MINOR)" >> $@
 	@echo "#define NVSHMEM_BOOTSTRAP_PLUGIN_PATCH_VERSION $(BOOTSTRAP_VERSION_PATCH)" >> $@
+	@echo "#define NVSHMEM_INTERLIB_MAJOR_VERSION $(INTERLIB_VERSION_MAJOR)" >> $@
+	@echo "#define NVSHMEM_INTERLIB_MINOR_VERSION $(INTERLIB_VERSION_MINOR)" >> $@
+	@echo "#define NVSHMEM_INTERLIB_PATCH_VERSION $(INTERLIB_VERSION_PATCH)" >> $@
 	@echo "#define NVSHMEM_BUILD_VARS \"$(INFO_BUILD_VARS)\"" >> $@
 	@echo "#endif /* NVSHMEM_VERSION_H */" >> $@
 
-.PHONY: $(INCDIR)/nvshmem_build_options.h
-$(INCDIR)/nvshmem_build_options.h: Makefile
+$(INCDIR)/common/nvshmem_build_options.h: Makefile
 	@mkdir -p $(INCDIR)
 	@echo "#ifndef NVSHMEM_BUILD_OPTIONS_H" > $@
 	@echo "#define NVSHMEM_BUILD_OPTIONS_H" >> $@
@@ -615,7 +662,7 @@ $(INCDIR)/device/pt-to-pt/transfer_device.cuh: src/include/device/pt-to-pt/trans
 	@mkdir -p `dirname $@`
 	@cp $^ $@
 
-src/comm/device/transfer_device.cu: src/include/device/pt-to-pt/transfer_device.cuh.in
+src/device/comm/transfer_device.cu: src/include/device/pt-to-pt/transfer_device.cuh.in
 	@cp $^ $@
 
 $(OBJDIR_NVSHMEM)/%.o : src/%.cpp $(BUILT_HEADERS)
@@ -633,6 +680,7 @@ $(OBJDIR_NVSHMEM)/%.o : src/%.cu $(BUILT_HEADERS)
 .PHONY: clean
 clean :
 	rm -rf $(NVSHMEM_BUILDDIR)
+	rm -rf src/include/common/nvshmem_build_options.h
 
 .PHONY: uninstall
 uninstall:

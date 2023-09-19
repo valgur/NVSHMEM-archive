@@ -211,33 +211,54 @@ if(NOT CUDAToolkit_Root AND NOT CMAKE_CUDA_COMPILER)
   set(CMAKE_CUDA_COMPILER "${CUDA_HOME}/bin/nvcc" CACHE PATH "Root of Cuda Toolkit." FORCE)
 endif()
 
+# set these flags to add a RUNPATH entry to the libraries that points at the lib dir in a portable way.
+set(CMAKE_SKIP_BUILD_RPATH  FALSE)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+set(CMAKE_INSTALL_RPATH "$\{ORIGIN\}")
+set(CMAKE_EXE_LINKER_FLAGS "-Wl,--enable-new-dtags")
+
 set(CMAKE_INSTALL_PREFIX "${NVSHMEM_PREFIX}" CACHE PATH "..." FORCE)
+
+# Save value of CMAKE_CUDA_ARCHITECTURES before calling project()
+# This is to solve a chicken-egg problem. It seems FIND_CUDA doesn't
+# work without project(), but project() overwrites CMAKE_CUDA_ARCHITECTURES.
+# We need to know the version of the CUDA Toolkit before we can set the project
+# defaults. So this lets us know beforehand if the user has specified a preference.
+if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES_UNDEFINED 1)
+endif()
+
+if (NOT DEFINED CUDA_ARCHITECTURES)
+  set(CUDA_ARCHITECTURES_UNDEFINED 1)
+endif()
 
 project(
   NVSHMEM
   LANGUAGES CUDA CXX C
-  VERSION 2.9.0.2
+  VERSION 2.10.1.3
 )
 
 find_package(CUDAToolkit)
 
-if(NOT DEFINED CUDA_ARCHITECTURES)
-  if(CUDAToolkit_VERSION_MAJOR LESS 11)
-    set(CUDA_ARCHITECTURES 70)
-    set(NVCC_GENCODE "-gencode=arch=compute_70,code=sm_70")
-  elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 AND CUDAToolkit_VERSION_MINOR LESS 8)
-    set(CUDA_ARCHITECTURES 70 80)
-    set(NVCC_GENCODE "-gencode=arch=compute_70,code=sm_70;-gencode=arch=compute_80,code=sm_80")
+if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
+  if(NOT DEFINED CUDA_ARCHITECTURES_UNDEFINED)
+    set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCHITECTURES} CACHE STRING "CUDA ARCHITECTURES" FORCE)
   else()
-    set(CUDA_ARCHITECTURES 70 80 90)
-    set(NVCC_GENCODE "-gencode=arch=compute_70,code=sm_70;-gencode=arch=compute_80,code=sm_80;-gencode=arch=compute_90,code=sm_90")
+    if(CUDAToolkit_VERSION_MAJOR LESS 11)
+      set(CMAKE_CUDA_ARCHITECTURES 70 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+    elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 AND CUDAToolkit_VERSION_MINOR LESS 8)
+      set(CMAKE_CUDA_ARCHITECTURES 70 80 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+    else()
+      set(CMAKE_CUDA_ARCHITECTURES 70 80 90 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+    endif()
   endif()
-else()
-	set(NVCC_GENCODE "$ENV{NVCC_GENCODE}")
 endif()
-set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCHITECTURES})
+foreach(ARCH ${CMAKE_CUDA_ARCHITECTURES})
+  set(NVCC_GENCODE "${NVCC_GENCODE}" "-gencode=arch=compute_${ARCH},code=sm_${ARCH};-gencode=arch=compute_${ARCH},code=compute_${ARCH}")
+endforeach()
+mark_as_advanced(NVCC_GENCODE CMAKE_CUDA_ARCHITECTURES_UNDEFINED CUDA_ARCHITECTURES_UNDEFINED)
 
-message(STATUS "CUDA_ARCHITECTURES: ${CUDA_ARCHITECTURES}")
+message(STATUS "CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
 
 if(NVSHMEM_MPI_SUPPORT)
   find_package(MPI REQUIRED)

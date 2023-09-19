@@ -8,13 +8,15 @@
 #define REDUCE_DEVICE_CUH
 
 #include "device/pt-to-pt/proxy_device.cuh"
+#include "device/nvshmemi_common_device_defines.cuh"
+#include "device/nvshmemi_common_device.cuh"
+#include "device/team/team_device.cuh"
 #ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
 #include "device/pt-to-pt/transfer_device.cuh"
 #else
 #include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
 #endif
 #include "utils.cuh"
-#include "nvshmemi_team.h"
 #include "fcollect.cuh"
 #include "broadcast.cuh"
 
@@ -809,7 +811,7 @@ static inline __device__ void nvshmemi_gpu_rdxn_threadgroup_putall_direct(nvshme
 }
 
 template <typename TYPE, rdxn_ops_t OP, threadgroup_t SCOPE>
-static inline __device__ void nvshmemi_gpu_rdxn_hierarchical_fcollect_threadgroup(
+static __forceinline__ __device__ void nvshmemi_gpu_rdxn_hierarchical_fcollect_threadgroup(
     nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce) {
     nvshmemi_team_t *teami_node = nvshmemi_device_state_d.team_pool[NVSHMEM_TEAM_NODE_INDEX];
     nvshmemi_team_t *teami_same_mype_node =
@@ -1087,17 +1089,4 @@ static __device__ inline int nvshmemx_double2_maxloc_reduce_block(nvshmem_team_t
 }
 
 #endif /* __CUDA_ARCH__ */
-
-/* This is a special kernel that is launched only with
-one thread and is used during team creation in nvshmemi_team_plit_strided fn */
-template <typename TYPE, rdxn_ops_t OP>
-__global__ void nvshmemi_reduce_kernel(int start, int stride, int size, TYPE *dst,
-                                       const TYPE *source, size_t nreduce, TYPE *pWrk,
-                                       volatile long *pSync, volatile long *sync_counter) {
-#ifdef __CUDA_ARCH__
-    gpu_rdxn_on_demand_2<TYPE, OP>(start, stride, size, dst, source, nreduce, pWrk, pSync,
-                                   sync_counter);
-#endif
-}
-
 #endif /* REDUCE_DEVICE_CUH */

@@ -6,14 +6,17 @@
 
 #ifndef ALLTOALL_DEVICE_CUH
 #define ALLTOALL_DEVICE_CUH
-#include <cstdio>
-#include <cassert>
-#include "nvshmem.h"
-#include "nvshmemx.h"
+#include "device/nvshmem_defines.h"
+#include "device/nvshmemi_wait_until_apis.cuh"
+#include "device/nvshmemi_common_device_defines.cuh"
+#include "device/nvshmemi_common_device.cuh"
 #include "utils.cuh"
 #include "barrier.cuh"
 
 #ifdef __CUDA_ARCH__
+
+#define NVSHMEMI_ALLTOALL_SMALL_MSGSIZE 16
+#define NVSHMEMI_ALLTOALL_MEDIUM_MSGSIZE 16384
 
 template <typename T, threadgroup_t SCOPE>
 __device__ inline void nvshmemi_alltoall_allpush_threadgroup(nvshmem_team_t team, T *dest,
@@ -29,7 +32,10 @@ __device__ inline void nvshmemi_alltoall_allpush_threadgroup(nvshmem_team_t team
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
     uint64_t *psync = (uint64_t *)nvshmemi_team_get_psync(teami, ALLTOALL);
     uint64_t *pwrk = &teami->alltoall_pwrk[teami->alltoall_count % 2];
-    bool need_fence = false;
+    const size_t msgsize = nelems * sizeof(T);
+    const int first_unused_warp = (PE_size + (warpSize - 1)) / warpSize;
+    const int my_warp_idx = myIdx / warpSize;
+    const int num_warps = groupSize / warpSize;
 
     dst_offset = nelems * my_idx_in_active_set;
 
@@ -44,69 +50,73 @@ __device__ inline void nvshmemi_alltoall_allpush_threadgroup(nvshmem_team_t team
             /* We are breaking rank with the rest of the group here so send the RMA with thread
              * scope. */
             nvshmemi_transfer_put_signal<NVSHMEMI_THREADGROUP_THREAD>(
-                (void *)(dest + dst_offset), (void *)(source + src_offset), nelems * sizeof(T),
-                (void *)psync, 1ULL, NVSHMEMI_AMO_SIGNAL_ADD, next_rank, true);
-            atomicAdd((unsigned long long *)pwrk, 1ULL);
-        } else if ((nelems * sizeof(T)) <= 16) {
+                (void *)(dest + dst_offset), (void *)(source + src_offset), msgsize,
+                (void *)(psync + mype), 1ULL, NVSHMEMI_AMO_SIGNAL_ADD, next_rank, true);
+        } else if (msgsize <= NVSHMEMI_ALLTOALL_SMALL_MSGSIZE) {
             nvshmemi_put_nbi_threadgroup<T, NVSHMEMI_THREADGROUP_THREAD>(
                 dest + dst_offset, source + src_offset, nelems, next_rank);
-            need_fence = true;
         }
     }
 
-    /* A fence and signal is required - note that we can skip any size check here because it's
-     * inherent in the boolean. */
-    if (need_fence) {
-        __threadfence_system();
-        for (int i = myIdx; i < PE_size; i += groupSize) {
-            next_rank = PE_start + ((my_idx_in_active_set + i) % PE_size) * stride;
-            void *peer_base_addr = (void *)__ldg(
-                (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + next_rank);
-            if (peer_base_addr) {
-                nvshmemi_signal_op(psync, 1ULL, NVSHMEMI_AMO_SIGNAL_ADD, next_rank);
-                atomicAdd((unsigned long long *)pwrk, 1ULL);
+    if (SCOPE == NVSHMEMI_THREADGROUP_BLOCK && PE_size < groupSize &&
+        num_warps > first_unused_warp && msgsize > NVSHMEMI_ALLTOALL_SMALL_MSGSIZE &&
+        msgsize <= NVSHMEMI_ALLTOALL_MEDIUM_MSGSIZE) {
+        if (my_warp_idx >= first_unused_warp) {
+            for (int ii = my_warp_idx - first_unused_warp; ii < PE_size;
+                 ii += (num_warps - first_unused_warp)) {
+                next_rank = PE_start + ((my_idx_in_active_set + ii) % PE_size) * stride;
+                src_offset = nelems * ((next_rank - PE_start) / stride);
+                void *peer_base_addr = (void *)__ldg(
+                    (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + next_rank);
+                if (peer_base_addr) {
+                    nvshmemi_put_nbi_threadgroup<T, NVSHMEMI_THREADGROUP_WARP>(
+                        dest + dst_offset, source + src_offset, nelems, next_rank);
+                }
             }
         }
-    }
-
-    if ((nelems * sizeof(T)) > 16) {
+    } else if (msgsize > NVSHMEMI_ALLTOALL_SMALL_MSGSIZE) {
         for (int ii = 0; ii < PE_size; ii++) {
             next_rank = PE_start + ((my_idx_in_active_set + ii) % PE_size) * stride;
             src_offset = nelems * ((next_rank - PE_start) / stride);
             void *peer_base_addr = (void *)__ldg(
                 (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + next_rank);
             if (peer_base_addr) {
-                need_fence = true;
                 nvshmemi_put_nbi_threadgroup<T, SCOPE>(dest + dst_offset, source + src_offset,
                                                        nelems, next_rank);
-            }
-        }
-        if (need_fence) {
-            __threadfence_system();
-            for (int ii = 0; ii < PE_size; ii++) {
-                if (myIdx == 0) {
-                    next_rank = PE_start + ((my_idx_in_active_set + ii) % PE_size) * stride;
-                    void *peer_base_addr = (void *)__ldg(
-                        (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base +
-                        next_rank);
-                    if (peer_base_addr) {
-                        nvshmemi_signal_op(psync, 1ULL, NVSHMEMI_AMO_SIGNAL_ADD, next_rank);
-                        atomicAdd((unsigned long long *)pwrk, 1ULL);
-                    }
-                }
             }
         }
     }
 
     nvshmemi_threadgroup_sync<SCOPE>();
-    nvshmemi_transfer_quiet<SCOPE>(false);
+    /* A fence and signal is required - note that we can skip any size check here because it's
+     * inherent in the boolean. */
     if (myIdx == 0) {
-        nvshmemi_wait_until_greater_than_equals<uint64_t>(psync, *pwrk,
-                                                          NVSHMEMI_CALL_SITE_SIGNAL_WAIT_UNTIL_GE);
-        teami->alltoall_count++;
-        nvshmemi_transfer_enforce_consistency_at_target(false);
+        atomicAdd((unsigned long long *)pwrk, 1ULL);
+        __threadfence_system();
     }
     nvshmemi_threadgroup_sync<SCOPE>();
+    for (int i = myIdx; i < PE_size; i += groupSize) {
+        next_rank = PE_start + ((my_idx_in_active_set + i) % PE_size) * stride;
+        void *peer_base_addr = (void *)__ldg(
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + next_rank);
+        if (peer_base_addr) {
+            nvshmemi_signal_op((psync + mype), 1ULL, NVSHMEMI_AMO_SIGNAL_ADD, next_rank);
+        }
+    }
+
+    nvshmemi_threadgroup_sync<SCOPE>();
+    for (int i = myIdx; i < PE_size; i += groupSize) {
+        next_rank = PE_start + ((my_idx_in_active_set + i) % PE_size) * stride;
+        nvshmemi_wait_until_greater_than_equals<uint64_t>((psync + next_rank), *pwrk,
+                                                          NVSHMEMI_CALL_SITE_SIGNAL_WAIT_UNTIL_GE);
+    }
+    if (SCOPE == NVSHMEMI_THREADGROUP_BLOCK && PE_size < groupSize) {
+        if (my_warp_idx == first_unused_warp)
+            nvshmemi_transfer_quiet<NVSHMEMI_THREADGROUP_WARP>(false);
+    } else
+        nvshmemi_transfer_quiet<SCOPE>(false);
+    nvshmemi_threadgroup_sync<SCOPE>();
+    if (myIdx == 0) teami->alltoall_count++;
 }
 
 template <typename T, threadgroup_t SCOPE>

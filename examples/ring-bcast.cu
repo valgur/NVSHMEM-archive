@@ -58,6 +58,7 @@ int main(void) {
     dim3 gridDim(1), blockDim(1);
     void *args[] = {&data, &data_len, &root, &psync};
 
+    nvshmemx_barrier_all_on_stream(stream);
     nvshmemx_collective_launch((const void *)ring_bcast, gridDim, blockDim, args, 0, stream);
     nvshmemx_barrier_all_on_stream(stream);
     cudaMemcpyAsync(data_h, data, sizeof(int) * data_len, cudaMemcpyDeviceToHost, stream);

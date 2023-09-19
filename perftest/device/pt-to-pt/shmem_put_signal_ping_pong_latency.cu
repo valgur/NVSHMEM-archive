@@ -109,7 +109,7 @@ int main(int c, char *v[]) {
         CUDA_CHECK(cudaDeviceSynchronize());
         nvshmem_barrier_all();
 
-        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1024, args_1, 0, stream);
+        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, args_1, 0, stream);
         if (status != NVSHMEMX_SUCCESS) {
             fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
             exit(-1);

@@ -34,12 +34,9 @@
 #ifndef PROXY_DEVICE_CUH
 #define PROXY_DEVICE_CUH
 
-#include <math.h>
-
-//#include "nvshmem_internal.h"
-#include "nvshmemx_error.h"
 #include "utils_device.h"
-#include "nvshmemi_proxy.h"
+#include "common/nvshmem_common_proxy.h"
+#include "device/nvshmemi_wait_until_apis.cuh"
 
 #ifdef __CUDA_ARCH__
 static __forceinline__ __device__ void check_channel_availability(uint64_t tail_idx) {
@@ -87,9 +84,11 @@ static __device__ inline void nvshmemi_proxy_global_exit(int status) {
     }
     /* Note, this will block indefinitely, but that is fine as nvshmemi_global_exit should never
      * return. */
-    nvshmemi_wait_until_greater_than_equals<int>(nvshmemi_device_state_d.global_exit_request_state,
-                                                 PROXY_GLOBAL_EXIT_FINISHED,
-                                                 NVSHMEMI_CALL_SITE_PROXY_GLOBAL_EXIT);
+    long long int now, later;
+    asm volatile("mov.u64  %0, %globaltimer;" : "=l"(now));
+    do {
+        asm volatile("mov.u64  %0, %globaltimer;" : "=l"(later));
+    } while (later >= now);
 }
 
 static __device__ inline void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar) {
@@ -171,7 +170,8 @@ static __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size
     uint64_t curr_flag = !((idx >> nvshmemi_device_state_d.proxy_channel_buf_logsize) & 1);
     /* curr_flag is either 0 or 1. Starting at idx = 0 to idx =
      * nvshmemi_device_state_d.proxy_channel_buf_size - 1, it will be 1, then for next
-     * nvshmemi_device_state_d.proxy_channel_buf_size idx values it will be 0, and so on.
+     * nvshmemi_device_state_d.proxy_channel_buf_size idx values it will be 0, and so
+     * on.
      */
     uint64_t roffset = (uint64_t)((char *)rptr - (char *)base_ptr);
     uint64_t laddr = (uint64_t)lptr;
@@ -220,8 +220,8 @@ static __device__ inline void nvshmemi_proxy_rma(void *rptr, void *lptr, size_t 
     /*XXX:to be used for 1) inline 2) DMA with ack 3) DMA by staging in another buffer*/
 }
 
-static __device__ inline void nvshmemi_proxy_rma_nbi(void *rptr, void *lptr, size_t bytes, int pe,
-                                                     nvshmemi_op_t op) {
+static __device__ __forceinline__ void nvshmemi_proxy_rma_nbi(void *rptr, void *lptr, size_t bytes,
+                                                              int pe, nvshmemi_op_t op) {
     if (!bytes) return;
     transfer_dma(rptr, lptr, bytes, pe, op);
 }

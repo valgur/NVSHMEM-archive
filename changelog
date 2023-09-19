@@ -1,4 +1,23 @@
 ===============================================================================
+				Changes in 2.10.1
+===============================================================================
+
+# Support for single and multi-node Grace Hopper systems
+# Support for the EFA provider using the libfabric transport, which can be
+enabled with NVSHMEM_LIBFABRIC_PERSONA=EFA
+# NVRTC support was added for the NVSHMEM device implementation headers.
+# Fixed memory leaks in nvshmem_finalize
+# Added support for calling nvshmem_init and nvshmem_finalize in a loop with
+any bootstrap. Previously the support had existed only for MPI bootstrap
+# Performance optimizations in Alltoall collective API
+# Implemented warp-level automated coalescing of nvshmem_<typename>_g
+operations to contiguous addresses in IBGDA transport
+# Removed redundant consistency operations in IBGDA transport
+# Added support for synchronized memory operations when using VMM API for NVSHMEM symmetric heap
+# Code refactoring to improve host and device library ABI interface
+# Several bug fixes
+
+===============================================================================
 				Changes in 2.9.0
 ===============================================================================
 

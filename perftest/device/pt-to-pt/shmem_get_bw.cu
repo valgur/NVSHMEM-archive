@@ -71,7 +71,9 @@ int main(int argc, char *argv[]) {
     int array_size, i;
     void **h_tables;
     uint64_t *h_size_arr;
-    double *h_bw;
+    double *h_bw = NULL, *h_bw_total = NULL;
+    double *d_bw = NULL, *d_bw_sum = NULL;
+    bool bidirectional = false;
 
     int iter = MAX_ITERS;
     int skip = MAX_SKIP;
@@ -94,7 +96,8 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         int c;
-        c = getopt(argc, argv, "c:t:h");
+        c = getopt(argc, argv, "c:t:hb");
+
         if (c == -1) break;
 
         switch (c) {
@@ -104,9 +107,12 @@ int main(int argc, char *argv[]) {
             case 't':
                 max_threads = strtol(optarg, NULL, 0);
                 break;
+            case 'b':
+                bidirectional = true;
+                break;
             default:
             case 'h':
-                printf("-c [CTAs] -t [THREADS] \n");
+                printf("-c [CTAs] -t [THREADS] -b\n");
                 goto finalize;
         }
     }
@@ -119,12 +125,27 @@ int main(int argc, char *argv[]) {
     h_size_arr = (uint64_t *)h_tables[0];
     h_bw = (double *)h_tables[1];
 
+    if (bidirectional) {
+        h_bw_total = (double *)malloc(sizeof(double) * array_size);
+
+        if (!h_bw_total) {
+            fprintf(stderr, "Error: Unable to malloc on the host.\n");
+            exit(1);
+        }
+
+        memset(h_bw_total, 0, sizeof(double) * array_size);
+
+        /* Allocate on GPU. */
+        CUDA_CHECK(cudaMalloc((void **)&d_bw, sizeof(double)));
+        CUDA_CHECK(cudaMalloc((void **)&d_bw_sum, sizeof(double)));
+    }
+
     CUDA_CHECK(cudaMalloc((void **)&counter_d, sizeof(unsigned int) * 2));
     CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    if (mype == 0) {
+    if (bidirectional || mype == 0) {
         i = 0;
         for (int size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
             h_size_arr[i] = size;
@@ -143,6 +164,17 @@ int main(int argc, char *argv[]) {
             cudaEventElapsedTime(&milliseconds, start, stop);
             h_bw[i] = size / (milliseconds * (B_TO_GB / (iter * MS_TO_S)));
             nvshmem_barrier_all();
+
+            /* Sum all h_bw of each PE for bidirectional mode. */
+            if (bidirectional) {
+                CUDA_CHECK(cudaMemcpy(d_bw, &h_bw[i], sizeof(double), cudaMemcpyHostToDevice));
+                nvshmem_double_sum_reduce(NVSHMEM_TEAM_WORLD, d_bw_sum, d_bw, 1);
+                CUDA_CHECK(
+                    cudaMemcpy(&h_bw_total[i], d_bw_sum, sizeof(double), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(
+                    cudaMemcpy(&h_bw_total[i], d_bw_sum, sizeof(double), cudaMemcpyDeviceToHost));
+            }
+
             i++;
         }
     } else {
@@ -152,13 +184,18 @@ int main(int argc, char *argv[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_get_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
+        double *p_h_bw_tmp = bidirectional ? h_bw_total : h_bw;
+        const char *const test_name = bidirectional ? "shmem_get_bw_bidi" : "shmem_get_bw_uni";
+        print_table(test_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, p_h_bw_tmp,
                     i);
     }
 
 finalize:
 
     if (data_d) nvshmem_free(data_d);
+    if (h_bw_total) free(h_bw_total);
+    if (d_bw) cudaFree(d_bw);
+    if (d_bw_sum) cudaFree(d_bw_sum);
     free_tables(h_tables, 2);
     finalize_wrapper();
 

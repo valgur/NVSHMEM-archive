@@ -6,9 +6,14 @@
 
 ##### version
 NVSHMEM_MAJOR   := 2
-NVSHMEM_MINOR   := 9
-NVSHMEM_PATCH   := 0
-PKG_REVISION    := 2
+NVSHMEM_MINOR   := 10
+NVSHMEM_PATCH   := 1
+PKG_REVISION    := 3
+
+##### Versioned independently from NVSHMEM
+INTERLIB_VERSION_MAJOR    := 1
+INTERLIB_VERSION_MINOR    := 0
+INTERLIB_VERSION_PATCH    := 0
 
 ##### Versioned independently from NVSHMEM
 TRANSPORT_VERSION_MAJOR    := 1

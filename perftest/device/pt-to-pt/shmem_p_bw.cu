@@ -255,7 +255,7 @@ int main(int argc, char *argv[]) {
 
             cudaEventElapsedTime(&milliseconds, start, stop);
             h_bw[i] = size / (milliseconds * (B_TO_GB / (iter * MS_TO_S)));
-            h_msgrate[i] = (double)(size / sizeof(double)) * iter / (milliseconds * MS_TO_S);
+            h_msgrate[i] = (double)(size / element_size) * iter / (milliseconds * MS_TO_S);
             nvshmem_barrier_all();
             i++;
         }

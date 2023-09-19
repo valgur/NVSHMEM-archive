@@ -4,7 +4,15 @@
  * See COPYRIGHT for license information
  */
 
-#include "sockets.h"
+#include "internal/host/sockets.h"
+#include <sys/uio.h>  // IWYU pragma: keep
+// IWYU pragma: no_include <bits/types/struct_iovec.h>
+#include <stdio.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 int ipcOpenSocket(ipcHandle *&handle) {
     int sock = 0;

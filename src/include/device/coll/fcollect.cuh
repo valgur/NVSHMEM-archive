@@ -11,12 +11,15 @@
 #else
 #include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
 #endif
+#include "device/nvshmemi_common_device_defines.cuh"
+#include "device/nvshmemi_common_device.cuh"
 #include "utils.cuh"
 
 #ifdef __CUDA_ARCH__
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_fcollect_allpush_ll_threadgroup(nvshmem_team_t team, T *dest,
-                                                                const T *source, size_t nelems) {
+__device__ __forceinline__ void nvshmemi_fcollect_allpush_ll_threadgroup(nvshmem_team_t team,
+                                                                         T *dest, const T *source,
+                                                                         size_t nelems) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     const size_t fcollect_ll_threshold = nvshmemi_device_state_d.fcollect_ll_threshold;
     const size_t fcollect_count = teami->fcollect_count;
@@ -62,9 +65,10 @@ __device__ inline void nvshmemi_fcollect_allpush_ll_threadgroup(nvshmem_team_t t
                 dest + (prev_pe_in_team * nelems), (uint64_t *)pWrk + prev_offset, nelems, ll_flag);
         }
     } else {
+        nvshmemi_threadgroup_sync<SCOPE>();
         for (int ii = 1; ii < teami->size; ii += 1) {
             next_rank = teami->start + ((my_pe_in_team + ii) % teami->size) * teami->stride;
-            nvshmemi_put_nbi_threadgroup<uint64_t, SCOPE>(
+            nvshmemii_put_nbi_threadgroup<uint64_t, SCOPE>(
                 (uint64_t *)pWrk + pack_offset, (uint64_t *)pWrk + pack_offset,
                 nelems * sizeof(T) / sizeof(uint32_t), next_rank);
         }
@@ -125,8 +129,8 @@ __device__ inline void nvshmemi_fcollect_p2p_allpush_threadgroup(nvshmem_team_t 
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_fcollect_threadgroup(nvshmem_team_t team, T *dest, const T *source,
-                                                     size_t nelems) {
+__device__ __forceinline__ void nvshmemi_fcollect_threadgroup(nvshmem_team_t team, T *dest,
+                                                              const T *source, size_t nelems) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     if (!myIdx) /* Only one thread should increment fcollect_count */
         nvshmemi_device_state_d.team_pool[team]->fcollect_count += 1;

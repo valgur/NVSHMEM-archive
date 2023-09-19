@@ -5,12 +5,15 @@
  */
 #ifndef BARRIER_DEVICE_CUH
 #define BARRIER_DEVICE_CUH
-#include "nvshmemi_team.h"
+#include "device/team/team_device.cuh"
 #ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
 #include "device/pt-to-pt/transfer_device.cuh"
 #else
 #include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
 #endif
+#include "device/nvshmemi_wait_until_apis.cuh"
+#include "device/nvshmemi_common_device_defines.cuh"
+#include "device/nvshmemi_common_device.cuh"
 #include "utils.cuh"
 
 #ifdef __CUDA_ARCH__

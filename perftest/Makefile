@@ -30,8 +30,7 @@ NVSHMEM_PERFTEST_INSTALL ?= $(mkfile_dir)/perftest_install
 default : perftest
 
 PERFCUHELPERFILES := common/utils.cu
-PERFCUSRCFILES := device/coll/alltoall_bw.cu \
-                  device/coll/alltoall_latency.cu \
+PERFCUSRCFILES := device/coll/alltoall_latency.cu \
                   device/coll/barrier_latency.cu \
                   device/coll/bcast_latency.cu \
                   device/coll/fcollect_latency.cu \
