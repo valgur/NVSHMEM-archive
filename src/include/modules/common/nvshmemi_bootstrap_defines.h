@@ -6,6 +6,18 @@
 #ifndef NVSHMEMI_BOOTSTRAP_DEFINES_H
 #define NVSHMEMI_BOOTSTRAP_DEFINES_H
 
+typedef struct bootstrap_env_attr {
+    char *uid_session_id;
+    char *uid_socket_ifname;
+    char *uid_socket_family;
+} bootstrap_env_attr_t;
+
+typedef struct bootstrap_init_ops {
+    void *cookie;
+    bootstrap_env_attr_t *env_attr;
+    int (*get_unique_id)(void *cookie, struct bootstrap_env_attr *attr);
+} bootstrap_init_ops_t;
+
 typedef struct bootstrap_handle {
     int pg_rank;
     int pg_size;
@@ -17,6 +29,8 @@ typedef struct bootstrap_handle {
     int (*barrier)(struct bootstrap_handle *handle);
     void (*global_exit)(int status);
     int (*finalize)(struct bootstrap_handle *handle);
+    bootstrap_init_ops_t *pre_init_ops;
+    void *comm_state;
 } bootstrap_handle_t;
 
 #endif

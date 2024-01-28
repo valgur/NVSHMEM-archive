@@ -32,7 +32,9 @@
 
 #include "modules/transport/cudawrap.h"
 #include "internal/common/debug.h"
+#ifdef NVSHMEM_USE_DLMALLOC
 #include "dlmalloc.h"
+#endif
 #include "modules/transport/env_defs_internal.h"
 #include "internal/error_codes_internal.h"
 #include "common/nvshmem_build_options.h"
@@ -124,35 +126,26 @@ out:
     return status;
 }
 
-int mspace_track_large_chunks(mspace msp, int enable);
-size_t destroy_mspace(mspace msp);
-
 int nvshmemi_setup_memory_space(nvshmemi_state_t *state, void *heap_base, size_t size) {
     int status = 0;
-    mspace heap_mspace = 0;
+    state->heap_mspace = new mspace(heap_base, size);
+    state->heap_mspace->track_large_chunks(1);
 
-    heap_mspace = create_mspace_with_base(heap_base, size, 0);
-    NVSHMEMI_NULL_ERROR_JMP(heap_mspace, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                            "mspace creation failed \n");
-
-    assert(heap_mspace != 0);
-    INFO(NVSHMEM_INIT, "[%d] mspace ptr: %p", state->mype, heap_mspace);
-
-    mspace_track_large_chunks(heap_mspace, 1);
-
-    state->heap_mspace = heap_mspace;
-
-out:
     return status;
 }
 
 int nvshmemi_cleanup_memory_space(nvshmemi_state_t *state) {
-    destroy_mspace(state->heap_mspace);
+    delete state->heap_mspace;
     return 0;
 }
 
 static char shm_name[100];
 static nvshmemi_shared_memory_info_t heap_shm_info;
+
+static void close_sysmem_shm_file() {
+    if (heap_shm_info.shm_fd) close(heap_shm_info.shm_fd);
+}
+
 int nvshmemi_allocate_heap_memory(void **heap_base, size_t heap_size) {
     int status = 0;
     if (nvshmemi_device_state.symmetric_heap_kind == NVSHMEMI_HEAP_KIND_VIDMEM) {
@@ -177,6 +170,7 @@ int nvshmemi_allocate_heap_memory(void **heap_base, size_t heap_size) {
                 NVSHMEMI_ERROR_EXIT("Failed to open shared memory slab\n");
             }
         }
+        atexit(close_sysmem_shm_file);
         /* Do first touch, for NUMA awareness */
         memset((char *)heap_shm_info.addr + nvshmemi_boot_handle.mype_node * heap_size, 0,
                heap_size);
@@ -197,7 +191,6 @@ int nvshmemi_free_heap_memory(void *addr) {
         CUDA_RUNTIME_CHECK(cudaFree(addr));
     } else {
         CUDA_RUNTIME_CHECK(cudaHostUnregister(heap_shm_info.addr));
-        if (heap_shm_info.shm_fd) close(heap_shm_info.shm_fd);
         shared_memory_close(shm_name, &heap_shm_info);
     }
     return status;
@@ -286,7 +279,7 @@ out:
 
 int nvshmemi_setup_local_heap(nvshmemi_state_t *state) {
     int status;
-    size_t alignbytes = MALLOC_ALIGNMENT;
+    size_t alignbytes = NVSHMEMI_MALLOC_ALIGNMENT;
     size_t heapextra;
     size_t tmp;
 
@@ -295,7 +288,7 @@ int nvshmemi_setup_local_heap(nvshmemi_state_t *state) {
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     prop.location.id = static_cast<int>(state->device_id);
-    prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+    prop.requestedHandleTypes = nvshmemi_cuda_mem_handle_type;
     prop.allocFlags.gpuDirectRDMACapable = 1;
 
     status = CUPFN(nvshmemi_cuda_syms,
@@ -473,7 +466,11 @@ static int register_heap_handle(nvshmemi_state_t *state, nvshmem_mem_handle_t *m
     state->handles.push_back(
         vector<nvshmem_mem_handle_t>(state->num_initialized_transports * state->npes));
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    status = nvshmemi_gather_mem_handles(local_handles, state, state->physical_heap_size, size);
+    if (nvshmemi_device_state.enable_rail_opt == 1)
+        status = nvshmemi_gather_mem_handles(local_handles, state, 0,
+                                             state->heap_size * state->npes_node);
+    else
+        status = nvshmemi_gather_mem_handles(local_handles, state, state->physical_heap_size, size);
 #else
     status = nvshmemi_gather_mem_handles(local_handles, state);
 #endif
@@ -482,34 +479,56 @@ static int register_heap_handle(nvshmemi_state_t *state, nvshmem_mem_handle_t *m
 
 #if CUDA_VERSION >= 11000
     if (nvshmemi_use_cuda_vmm) {
-        ipcHandle *myIpcHandle = NULL;
-        pid_t pid = getpid();
-        IPC_CHECK(ipcOpenSocket(myIpcHandle));
+        if (nvshmemi_cuda_mem_handle_type == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+            ipcHandle *myIpcHandle = NULL;
+            pid_t pid = getpid();
+            IPC_CHECK(ipcOpenSocket(myIpcHandle, pid, pid));
 
-        /* Wait for all processes to open their sockets */
-        status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
-
-        for (std::map<pid_t, int>::iterator it1 = p2p_processes.begin(); it1 != p2p_processes.end();
-             ++it1) {
-            pid_t sending_process = it1->first;
-            if (pid == sending_process) {
-                for (std::map<pid_t, int>::iterator it2 = p2p_processes.begin();
-                     it2 != p2p_processes.end(); ++it2) {
-                    pid_t receiving_process = it2->first;
-                    if (pid != receiving_process) { /* Dont sent to yourself */
-                        IPC_CHECK(ipcSendFd(myIpcHandle, *(int *)local_handles, receiving_process));
-                    }
+            map<pid_t, ipcHandle *> recvIpcHandles;
+            /* Open all sockets */
+            for (std::map<pid_t, int>::iterator it1 = p2p_processes.begin();
+                 it1 != p2p_processes.end(); ++it1) {
+                pid_t sending_process = it1->first;
+                if (pid != sending_process) { /* Don't recv from yourself */
+                    ipcHandle *recvIpcHandle = NULL;
+                    IPC_CHECK(ipcOpenSocket(recvIpcHandle, sending_process, pid));
+                    recvIpcHandles[sending_process] = recvIpcHandle;
                 }
-            } else {
-                IPC_CHECK(ipcRecvFd(myIpcHandle,
-                                    (int *)&state->handles
-                                        .back()[it1->second * state->num_initialized_transports]));
+            }
+
+            /* Wait for all processes to open their sockets */
+            status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
+
+            /* Send all FDs */
+            for (std::map<pid_t, int>::iterator it1 = p2p_processes.begin();
+                 it1 != p2p_processes.end(); ++it1) {
+                pid_t receiving_process = it1->first;
+                if (pid != receiving_process) { /* Don't send to yourself */
+                    IPC_CHECK(
+                        ipcSendFd(myIpcHandle, *(int *)local_handles, pid, receiving_process));
+                }
+            }
+
+            /* Recv all FDs */
+            for (std::map<pid_t, int>::iterator it1 = p2p_processes.begin();
+                 it1 != p2p_processes.end(); ++it1) {
+                pid_t sending_process = it1->first;
+                if (pid != sending_process) { /* Don't recv from  yourself */
+                    IPC_CHECK(
+                        ipcRecvFd(recvIpcHandles[sending_process],
+                                  (int *)&state->handles
+                                      .back()[it1->second * state->num_initialized_transports]));
+                }
             }
             status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
+            IPC_CHECK(ipcCloseSocket(myIpcHandle));
+            for (std::map<pid_t, ipcHandle *>::iterator it = recvIpcHandles.begin();
+                 it != recvIpcHandles.end(); it++) {
+                IPC_CHECK(ipcCloseSocket(it->second));
+            }
         }
-        IPC_CHECK(ipcCloseSocket(myIpcHandle));
-        mspace_add_new_chunk(state->heap_mspace,
-                             (char *)state->heap_base + state->physical_heap_size, size);
+        state->heap_mspace->add_new_chunk((char *)state->heap_base + state->physical_heap_size,
+                                          size);
     }
 #endif
     for (int i = ((state->mype + 1) % state->npes); i != state->mype; i = ((i + 1) % state->npes)) {
@@ -553,21 +572,28 @@ static int register_heap_handle(nvshmemi_state_t *state, nvshmem_mem_handle_t *m
         }
     }
 
-    /*
-     * Don't set nvshmemi_no_vmm_heap_initialized until
-     * we have completed the above for loop and
-     * properly mapped the heap from each PE.
-     */
+    if (nvshmemi_device_state.enable_rail_opt == 1) {
+        if (nvshmemi_no_vmm_heap_initialized == false) {
+            for (size_t i = 0; i < (state->heap_size * state->npes_node) / cumem_granularity; i++) {
+                nvshmemi_state->idx_in_handles.push_back(
+                    make_tuple(nvshmemi_state->handles.size() - 1, (char *)state->global_heap_base,
+                               state->heap_size * state->npes_node));
+            }
+            nvshmemi_no_vmm_heap_initialized = true;
+        }
+        goto out;
+    } else {
+        for (size_t i = 0; i < (size / cumem_granularity); i++) {
+            nvshmemi_state->idx_in_handles.push_back(
+                make_tuple(nvshmemi_state->handles.size() - 1,
+                           (char *)state->heap_base + state->physical_heap_size, size));
+        }
+    }
+    state->physical_heap_size += size;
+
     if (!nvshmemi_use_cuda_vmm) {
         nvshmemi_no_vmm_heap_initialized = true;
     }
-
-    for (size_t i = 0; i < (size / cumem_granularity); i++) {
-        nvshmemi_state->idx_in_handles.push_back(
-            make_tuple(nvshmemi_state->handles.size() - 1,
-                       (char *)state->heap_base + state->physical_heap_size, size));
-    }
-    state->physical_heap_size += size;
 
 out:
     return status;
@@ -706,7 +732,7 @@ static int add_physical_memory_aligned(nvshmemi_state_t *state, size_t size) {
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     prop.location.id = static_cast<int>(state->device_id);
-    prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+    prop.requestedHandleTypes = nvshmemi_cuda_mem_handle_type;
     prop.allocFlags.gpuDirectRDMACapable = 1;
 
     access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -785,12 +811,12 @@ void *nvshmemi_malloc(size_t size) {
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
                           "symmetry check for size failed\n");
 
-    ptr = mspace_malloc(nvshmemi_state->heap_mspace, size);
+    ptr = nvshmemi_state->heap_mspace->allocate(size);
 #if CUDA_VERSION >= 11000
     if (nvshmemi_use_cuda_vmm) {
         if ((size > 0) && (ptr == NULL)) {
             nvshmemi_add_physical_memory(size);
-            ptr = mspace_malloc(nvshmemi_state->heap_mspace, size);
+            ptr = nvshmemi_state->heap_mspace->allocate(size);
         }
         goto update_device_state;
     } else
@@ -810,13 +836,12 @@ update_device_state:
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmemi_update_device_state failed\n");
 
-    INFO(NVSHMEM_INIT, "[%d] allocated %zu bytes from mspace: %p ptr: %p", nvshmemi_state->mype,
-         size, nvshmemi_state->heap_mspace, ptr);
+    INFO(NVSHMEM_INIT, "[%d] allocated %zu bytes, ptr: %p", nvshmemi_state->mype, size, ptr);
 
 out:
     if (status) {
         if (ptr) {
-            mspace_free(nvshmemi_state->heap_mspace, ptr);
+            nvshmemi_state->heap_mspace->deallocate(ptr);
             ptr = NULL;
         }
     }
@@ -832,12 +857,12 @@ void *nvshmemi_calloc(size_t count, size_t size) {
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
                           "symmetry check for size failed\n");
 
-    ptr = mspace_calloc(nvshmemi_state->heap_mspace, count, size);
+    ptr = nvshmemi_state->heap_mspace->allocate_zeroed(count, size);
 #if CUDA_VERSION >= 11000
     if (nvshmemi_use_cuda_vmm) {
         if ((size > 0) && (ptr == NULL)) {
             nvshmemi_add_physical_memory(size);
-            ptr = mspace_calloc(nvshmemi_state->heap_mspace, count, size);
+            ptr = nvshmemi_state->heap_mspace->allocate_zeroed(count, size);
         }
         goto update_device_state;
     } else
@@ -853,12 +878,11 @@ update_device_state:
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmemi_update_device_state failed\n");
 
-    INFO(NVSHMEM_INIT, "[%d] calloc allocated %zu bytes from mspace: %p ptr: %p",
-         nvshmemi_state->mype, size, nvshmemi_state->heap_mspace, ptr);
+    INFO(NVSHMEM_INIT, "[%d] calloc allocated %zu bytes ptr: %p", nvshmemi_state->mype, size, ptr);
 out:
     if (status) {
         if (ptr) {
-            mspace_free(nvshmemi_state->heap_mspace, ptr);
+            nvshmemi_state->heap_mspace->deallocate(ptr);
             ptr = NULL;
         }
     }
@@ -907,12 +931,12 @@ void *nvshmemi_align(size_t alignment, size_t size) {
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
                           "symmetry check for size failed\n");
 
-    ptr = mspace_memalign(nvshmemi_state->heap_mspace, alignment, size);
+    ptr = nvshmemi_state->heap_mspace->allocate_aligned(alignment, size);
 #if CUDA_VERSION >= 11000
     if (nvshmemi_use_cuda_vmm) {
         if ((size > 0) && (ptr == NULL)) {
             nvshmemi_add_physical_memory(size + alignment);
-            ptr = mspace_memalign(nvshmemi_state->heap_mspace, alignment, size);
+            ptr = nvshmemi_state->heap_mspace->allocate_aligned(alignment, size);
         }
         goto update_device_state;
     } else
@@ -931,7 +955,7 @@ update_device_state:
 out:
     if (status) {
         if (ptr) {
-            mspace_free(nvshmemi_state->heap_mspace, ptr);
+            nvshmemi_state->heap_mspace->deallocate(ptr);
             ptr = NULL;
         }
     }
@@ -960,7 +984,7 @@ void nvshmemi_free(void *ptr) {
 
     INFO(NVSHMEM_INIT, "[%d] freeing buf: %p", nvshmemi_state->mype, ptr);
 
-    mspace_free(nvshmemi_state->heap_mspace, ptr);
+    nvshmemi_state->heap_mspace->deallocate(ptr);
 
     nvshmemi_update_device_state();
 }
@@ -991,20 +1015,6 @@ void *nvshmem_ptr(const void *ptr, int pe) {
     }
 
     return NULL;
-}
-
-/* for now, pick up the first transport - in the future, we need to only support one remote
- * transport. */
-static struct nvshmem_transport *nvshmemi_get_remote_transport() {
-    struct nvshmem_transport *t = NULL;
-
-    for (int j = 0; j < nvshmemi_state->num_initialized_transports; j++) {
-        if (nvshmemi_state->transport_bitmap & (1 << j)) {
-            t = nvshmemi_state->transports[j];
-        }
-    }
-
-    return t;
 }
 
 static int buffer_register(nvshmem_transport_t transport, void *addr, size_t length) {
@@ -1366,6 +1376,11 @@ static void buffer_unregister_all(nvshmem_transport_t transport) {
     return;
 }
 
+void nvshmemi_transport_buffer_unregister_all(nvshmem_transport_t transport) {
+    buffer_unregister_all(transport);
+    return;
+}
+
 void nvshmemx_buffer_unregister_all() {
     for (int i = 0; i < nvshmemi_state->num_initialized_transports; i++) {
         if (nvshmemi_state->transport_bitmap & (1 << i)) {
@@ -1437,9 +1452,7 @@ out_unlock:
     return ret_handle;
 }
 
-void nvshmemi_local_mem_cache_fini(nvshmem_transport_t transport,
-                                   nvshmem_local_buf_cache_t *cache) {
-    buffer_unregister_all(transport);
+void nvshmemi_local_mem_cache_fini(nvshmem_local_buf_cache_t *cache) {
     pthread_rwlock_destroy(&cache->buffer_lock);
     free(cache->buffers);
     free(cache);

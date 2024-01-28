@@ -47,6 +47,12 @@ __device__ void nvshmem_global_exit(int status) {
 }
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+void nvshmemi_get_mem_handle(void **dev_state_ptr, void **transport_dev_state_ptr);
+}
+#endif
+
 void nvshmemi_check_state_and_init_d() {
     int status;
     int ret;
@@ -57,12 +63,12 @@ void nvshmemi_check_state_and_init_d() {
         /* The fact that we can pass NVSHMEM_THREAD_SERIALIZED
          * here is an implementation detail. It should be fixed
          * if/when NVSHMEM_THREAD_* becomes significant. */
-        status = nvshmemx_host_init(NVSHMEM_THREAD_SERIALIZED, &ret, 0, NULL,
-                                    nvshmemi_device_lib_version, NULL);
+        status = nvshmemid_hostlib_init_attr(NVSHMEM_THREAD_SERIALIZED, &ret, 0, NULL,
+                                             nvshmemi_device_lib_version, NULL);
         if (status) {
             NVSHMEMI_ERROR_EXIT("nvshmem initialization failed, exiting \n");
         }
-        nvshmemx_host_finalize(NULL, NULL);
+        nvshmemid_hostlib_finalize(NULL, NULL);
     }
 }
 
@@ -93,9 +99,9 @@ int nvshmemi_init_thread(int requested_thread_support, int *provided_thread_supp
             "version\n");
         return 1;
     }
-    status =
-        nvshmemx_host_init(requested_thread_support, provided_thread_support, bootstrap_flags,
-                           bootstrap_attr, nvshmemi_device_lib_version, &nvshmemi_get_mem_handle);
+    status = nvshmemid_hostlib_init_attr(requested_thread_support, provided_thread_support,
+                                         bootstrap_flags, bootstrap_attr,
+                                         nvshmemi_device_lib_version, &nvshmemi_get_mem_handle);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmem_internal_init_thread failed \n");
 
@@ -113,16 +119,18 @@ void nvshmemi_finalize() {
     status = cudaGetSymbolAddress(&dev_state_ptr, nvshmemi_device_state_d);
     if (status) {
         NVSHMEMI_ERROR_PRINT("Unable to properly unregister device state.\n");
-        nvshmemx_host_finalize(NULL, NULL);
+        nvshmemid_hostlib_finalize(NULL, NULL);
+        return;
     }
 #ifdef NVSHMEM_IBGDA_SUPPORT
     status = cudaGetSymbolAddress(&transport_dev_state_ptr, nvshmemi_ibgda_device_state_d);
     if (status) {
         NVSHMEMI_ERROR_PRINT("Unable to properly unregister device state.\n");
-        nvshmemx_host_finalize(NULL, NULL);
+        nvshmemid_hostlib_finalize(NULL, NULL);
+        return;
     }
 #endif
-    nvshmemx_host_finalize(dev_state_ptr, transport_dev_state_ptr);
+    nvshmemid_hostlib_finalize(dev_state_ptr, transport_dev_state_ptr);
 }
 #ifdef __cplusplus
 }

@@ -403,8 +403,7 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
         localdesc.ptr = local;
         localdesc.handle = NULL;
         remotedesc.ptr = remote_actual;
-        remotedesc.offset = roffset;
-        nvshmemi_get_remote_mem_handle(&remotedesc.handle, NULL, remote, pe, t);
+        nvshmemi_get_remote_mem_handle(&remotedesc, NULL, remote, pe, t);
 
         bytes.nelems = 1;
         bytes.elembytes = size;
@@ -500,11 +499,11 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
         verb.desc = amo_op;
 
         memset(&memdesc, 0, sizeof(amo_memdesc_t));
-        memdesc.ptr = remote_actual;
-        memdesc.offset = roffset;
+        memdesc.remote_memdesc.ptr = remote_actual;
+        memdesc.remote_memdesc.offset = roffset;
         memdesc.val = lvalue;
         memdesc.cmp = cvalue;
-        nvshmemi_get_remote_mem_handle(&memdesc.handle, NULL, remote, pe, t);
+        nvshmemi_get_remote_mem_handle(&memdesc.remote_memdesc, NULL, remote, pe, t);
         // pick spot in g buffer for fetch value
         if ((amo_op > NVSHMEMI_AMO_END_OF_NONFETCH)) {
             uint64_t g_buf_counter = ((*reinterpret_cast<uint64_t *>(req_3)) & 0xFFFFFFFFFFFFFF00u);
@@ -548,7 +547,10 @@ void enforce_cst(proxy_state_t *proxy_state) {
 #if defined(NVSHMEM_X86_64)
     nvshmemi_state_t *state = proxy_state->nvshmemi_state;
 #endif
+
+#if defined(NVSHMEM_X86_64) || defined(NVSHMEM_PPC64LE)
     int status = 0;
+#endif
 
     if (nvshmemi_options.BYPASS_FLUSH) return;
 
@@ -634,7 +636,7 @@ inline int quiet_channels_test(proxy_state_t *proxy_state) {
 }
 
 inline void progress_global_exit(proxy_state_t *proxy_state) {
-    if (*proxy_state->global_exit_request_state == PROXY_GLOBAL_EXIT_REQUESTED) {
+    if (*(volatile int *)proxy_state->global_exit_request_state == PROXY_GLOBAL_EXIT_REQUESTED) {
         nvshmem_global_exit(*proxy_state->global_exit_code);
     }
 }

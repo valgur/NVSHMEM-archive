@@ -7,6 +7,14 @@
 #define _NVSHMEM_COMMON_DEVICE_DEFINES_CUH_
 #include "common/nvshmem_common.cuh"
 
+#if defined(__CUDACC_RDC__)
+#define EXTERN_CONSTANT extern __constant__
+#else
+#define EXTERN_CONSTANT static __constant__
+#endif
+EXTERN_CONSTANT nvshmemi_device_state_t nvshmemi_device_state_d;
+#undef EXTERN_CONSTANT
+
 typedef enum {
     nvshmemi_threadgroup_thread = 0,
     NVSHMEMI_THREADGROUP_THREAD = 0,
@@ -71,14 +79,6 @@ __device__ inline void nvshmemi_threadgroup_sync() {
             break;
     }
 }
-
 #endif
 
-#if defined(__CUDACC_RDC__)
-#define EXTERN_CONSTANT extern __constant__
-#else
-#define EXTERN_CONSTANT static __constant__
-#endif
-EXTERN_CONSTANT nvshmemi_device_state_t nvshmemi_device_state_d;
-#undef EXTERN_CONSTANT
 #endif

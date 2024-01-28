@@ -13,33 +13,23 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <map>
 #include <utility>
 
 #include "internal/common/debug.h"
-#include "dlmalloc.h"
+#include "internal/host/custom_malloc.h"
 #include "internal/util.h"
 
 using namespace std;
 
-#define MALLOC_ALIGNMENT ((size_t)512U)
 #define SIZE_T_ONE ((size_t)1)
-#define MALLOC_ALIGNMENT ((size_t)512U)
-#define CHUNK_ALIGN_MASK (MALLOC_ALIGNMENT - SIZE_T_ONE)
+#define CHUNK_ALIGN_MASK (NVSHMEMI_MALLOC_ALIGNMENT - SIZE_T_ONE)
 
 #define align_request(req) (((req) + CHUNK_ALIGN_MASK) & ~CHUNK_ALIGN_MASK)
 /* the number of bytes to offset an address to align it */
 #define align_offset(A)                    \
     ((((size_t)(A)&CHUNK_ALIGN_MASK) == 0) \
          ? 0                               \
-         : ((MALLOC_ALIGNMENT - ((size_t)(A)&CHUNK_ALIGN_MASK)) & CHUNK_ALIGN_MASK))
-
-/* free_chunks_start is mapping of start address of each free chunk to size of that chunk */
-/* free_chunks_end is mapping of end address of each free chunk to size of that chunk */
-map<void *, size_t> free_chunks_start, free_chunks_end;
-/* in_use_cunks is a mapping of each in use chunks start address to size of the chunk */
-map<void *, size_t> inuse_chunks;
-static size_t total_size = 0; /* size of total space managed by mspace */
+         : ((NVSHMEMI_MALLOC_ALIGNMENT - ((size_t)(A)&CHUNK_ALIGN_MASK)) & CHUNK_ALIGN_MASK))
 
 #ifdef _NVSHMEM_DEBUG
 static size_t get_total_size(std::map<void *, size_t> chunk_map) {
@@ -61,7 +51,7 @@ static size_t get_total_size(std::map<void *, size_t> chunk_map) {
 #define ASSERT_CORRECTNESS
 #endif
 
-void mspace_print(mspace msp) {
+void mspace::print() {
     printf("free_chunks_start: ");
     for (map<void *, size_t>::iterator it = free_chunks_start.begin();
          it != free_chunks_start.end(); it++) {
@@ -83,7 +73,7 @@ void mspace_print(mspace msp) {
     printf("\n");
 }
 
-mspace create_mspace_with_base(void *base, size_t capacity, int locked) {
+mspace::mspace(void *base, size_t capacity) {
     char *start_addr = (char *)base;
     size_t offset = align_offset(start_addr);
     start_addr += offset;
@@ -95,12 +85,11 @@ mspace create_mspace_with_base(void *base, size_t capacity, int locked) {
         free_chunks_end[end_addr] = capacity;
         total_size = capacity;
     }
-    // mspace_print(base);
+    // print();
     ASSERT_CORRECTNESS
-    return &free_chunks_start;
 }
 
-void mspace_add_free_chunk(mspace msp, char *base, size_t capacity) {
+void mspace::add_free_chunk(char *base, size_t capacity) {
     bool merged = 0;
     /* check if previous chunk is free */
     if (free_chunks_end.find(base) != free_chunks_end.end()) {
@@ -129,23 +118,14 @@ void mspace_add_free_chunk(mspace msp, char *base, size_t capacity) {
     ASSERT_CORRECTNESS
 }
 
-void mspace_add_new_chunk(mspace msp, void *base, size_t capacity) {
+void mspace::add_new_chunk(void *base, size_t capacity) {
     total_size += capacity;
-    mspace_add_free_chunk(msp, (char *)base, capacity);
+    add_free_chunk((char *)base, capacity);
 }
 
-size_t destroy_mspace(mspace msp) {
-    free_chunks_start.clear();
-    free_chunks_end.clear();
-    inuse_chunks.clear();
-    total_size = 0;
+int mspace::track_large_chunks(int enable) { return 0; }
 
-    return 0;
-}
-
-int mspace_track_large_chunks(mspace msp, int enable) { return 0; }
-
-void *mspace_malloc(mspace msp, size_t bytes) {
+void *mspace::allocate(size_t bytes) {
     INFO(NVSHMEM_MEM, "mspace_malloc called with %zu bytes", bytes);
     if (bytes == 0) return NULL;
     bytes = align_request(bytes);
@@ -171,7 +151,7 @@ void *mspace_malloc(mspace msp, size_t bytes) {
     return NULL;
 }
 
-void mspace_free(mspace msp, void *mem) {
+void mspace::deallocate(void *mem) {
     INFO(NVSHMEM_MEM, "mspace_free called on %p", mem);
     if (inuse_chunks.find(mem) == inuse_chunks.end()) {
         printf("Free called on an invalid pointer\n");
@@ -180,44 +160,44 @@ void mspace_free(mspace msp, void *mem) {
     size_t bytes = inuse_chunks[mem];
     inuse_chunks.erase(mem);
 
-    mspace_add_free_chunk(msp, (char *)mem, bytes);
+    add_free_chunk((char *)mem, bytes);
     ASSERT_CORRECTNESS
 }
 
-void *mspace_calloc(mspace msp, size_t n_elements, size_t elem_size) {
+void *mspace::allocate_zeroed(size_t n_elements, size_t elem_size) {
     INFO(NVSHMEM_MEM, "mspace_calloc called with n_elements = %zu, elem_size = %zu", n_elements,
          elem_size);
     size_t bytes = n_elements * elem_size;
-    void *ptr = mspace_malloc(msp, bytes);
+    void *ptr = allocate(bytes);
     if (ptr) CUDA_RUNTIME_CHECK(cudaMemset(ptr, 0, bytes));
     ASSERT_CORRECTNESS
     return ptr;
 }
 
-void *mspace_memalign(mspace msp, size_t alignment, size_t bytes) {
+void *mspace::allocate_aligned(size_t alignment, size_t bytes) {
     INFO(NVSHMEM_MEM, "mspace_memalign called with alignment = %zu, bytes = %zu", alignment, bytes);
     assert((alignment % sizeof(void *)) == 0 && ((alignment & (alignment - 1)) == 0));
     /* Request bytes + alignment for simplicity */
     bytes += alignment;
-    char *ptr = (char *)mspace_malloc(msp, bytes);
+    char *ptr = (char *)allocate(bytes);
     if (!ptr) return NULL;
     char *ret_ptr = (char *)(alignment * (((uint64_t)ptr + (alignment - 1)) / alignment));
     if (ret_ptr - ptr) {
         inuse_chunks[ret_ptr] = inuse_chunks[ptr] - (ret_ptr - ptr);
         inuse_chunks.erase(ptr);
-        mspace_add_free_chunk(msp, ptr, ret_ptr - ptr);
+        add_free_chunk(ptr, ret_ptr - ptr);
     }
     ASSERT_CORRECTNESS
     return ret_ptr;
 }
 
-void *mspace_realloc(mspace msp, void *ptr, size_t size) {
+void *mspace::reallocate(void *ptr, size_t size) {
     INFO(NVSHMEM_MEM, "mspace_realloc called with ptr = %p, size = %zu", ptr, size);
     size = align_request(size);
     size_t current_size = inuse_chunks[ptr];
     if (size < current_size) {
         inuse_chunks[ptr] = size;
-        mspace_add_free_chunk(msp, (char *)ptr + size, current_size - size);
+        add_free_chunk((char *)ptr + size, current_size - size);
         ASSERT_CORRECTNESS
         return ptr;
     } else if (size > current_size) {
@@ -228,16 +208,16 @@ void *mspace_realloc(mspace msp, void *ptr, size_t size) {
                 free_chunks_start.erase((char *)ptr + current_size);
                 free_chunks_end.erase((char *)ptr + current_size + chunk_size);
                 if (current_size + chunk_size > size)
-                    mspace_add_free_chunk(msp, (char *)ptr + size, size - current_size);
+                    add_free_chunk((char *)ptr + size, size - current_size);
                 ASSERT_CORRECTNESS
                 return ptr;
             }
         }
-        void *new_ptr = mspace_malloc(msp, size);
+        void *new_ptr = allocate(size);
         if (new_ptr == NULL) return NULL;
         CUDA_RUNTIME_CHECK(cudaMemcpy(new_ptr, ptr, size, cudaMemcpyDeviceToDevice));
         inuse_chunks.erase(ptr);
-        mspace_add_free_chunk(msp, (char *)ptr, current_size);
+        add_free_chunk((char *)ptr, current_size);
         ASSERT_CORRECTNESS
         return new_ptr;
     } else {

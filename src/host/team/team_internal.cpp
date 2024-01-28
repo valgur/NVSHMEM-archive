@@ -48,6 +48,10 @@ nvshmemi_team_t nvshmemi_team_same_mype_node;
 nvshmemi_team_t nvshmemi_team_same_gpu;
 nvshmemi_team_t nvshmemi_team_gpu_leaders;
 
+nvshmemi_team_t *nvshmemi_device_team_world, *nvshmemi_device_team_shared,
+    *nvshmemi_device_team_node, *nvshmemi_device_team_same_mype_node,
+    *nvshmemi_device_team_same_gpu, *nvshmemi_device_team_gpu_leaders;
+
 nvshmemi_team_t **nvshmemi_team_pool;
 long *nvshmemi_psync_pool;
 long *nvshmemi_sync_counter;
@@ -722,9 +726,6 @@ int nvshmemi_team_init(void) {
     nvshmemi_boot_handle.barrier(
         &nvshmemi_boot_handle); /* To ensure neccessary setup has been done all PEs */
 
-    nvshmemi_team_t *nvshmemi_device_team_world, *nvshmemi_device_team_shared,
-        *nvshmemi_device_team_node, *nvshmemi_device_team_same_mype_node,
-        *nvshmemi_device_team_same_gpu, *nvshmemi_device_team_gpu_leaders;
     CUDA_RUNTIME_CHECK(cudaMalloc((void **)&nvshmemi_device_team_world, sizeof(nvshmemi_team_t)));
     CUDA_RUNTIME_CHECK(cudaMemcpy(nvshmemi_device_team_world, &nvshmemi_team_world,
                                   sizeof(nvshmemi_team_t), cudaMemcpyHostToDevice));
@@ -866,6 +867,12 @@ int nvshmemi_team_finalize(void) {
     nvshmemi_free(device_psync_pool_avail);
     free(team_ret_val);
     nvshmemi_free(device_team_ret_val);
+    cudaFree(nvshmemi_device_team_world);
+    cudaFree(nvshmemi_device_team_shared);
+    cudaFree(nvshmemi_device_team_node);
+    cudaFree(nvshmemi_device_team_same_mype_node);
+    cudaFree(nvshmemi_device_team_same_gpu);
+    cudaFree(nvshmemi_device_team_gpu_leaders);
 
     return 0;
 }

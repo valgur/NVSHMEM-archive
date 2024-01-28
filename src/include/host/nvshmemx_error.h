@@ -112,6 +112,17 @@ enum nvshmemx_status {
         }                                                                               \
     } while (0)
 
+#define NVSHMEMI_CHECK_ERROR_JMP(statement, status, err, label, ...) \
+    do {                                                             \
+        if (nvshmemxi_error_unlikely(statement)) {                   \
+            fprintf(stderr, "%s:%d: ", __FILE__, __LINE__);          \
+            fprintf(stderr, __VA_ARGS__);                            \
+            fprintf(stderr, "\n");                                   \
+            status = err;                                            \
+            goto label;                                              \
+        }                                                            \
+    } while (0)
+
 #define NVSHMEMI_NZ_EXIT(status, ...)                                                          \
     do {                                                                                       \
         if (nvshmemxi_error_unlikely(status != 0)) {                                           \

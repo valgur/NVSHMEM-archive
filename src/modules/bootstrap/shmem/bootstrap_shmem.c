@@ -20,6 +20,7 @@
 static size_t scratch_size;
 static long *scratch;
 static int nvshmem_initialized_shmem = 0;
+int bootstrap_debug_enable = 0;
 
 void bootstrap_shmem_global_exit(int status) { shmem_global_exit(status); }
 
@@ -143,6 +144,8 @@ int nvshmemi_bootstrap_plugin_init(void *arg, bootstrap_handle_t *handle,
     handle->barrier = bootstrap_shmem_barrier;
     handle->global_exit = bootstrap_shmem_global_exit;
     handle->finalize = bootstrap_shmem_finalize;
+    handle->comm_state = NULL;
+    handle->pre_init_ops = NULL;
 
 out:
     return status;

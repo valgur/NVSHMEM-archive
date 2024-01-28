@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <set>
+#include <list>
 
 #include "host/nvshmemx_api.h"
 #include "internal/host/nvshmemi_team.h"
@@ -41,7 +42,7 @@
 #include "internal/host/shared_memory.h"
 
 extern __constant__ nvshmemi_device_state_t nvshmemi_device_state_d;
-static std::set<void *> registered_device_states;
+static std::map<void *, int> registered_device_states;
 static std::set<nvshmemx_device_lib_init_cb> registered_device_state_cb;
 
 static void nvshmemi_init_debug(void);
@@ -50,6 +51,7 @@ static void nvshmemi_init_msg(void);
 struct nvshmemi_cuda_fn_table *nvshmemi_cuda_syms;
 nvshmemi_state_t *nvshmemi_state;
 bootstrap_handle_t nvshmemi_boot_handle;
+nvshmemi_session_t *nvshmemi_default_session = nullptr;
 nvshmemi_pe_dist_t nvshmemi_pe_dist;
 uint64_t *nvshmemi_host_hashes;
 bool nvshmemi_is_nvshmem_bootstrapped = false;
@@ -58,6 +60,7 @@ int nvshmemi_init_counter = 0;
 nvshmem_options_t nvshmem_options;
 int nvshmemi_cuda_driver_version;
 bool nvshmemi_use_cuda_vmm = 0;
+CUmemAllocationHandleType nvshmemi_cuda_mem_handle_type = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 const char *p_err_str;
 int nvshmem_debug_level;
 uint64_t nvshmem_debug_mask = NVSHMEM_INIT;  // Default debug sub-system mask is INIT
@@ -84,27 +87,27 @@ void nvshmemi_get_device_state(void **state) { *state = &nvshmemi_device_state; 
 
 #ifdef NVSHMEM_IBGDA_SUPPORT
 nvshmemi_ibgda_device_state_t nvshmemi_ibgda_device_state;
-static std::set<void *> registered_transport_device_states;
+static std::map<void *, int> registered_transport_device_states;
 void nvshmemi_ibgda_get_device_state(void **state) { *state = &nvshmemi_ibgda_device_state; }
 #endif
 
 static int register_state_ptr(void *common, void *transport) {
     if (registered_device_states.find(common) != registered_device_states.end()) {
-        NVSHMEMI_ERROR_PRINT("Redundant common pointer registered, ignoring.\n");
-        return NVSHMEMX_ERROR_INVALID_VALUE;
+        auto it = registered_device_states.find(common);
+        it->second++;
+    } else {
+        registered_device_states.emplace(common, 1);
     }
-    registered_device_states.emplace(common);
 
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (transport != NULL) {
         if (registered_transport_device_states.find(transport) !=
             registered_transport_device_states.end()) {
-            NVSHMEMI_ERROR_PRINT("Redundant transport pointer registered, ignoring.\n");
-            registered_device_states.erase(common);
-            return NVSHMEMX_ERROR_INVALID_VALUE;
+            auto it = registered_transport_device_states.find(transport);
+            it->second++;
+        } else {
+            registered_transport_device_states.emplace(transport, 1);
         }
-        registered_transport_device_states.emplace(transport);
-    } else {
 #else
     if (transport != NULL) {
         NVSHMEMI_ERROR_PRINT(
@@ -119,35 +122,6 @@ static int register_state_ptr(void *common, void *transport) {
     return 0;
 }
 
-static int unregister_state_ptr(void *common, void *transport) {
-    for (auto it = registered_device_states.cbegin(); it != registered_device_states.cend(); ++it) {
-        if (*it == common) {
-            registered_device_states.erase(it);
-            break;
-        }
-    }
-
-#ifdef NVSHMEM_IBGDA_SUPPORT
-    if (transport != NULL) {
-        for (auto it = registered_transport_device_states.cbegin();
-             it != registered_transport_device_states.cend(); ++it) {
-            if (*it == transport) {
-                registered_transport_device_states.erase(it);
-                num_initialized_device_states--;
-                return NVSHMEMX_SUCCESS;
-            }
-        }
-    } else
-#endif
-
-    {
-        num_initialized_device_states--;
-        return NVSHMEMX_SUCCESS;
-    }
-
-    return NVSHMEMX_ERROR_INVALID_VALUE;
-}
-
 int nvshmemi_update_device_state() {
     int status = 0;
     int iter;
@@ -156,7 +130,7 @@ int nvshmemi_update_device_state() {
     void *transport_device_ptr = NULL;
     while (!registered_device_state_cb.empty()) {
         cb = *(registered_device_state_cb.begin());
-        registered_device_state_cb.erase(registered_device_state_cb.begin());
+        registered_device_state_cb.erase(cb);
         cb(&device_ptr, &transport_device_ptr);
 
         if (device_ptr == NULL) {
@@ -165,6 +139,10 @@ int nvshmemi_update_device_state() {
         }
 
         status = register_state_ptr(device_ptr, transport_device_ptr);
+
+        nvshmemi_init_counter++;
+        device_ptr = NULL;
+        transport_device_ptr = NULL;
     }
 
     if (!nvshmemi_is_device_state_ready ||
@@ -175,7 +153,7 @@ int nvshmemi_update_device_state() {
             iter++;
             nvshmemi_device_state_t *device_state;
             nvshmemi_get_device_state((void **)&device_state);
-            status = cudaMemcpy(*it, (void *)device_state, sizeof(nvshmemi_device_state_t),
+            status = cudaMemcpy((it->first), (void *)device_state, sizeof(nvshmemi_device_state_t),
                                 cudaMemcpyHostToDevice);
             if (status) break;
         }
@@ -188,13 +166,66 @@ int nvshmemi_update_device_state() {
         nvshmemi_ibgda_get_device_state((void **)&ibgda_device_state);
         for (auto it = registered_transport_device_states.cbegin();
              it != registered_transport_device_states.cend(); ++it) {
-            status = cudaMemcpy(*it, (void *)ibgda_device_state,
+            status = cudaMemcpy((it->first), (void *)ibgda_device_state,
                                 sizeof(nvshmemi_ibgda_device_state_t), cudaMemcpyHostToDevice);
             if (status) break;
         }
     }
 #endif
     return status;
+}
+
+static int unregister_state_ptr(void *common, void *transport) {
+    nvshmemi_update_device_state();
+
+    bool device_state_found = false;
+    for (auto it = registered_device_states.cbegin(); it != registered_device_states.cend();) {
+        auto tmp = registered_device_states.find(it->first);
+        if (it->first == common) {
+            if (tmp->second > 1) {
+                tmp->second--;
+            } else {
+                it = registered_device_states.erase(it);
+                num_initialized_device_states--;
+            }
+            device_state_found = true;
+            break;
+        } else {
+            ++it;
+        }
+    }
+
+#ifdef NVSHMEM_IBGDA_SUPPORT
+    bool transport_state_found = false;
+    if (transport != NULL) {
+        for (auto it = registered_transport_device_states.cbegin();
+             it != registered_transport_device_states.cend();) {
+            auto tmp = registered_transport_device_states.find(it->first);
+            if (tmp->first == transport) {
+                if (tmp->second > 1) {
+                    tmp->second--;
+                } else {
+                    it = registered_transport_device_states.erase(it);
+                }
+                transport_state_found = true;
+                break;
+            } else {
+                ++it;
+            }
+        }
+        if (!transport_state_found && device_state_found) {
+            NVSHMEMI_ERROR_PRINT(
+                "Invalid IBGDA handle, but valid device state passed for "
+                "removal. This is not a fatal error, but indicates something "
+                "unexpected is happening. Standard device state removed.\n");
+        }
+    }
+#endif
+    if (device_state_found) {
+        return NVSHMEMX_SUCCESS;
+    }
+
+    return NVSHMEMX_ERROR_INVALID_VALUE;
 }
 
 static int nvshmemi_transport_cap_support_rma(int cap) {
@@ -210,6 +241,100 @@ static int nvshmemi_transport_cap_support_amo(int cap) {
         return 1;
     }
     return 0;
+}
+
+int nvshmemx_get_uniqueid(nvshmemx_uniqueid_t *uid) {
+    int status = 0;
+    nvshmemi_options_init();
+    status = bootstrap_preinit(BOOTSTRAP_UID, &nvshmemi_boot_handle);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "bootstrap pre-initialization failed \n");
+
+    if (nvshmemi_boot_handle.pre_init_ops) {
+        bootstrap_env_attr_t attr = {};
+        attr.uid_session_id = strlen(nvshmemi_options.BOOTSTRAP_UID_SESSION_ID) > 0
+                                  ? const_cast<char *>(nvshmemi_options.BOOTSTRAP_UID_SESSION_ID)
+                                  : nullptr;
+        attr.uid_socket_ifname =
+            strlen(nvshmemi_options.BOOTSTRAP_UID_SOCK_IFNAME) > 0
+                ? const_cast<char *>(nvshmemi_options.BOOTSTRAP_UID_SOCK_IFNAME)
+                : nullptr;
+        attr.uid_socket_family =
+            strlen(nvshmemi_options.BOOTSTRAP_UID_SOCK_FAMILY) > 0
+                ? const_cast<char *>(nvshmemi_options.BOOTSTRAP_UID_SOCK_FAMILY)
+                : nullptr;
+        status = nvshmemi_boot_handle.pre_init_ops->get_unique_id((void *)uid, &attr);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "bootstrap get unique ID failed \n");
+    } else {
+        // Throw an error as network discovery failed or was not performed correctly during preinit
+        status = NVSHMEMX_ERROR_INTERNAL;
+        NVSHMEMI_NZ_ERROR_JMP(
+            status, NVSHMEMI_INVALID_USAGE, out,
+            "Bootstrap lacks support for pre init step, so unable to fetch unique ID");
+    }
+
+out:
+    return (status);
+}
+
+// Marshal and unmarshall UID attribute arguments
+int nvshmemx_set_attr_uniqueid_args(const int myrank, const int nranks,
+                                    const nvshmemx_uniqueid_t *uid,
+                                    nvshmemx_init_attr_t *nvshmem_attr) {
+    assert(nvshmem_attr != NULL);
+    nvshmemx_init_args_t *init_args = (nvshmemx_init_args_t *)(&(nvshmem_attr->args));
+    nvshmemx_uniqueid_args_t *uid_args = &((init_args)->uid_args);
+
+    /* Save to uid_args */
+    uid_args->id = const_cast<nvshmemx_uniqueid_t *>(uid);  // Don't deepcopy as we are saving a ptr
+    uid_args->myrank = myrank;
+    uid_args->nranks = nranks;
+    return (0);
+}
+
+nvshmemx_uniqueid_args_t *nvshmemi_get_attr_uniqueid_args(nvshmemx_init_attr_t *attr) {
+    assert(attr != NULL);
+    nvshmemx_init_args_t *init_args = (nvshmemx_init_args_t *)(&(attr->args));
+    return (&(init_args->uid_args));
+}
+
+int nvshmemi_bootstrap_preinit(int flags) {
+    int status = 0;
+    if (flags & NVSHMEMX_INIT_WITH_MPI_COMM) {
+        status = bootstrap_preinit(BOOTSTRAP_MPI, &nvshmemi_boot_handle);
+    } else if (flags & NVSHMEMX_INIT_WITH_SHMEM) {
+        status = bootstrap_preinit(BOOTSTRAP_SHMEM, &nvshmemi_boot_handle);
+    } else if (flags & NVSHMEMX_INIT_WITH_UNIQUEID) {
+        status = bootstrap_preinit(BOOTSTRAP_UID, &nvshmemi_boot_handle);
+    } else {
+        /* User called nvshmem_init or supplied no flags to nvshmemx_init_attr */
+        if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "PMI") == 0) {
+            status = bootstrap_preinit(BOOTSTRAP_PMI, &nvshmemi_boot_handle);
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "MPI") == 0) {
+            status = bootstrap_preinit(BOOTSTRAP_MPI, &nvshmemi_boot_handle);
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "SHMEM") == 0) {
+            status = bootstrap_preinit(BOOTSTRAP_SHMEM, &nvshmemi_boot_handle);
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "plugin") == 0) {
+            status = bootstrap_preinit(BOOTSTRAP_PLUGIN, &nvshmemi_boot_handle);
+        } else {
+            if (!flags) {
+                /* UID bootstrap only enabled via init flags. So retry with correct API and flags */
+                NVSHMEMI_ERROR_PRINT(
+                    "Missing init flags for bootstrap %s. Retry with nvshmemx_init_attr and "
+                    "non-zero flags\n",
+                    nvshmemi_options.BOOTSTRAP);
+            } else {
+                NVSHMEMI_ERROR_PRINT("Invalid bootstrap '%s'\n", nvshmemi_options.BOOTSTRAP);
+            }
+            status = 1;
+        }
+    }
+
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_preinit failed \n");
+
+out:
+    return (status);
 }
 
 int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr) {
@@ -228,6 +353,10 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr) {
         bootstrap_attr_t boot_attr;
         boot_attr.initialize_shmem = 0;
         status = bootstrap_init(BOOTSTRAP_SHMEM, &boot_attr, &nvshmemi_boot_handle);
+    } else if (flags & NVSHMEMX_INIT_WITH_UNIQUEID) {
+        bootstrap_attr_t boot_attr;
+        boot_attr.uid_args = nvshmemi_get_attr_uniqueid_args(nvshmem_attr);
+        status = bootstrap_init(BOOTSTRAP_UID, &boot_attr, &nvshmemi_boot_handle);
     } else {
         /* User called nvshmem_init or supplied no flags to nvshmemx_init_attr */
         if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "PMI") == 0) {
@@ -244,6 +373,12 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr) {
         }
     }
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_init failed \n");
+    if (nvshmemi_default_session == nullptr) {
+        nvshmemi_default_session = (nvshmemi_session_t *)calloc(sizeof(nvshmemi_session_t), 1);
+        NVSHMEMI_NULL_ERROR_JMP(nvshmemi_default_session, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                "Unable to allocate memory for nvshmem session");
+        nvshmemi_default_session->bootstrap = &nvshmemi_boot_handle;
+    }
 
     mype = nvshmemi_boot_handle.pg_rank;
     npes = nvshmemi_boot_handle.pg_size;
@@ -371,13 +506,13 @@ int nvshmemi_get_cucontext(nvshmemi_state_t *state) {
                  state->cudevice, state->cucontext);
         }
 
-#if CUDA_VERSION >= 12010
         if (nvshmemi_cuda_driver_version >= 12010) {
             unsigned int flags;
+            CUASSERTAPIAVAILABLE(nvshmemi_cuda_syms, cuCtxSetFlags);
             CUCHECK(nvshmemi_cuda_syms, cuCtxGetFlags(&flags));
             CUCHECK(nvshmemi_cuda_syms, cuCtxSetFlags(flags | CU_CTX_SYNC_MEMOPS));
         }
-#endif
+        status = NVSHMEMX_SUCCESS;
 
         // identify device id
         int count;
@@ -661,12 +796,15 @@ static int nvshmemi_determine_mpg_support_level() {
             total_percentage += *((float *)active_percentages + nvshmemi_team_same_gpu.start +
                                   i * nvshmemi_team_same_gpu.stride);
         }
-        if (total_percentage <= 100.0) {
+        if (total_percentage <= 100.0 ||
+            nvshmemi_options.IGNORE_CUDA_MPS_ACTIVE_THREAD_PERCENTAGE) {
             nvshmemi_is_limited_mpg_run = 0;
             INFO(NVSHMEM_INIT,
                  "Multiple PEs per GPU (MPG) detected, MPS is also available, "
-                 "and active thread percentages for PEs on the same GPU add "
-                 "up to be <= 100. Hence full MPG support is available");
+                 "and either active thread percentages for PEs on the same GPU add "
+                 "up to be <= 100 or user has requested to ignore active thread percentage. "
+                 "Hence full MPG support is available. If active thread percentage "
+                 "adds to be more than 100, NVSHMEM synchronizing APIs might deadlock.");
         } else {
             nvshmemi_is_limited_mpg_run = 1;
             INFO(NVSHMEM_INIT,
@@ -727,13 +865,6 @@ static int nvshmemi_setup_limited_mpg_support() {
         CUDA_RUNTIME_CHECK(
             cudaIpcOpenEventHandle(&event, *(cudaIpcEventHandle_t *)&shm->event_handle[i]));
         nvshmemi_state->same_gpu_other_pe_mps_events[counter++] = event;
-    }
-
-    /*Close the shared memory file */
-    if (nvshmemi_team_same_gpu.start == nvshmemi_state->mype) {
-        if (info->shm_fd) {
-            close(info->shm_fd);
-        }
     }
 
 out:
@@ -804,26 +935,24 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
     }
 #if CUDA_VERSION >= 11000
     if (nvshmemi_cuda_driver_version >= 11030 && nvshmemi_options.DISABLE_CUDA_VMM == 0 &&
-        nvshmemi_device_state.symmetric_heap_kind == NVSHMEMI_HEAP_KIND_VIDMEM)
+        nvshmemi_device_state.symmetric_heap_kind == NVSHMEMI_HEAP_KIND_VIDMEM) {
         nvshmemi_use_cuda_vmm = 1;
-    else
+    } else {
         nvshmemi_use_cuda_vmm = 0;
-#endif
+    }
+#endif /* CUDA_VERSION >= 11000 */
     nvshmemi_state->scratch = (int *)calloc(
         nvshmemi_state->npes, sizeof(int)); /*XXX:scratch used by nvshmemi_try_common_init*/
 
     status = nvshmemi_get_cucontext(state);
     NZ_DEBUG_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem get cucontext failed \n");
 
-    nvshmemi_init_counter++;
-    if (nvshmemi_init_counter == 1) {
-        nvshmemi_get_mem_handle(&dev_state_ptr, &transport_dev_state_ptr);
-        NVSHMEMI_NULL_ERROR_JMP(dev_state_ptr, status, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                                "Unable to query pointer information.\n");
-        status = register_state_ptr(dev_state_ptr, transport_dev_state_ptr);
-        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                              "Invalid context pointer passed to nvshmemx_host_init.\n");
-    }
+    nvshmemi_get_mem_handle(&dev_state_ptr, &transport_dev_state_ptr);
+    NVSHMEMI_NULL_ERROR_JMP(dev_state_ptr, status, NVSHMEMX_ERROR_INVALID_VALUE, out,
+                            "Unable to query pointer information.\n");
+    status = register_state_ptr(dev_state_ptr, transport_dev_state_ptr);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
+                          "Invalid context pointer passed to nvshmemid_hostlib_init_attr.\n");
 
     status = nvshmemi_detect_same_device(state);
     NZ_DEBUG_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem detect same device failed \n");
@@ -948,9 +1077,10 @@ int nvshmemx_init_status() {
         return NVSHMEM_STATUS_FULL_MPG;
 }
 
-int nvshmemx_host_init(int requested, int *provided, unsigned int bootstrap_flags,
-                       nvshmemx_init_attr_t *attr, nvshmemi_version_t nvshmem_device_lib_version,
-                       nvshmemx_device_lib_init_cb cb) {
+int nvshmemid_hostlib_init_attr(int requested, int *provided, unsigned int bootstrap_flags,
+                                nvshmemx_init_attr_t *attr,
+                                nvshmemi_version_t nvshmem_device_lib_version,
+                                nvshmemx_device_lib_init_cb cb) {
     int status = 0;
 
     if (nvshmemi_is_version_compatible(nvshmemi_host_lib_version, nvshmem_device_lib_version) !=
@@ -961,11 +1091,14 @@ int nvshmemx_host_init(int requested, int *provided, unsigned int bootstrap_flag
 
     if (cb) {
         registered_device_state_cb.emplace(cb);
+    } else {
+        nvshmemi_init_counter++;
     }
 
     if (!nvshmemi_is_nvshmem_bootstrapped) {
         nvshmemi_options_init();
         nvshmem_nvtx_init();
+        status = nvshmemi_bootstrap_preinit(bootstrap_flags);
     }
 
     NVTX_FUNC_RANGE_IN_GROUP(INIT);
@@ -974,7 +1107,7 @@ int nvshmemx_host_init(int requested, int *provided, unsigned int bootstrap_flag
         NVSHMEMU_THREAD_CS_INIT();
         nvshmemi_init_debug();
 
-        status = nvshmemi_bootstrap(bootstrap_flags, attr);
+        status |= nvshmemi_bootstrap(bootstrap_flags, attr);
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem_bootstrap failed \n");
 
         nvshmemi_init_msg();
@@ -1005,7 +1138,13 @@ int nvshmemx_host_init(int requested, int *provided, unsigned int bootstrap_flag
 out:
     if (status) NVSHMEMU_THREAD_CS_FINALIZE();
 
-    return status;
+    return (status);
+}
+
+int nvshmemx_hostlib_init_attr(unsigned int flags, nvshmemx_init_attr_t *attr) {
+    int provided;
+    return nvshmemid_hostlib_init_attr(NVSHMEM_THREAD_SERIALIZED, &provided, flags, attr,
+                                       nvshmemi_host_lib_version, NULL);
 }
 
 void nvshmem_query_thread(int *provided) { *provided = NVSHMEM_THREAD_SERIALIZED; }
@@ -1021,11 +1160,12 @@ void nvshmem_global_exit(int status) {
      * the proxy and the atexit bootstrap_finalize function.
      */
     nvshmemi_proxy_finalize(nvshmemi_state);
-    nvshmemi_boot_handle.global_exit(status);
+    /** Bootstraps like UID are agnostic of execution environment, so this API is optional */
+    if (nvshmemi_boot_handle.global_exit) nvshmemi_boot_handle.global_exit(status);
 }
 #endif
 
-void nvshmemx_host_finalize(void *device_ctx, void *transport_device_ctx) {
+void nvshmemid_hostlib_finalize(void *device_ctx, void *transport_device_ctx) {
     NVTX_FUNC_RANGE_IN_GROUP(INIT);
 
     int status = 0;
@@ -1033,14 +1173,13 @@ void nvshmemx_host_finalize(void *device_ctx, void *transport_device_ctx) {
     void *dev_state_ptr;
     void *transport_dev_state_ptr = NULL;
 
-    if (nvshmemi_init_counter <= 0) return;
-
     /* It is invalid to pass a NULL device ctx and a valid transport context */
     if (device_ctx) {
         status = unregister_state_ptr(device_ctx, transport_device_ctx);
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                              "Invalid context pointer passed to nvshmemx_host_finalize.\n");
+                              "Invalid context pointer passed to nvshmemid_hostlib_finalize.\n");
     }
+
     nvshmemi_init_counter--;
     if (nvshmemi_init_counter != 0) return;
 
@@ -1048,8 +1187,13 @@ void nvshmemx_host_finalize(void *device_ctx, void *transport_device_ctx) {
     NVSHMEMI_NULL_ERROR_JMP(dev_state_ptr, status, NVSHMEMX_ERROR_INVALID_VALUE, out,
                             "Unable to query pointer information.\n");
     status = unregister_state_ptr(dev_state_ptr, transport_dev_state_ptr);
-    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                          "Invalid context pointer passed to nvshmemx_host_finalize.\n");
+    if (status) {
+        INFO(NVSHMEM_INIT,
+             "Unable to "
+             "unregister internal state. finalized before initialization "
+             "complete\n");
+        status = 0;
+    }
 
     INFO(NVSHMEM_INIT, "[%d] in nvshmem_finalize:", pid);
 
@@ -1129,6 +1273,8 @@ out:
         exit(-1);
     }
 }
+
+void nvshmemx_hostlib_finalize() { nvshmemid_hostlib_finalize(NULL, NULL); }
 
 static void nvshmemi_init_debug() {
     const char *nvshmem_debug = nvshmemi_options.DEBUG;

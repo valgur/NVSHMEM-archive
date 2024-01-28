@@ -1,4 +1,37 @@
 ===============================================================================
+				Changes in 2.11.0
+===============================================================================
+
+# Added support for Multi-node NVLink (MNNVL) systems when all nodes are
+connected via NVLink
+# Added support for multiple NICs per PE in IBGDA transport. It can be enabled
+using NVSHMEM_IBGDA_ENABLE_MULTI_PORT runtime environment variable.
+# Added support for sockets-based bootstrapping of NVSHMEM jobs through the Unique ID based initialization API
+# Added nvshmemx_hostlib_init API that allows NVSHMEM host library only initialization.
+This is useful for applications that only use NVSHMEM host API and need not
+statically link NVSHMEM device library.
+# Added support for dynamically linking NVSHMEM library through dlopen()
+# Introduces a new nvshmemx_vendor_get_version_info API to query the
+NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION
+for API consumers
+# Added NVSHMEM_IGNORE_CUDA_MPS_ACTIVE_THREAD_PERCENTAGE runtime environment variable
+to get the full API support with Multi-Process per GPU (MPG) runs even if
+CUDA_MPS_ACTIVE_THREAD_PERCENTAGE is not set to 1/PEs.
+# Improved throughpout and bandwidth performance of IBGDA transport 
+# Fixed hang that was introduced in CUDA VMM path on DGX1V systems in NVSHMEM 2.10.1
+# Improved performance of nvshmemx_quiet_on_stream() API with IBGDA transport
+by leveraging multiple CUDA threads to perform IBGDA quiet operation
+# Fixed hang with minimal proxy service in nvshmem_global_exit on Grace Hopper system due to memory reordering
+of load/stores
+# Enable relaxed ordering by default for InfiniBand transports. Added runtime
+environment variable NVSHMEM_IB_ENABLE_RELAXED_ORDERING to disable it.
+# Increased number of threads launched to execute nvshmemx_<typename>_<op>_reduce_on_stream() API
+# Added runtime environment variable NVSHMEM_DISABLE_DMABUF to disable use of dmabuf
+# Fix in IBGDA transport when doing very large message transfers beyond the maximum
+size supported by a single NIC work request
+# Fixed several minor bugs and memory leaks
+
+===============================================================================
 				Changes in 2.10.1
 ===============================================================================
 

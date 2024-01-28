@@ -22,7 +22,12 @@
 #include "host/nvshmemx_error.h"
 #include "modules/transport/transport.h"
 #include "internal/util.h"
+#include "internal/host/nvmlwrap.h"
 
+void *nvml_handle;
+struct nvml_function_table nvml_ftable;
+
+bool nvshmemi_is_mnnvl_run = 0;
 int nvshmemt_p2p_init(nvshmem_transport_t *transport);
 
 int nvshmemt_p2p_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id, int transport_count,
@@ -43,8 +48,8 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
     char remote_pcie_bus_id[NVSHMEM_PCIE_DBF_BUFFER_LEN];
 
     nvmlReturn_t nvml_status;
-    nvmlDevice_t remote_device;
     nvmlDevice_t local_device;
+    nvmlDevice_t remote_device;
     nvmlGpuP2PStatus_t stat;
 
     INFO(NVSHMEM_TRANSPORT,
@@ -83,18 +88,20 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
             }
 
             status = 0;
-            nvml_status = nvmlDeviceGetHandleByPciBusId(remote_pcie_bus_id, &remote_device);
+            nvml_status =
+                nvml_ftable.nvmlDeviceGetHandleByPciBusId(remote_pcie_bus_id, &remote_device);
             if (nvml_status != NVML_SUCCESS) {
                 INFO(NVSHMEM_TRANSPORT, "Unable to dereference device by UUID using NVML.\n");
                 goto out;
             }
-            nvml_status = nvmlDeviceGetHandleByPciBusId(p2p_state->pcie_bdf, &local_device);
+            nvml_status =
+                nvml_ftable.nvmlDeviceGetHandleByPciBusId(p2p_state->pcie_bdf, &local_device);
             if (nvml_status != NVML_SUCCESS) {
                 INFO(NVSHMEM_TRANSPORT, "Unable to dereference device by UUID using NVML.\n");
                 goto out;
             }
-            nvml_status = nvmlDeviceGetP2PStatus(local_device, remote_device,
-                                                 NVML_P2P_CAPS_INDEX_READ, &stat);
+            nvml_status = nvml_ftable.nvmlDeviceGetP2PStatus(local_device, remote_device,
+                                                             NVML_P2P_CAPS_INDEX_READ, &stat);
             if (nvml_status != NVML_SUCCESS) {
                 *access = 0;
                 INFO(
@@ -105,8 +112,8 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
             } else if (stat == NVML_P2P_STATUS_OK) {
                 *access |= NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD;
             }
-            nvml_status = nvmlDeviceGetP2PStatus(local_device, remote_device,
-                                                 NVML_P2P_CAPS_INDEX_WRITE, &stat);
+            nvml_status = nvml_ftable.nvmlDeviceGetP2PStatus(local_device, remote_device,
+                                                             NVML_P2P_CAPS_INDEX_WRITE, &stat);
             if (nvml_status != NVML_SUCCESS) {
                 *access = 0;
                 INFO(NVSHMEM_TRANSPORT,
@@ -117,8 +124,8 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
             } else if (stat == NVML_P2P_STATUS_OK) {
                 *access |= NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST;
             }
-            nvml_status = nvmlDeviceGetP2PStatus(local_device, remote_device,
-                                                 NVML_P2P_CAPS_INDEX_ATOMICS, &stat);
+            nvml_status = nvml_ftable.nvmlDeviceGetP2PStatus(local_device, remote_device,
+                                                             NVML_P2P_CAPS_INDEX_ATOMICS, &stat);
             if (nvml_status != NVML_SUCCESS) {
                 INFO(NVSHMEM_TRANSPORT, "Unable to get atomic status using NVML.\n");
             } else if (stat == NVML_P2P_STATUS_OK) {
@@ -182,7 +189,7 @@ int nvshmemt_p2p_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
              length);
         status = CUPFN(nvshmemi_cuda_syms,
                        cuMemExportToShareableHandle((void *)mem_handle, *handle_in,
-                                                    CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0));
+                                                    nvshmemi_cuda_mem_handle_type, 0));
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "cuMemExportToShareableHandle failed \n");
     } else
@@ -222,10 +229,16 @@ int nvshmemt_p2p_map(void **buf, size_t size, nvshmem_mem_handle_t *mem_handle) 
             status = NVSHMEMX_ERROR_INTERNAL;
             goto out;
         }
-        int fd = *(int *)mem_handle;
-        status = CUPFN(nvshmemi_cuda_syms,
-                       cuMemImportFromShareableHandle(&peer_handle, (void *)(uintptr_t)fd,
-                                                      CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+        if (nvshmemi_cuda_mem_handle_type == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+            int fd = *(int *)mem_handle;
+            status = CUPFN(nvshmemi_cuda_syms,
+                           cuMemImportFromShareableHandle(&peer_handle, (void *)(uintptr_t)fd,
+                                                          nvshmemi_cuda_mem_handle_type));
+        } else {
+            status = CUPFN(nvshmemi_cuda_syms,
+                           cuMemImportFromShareableHandle(&peer_handle, (void *)mem_handle,
+                                                          nvshmemi_cuda_mem_handle_type));
+        }
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "cuMemImportFromShareableHandle failed state->device_id : %d \n",
                               gpu_device_id);
@@ -294,9 +307,12 @@ int nvshmemt_p2p_finalize(nvshmem_transport_t transport) {
         free(p2p_state);
     }
 
-    nvml_status = nvmlShutdown();
-    if (nvml_status != NVML_SUCCESS) {
-        INFO(NVSHMEM_TRANSPORT, "Unable to stop nvml library in NVSHMEM.");
+    if (nvml_handle) {
+        nvml_status = nvml_ftable.nvmlShutdown();
+        if (nvml_status != NVML_SUCCESS) {
+            INFO(NVSHMEM_TRANSPORT, "Unable to stop NVML library in NVSHMEM.");
+        }
+        nvshmemi_nvml_ftable_fini(&nvml_ftable, &nvml_handle);
     }
 
     free(transport);
@@ -306,9 +322,16 @@ int nvshmemt_p2p_finalize(nvshmem_transport_t transport) {
 
 int nvshmemt_p2p_init(nvshmem_transport_t *t) {
     int status = 0;
-    nvmlReturn_t nvml_status;
+    int nvml_status;
     struct nvshmem_transport *transport;
     transport_p2p_state_t *p2p_state;
+    int flag = false;
+    nvmlDevice_t local_device;
+    cudaDeviceProp prop;
+    nvmlGpuFabricInfoV_t fabricInfo = {}, fabricInfo1 = {}, fabricInfo2 = {};
+    fabricInfo.version = nvmlGpuFabricInfo_v2;
+    fabricInfo1.version = nvmlGpuFabricInfo_v2;
+    fabricInfo2.version = nvmlGpuFabricInfo_v2;
 
     transport = (struct nvshmem_transport *)malloc(sizeof(struct nvshmem_transport));
     NVSHMEMI_NULL_ERROR_JMP(transport, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -368,12 +391,6 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
                               "nvshmemi_get_pcie_attrs failed \n");
     }
 
-    /* start NVML Library */
-    nvml_status = nvmlInit();
-    if (nvml_status != NVML_SUCCESS) {
-        INFO(NVSHMEM_INIT, "Unable to open nvml. Some topology detection will be disabled.");
-    }
-
     transport->host_ops.can_reach_peer = nvshmemt_p2p_can_reach_peer;
     transport->host_ops.get_mem_handle = nvshmemt_p2p_get_mem_handle;
     transport->host_ops.release_mem_handle = nvshmemt_p2p_release_mem_handle;
@@ -389,6 +406,72 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
 
     *t = transport;
 
+    /* start NVML Library */
+    nvml_status = nvshmemi_nvml_ftable_init(&nvml_ftable, &nvml_handle);
+    if (nvml_status != NVML_SUCCESS) {
+        INFO(NVSHMEM_INIT, "Unable to open NVML. Some features will be disabled.");
+        goto out;
+    }
+
+    nvml_status = nvml_ftable.nvmlInit();
+    if (nvml_status != NVML_SUCCESS) {
+        INFO(NVSHMEM_INIT, "Unable to initialize NVML. Some features will be disabled.");
+        goto out;
+    }
+
+    cudaGetDeviceProperties(&prop, p2p_state->device_id);
+    if (nvshmemi_cuda_driver_version >= 12040 && prop.major >= 9) {
+        nvml_status = nvml_ftable.nvmlDeviceGetHandleByPciBusId(p2p_state->pcie_bdf, &local_device);
+        NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                              "nvmlDeviceGetHandleByPciBusId failed \n");
+
+        if (nvml_ftable.nvmlDeviceGetGpuFabricInfoV == NULL) {
+            NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "nvmlDeviceGetGpuFabricInfoV not found \n");
+        }
+        fabricInfo.clusterUuid[0] = '\0';
+        nvml_status = nvml_ftable.nvmlDeviceGetGpuFabricInfoV(local_device, &fabricInfo);
+        NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                              "nvmlDeviceGetGpuFabricInfoV() failed... Detection of MNNVL "
+                              "environment will not be attempted");
+
+        nvshmemi_state->pe_info[nvshmemi_state->mype].fabricInfo = fabricInfo;
+        status = nvshmemi_boot_handle.allgather(
+            (void *)&nvshmemi_state->pe_info[nvshmemi_state->mype], (void *)nvshmemi_state->pe_info,
+            sizeof(nvshmem_transport_pe_info_t), &nvshmemi_boot_handle);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "allgather of pe_info failed \n");
+
+        nvshmemi_is_mnnvl_run = 1;
+        fabricInfo1 = nvshmemi_state->pe_info[0].fabricInfo;
+        if (fabricInfo1.state < NVML_GPU_FABRIC_STATE_COMPLETED ||
+            fabricInfo1.clusterUuid[0] == '\0')
+            nvshmemi_is_mnnvl_run = 0;
+        for (int i = 1; i < nvshmemi_state->npes && nvshmemi_is_mnnvl_run; i++) {
+            fabricInfo2 = nvshmemi_state->pe_info[i].fabricInfo;
+            if (!((fabricInfo2.state == NVML_GPU_FABRIC_STATE_COMPLETED) &&
+                  (fabricInfo2.clusterUuid[0] != '\0') &&
+                  (memcmp(fabricInfo1.clusterUuid, fabricInfo2.clusterUuid,
+                          NVML_GPU_FABRIC_UUID_LEN) == 0) &&
+                  (fabricInfo1.cliqueId == fabricInfo2.cliqueId))) {
+                nvshmemi_is_mnnvl_run = 0;
+                break;
+            }
+        }
+        if (nvshmemi_is_mnnvl_run) {
+            INFO(NVSHMEM_INIT, "This is a MNNVL run");
+        }
+        CUPFN(nvshmemi_cuda_syms,
+              cuDeviceGetAttribute(
+                  &flag,
+                  static_cast<CUdevice_attribute>(CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED),
+                  p2p_state->device_id));
+        nvshmemi_cuda_mem_handle_type =
+            (nvshmemi_is_mnnvl_run && flag)
+                ? static_cast<CUmemAllocationHandleType>(CU_MEM_HANDLE_TYPE_FABRIC)
+                : CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+    }
+
 out:
     if (status) {
         if (transport) {
@@ -403,6 +486,13 @@ out:
                 free(p2p_state);
             }
         }
+    }
+    if ((status || nvml_status) && nvml_ftable.nvmlShutdown != NULL) {
+        nvml_status = nvml_ftable.nvmlShutdown();
+        if (nvml_status != NVML_SUCCESS) {
+            INFO(NVSHMEM_INIT, "Unable to stop NVML library in NVSHMEM.");
+        }
+        nvshmemi_nvml_ftable_fini(&nvml_ftable, &nvml_handle);
     }
     return status;
 }

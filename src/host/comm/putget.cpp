@@ -268,8 +268,7 @@ static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t des
             localdesc.ptr = lptr;
             localdesc.handle = NULL;
             NVSHMEMU_UNMAPPED_PTR_PE_TRANSLATE(remotedesc.ptr, rptr, pe);
-            remotedesc.offset = (char *)rptr - (char *)(nvshmemi_state->heap_base);
-            nvshmemi_get_remote_mem_handle(&remotedesc.handle, NULL, rptr, pe, t);
+            nvshmemi_get_remote_mem_handle(&remotedesc, NULL, rptr, pe, t);
             status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytesdesc, 0);
             if (unlikely(status)) {
                 NVSHMEMI_ERROR_PRINT("aborting due to error in process_channel_dma\n");

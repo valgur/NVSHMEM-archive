@@ -17,11 +17,11 @@
 #define ROUNDUP(x, y) (DIVUP((x), (y)) * (y))
 
 struct nvshmemt_ib_common_mem_handle {
+    struct ibv_mr *mr;
+    void *buf;
     int fd;
     uint32_t lkey;
     uint32_t rkey;
-    struct ibv_mr *mr;
-    void *buf;
     bool local_only;
 };
 
@@ -30,7 +30,8 @@ int nvshmemt_ib_common_nv_peer_mem_available();
 int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable, struct ibv_pd *pd,
                                       nvshmem_mem_handle_t *mem_handle, void *buf, size_t length,
                                       bool local_only, bool dmabuf_support,
-                                      struct nvshmemi_cuda_fn_table *table, int log_level);
+                                      struct nvshmemi_cuda_fn_table *table, int log_level,
+                                      bool relaxed_ordering);
 
 int nvshmemt_ib_common_release_mem_handle(struct nvshmemt_ibv_function_table *ftable,
                                           nvshmem_mem_handle_t *mem_handle, int log_level);

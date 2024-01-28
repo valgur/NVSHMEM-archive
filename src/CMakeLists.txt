@@ -4,8 +4,8 @@ include(CheckSourceCompiles)
 
 check_compiler_flag(CUDA -t4 NVCC_THREADS)
 
-set(BOOTSTRAP_VERSION_MAJOR 2)
-set(BOOTSTRAP_VERSION_MINOR 8)
+set(BOOTSTRAP_VERSION_MAJOR 3)
+set(BOOTSTRAP_VERSION_MINOR 0)
 set(BOOTSTRAP_VERSION_PATCH 0)
 
 # Start bootstrap definitions
@@ -87,6 +87,24 @@ if(NVSHMEM_SHMEM_SUPPORT)
   )
 endif()
 
+# Always compile uid bootstrap as no dependency on external sources or libraries
+add_library(nvshmem_bootstrap_uid SHARED)
+set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_uid)
+set_target_properties(nvshmem_bootstrap_uid
+                      PROPERTIES C_STANDARD 11
+                      CXX_STANDARD_REQUIRED ON
+                      CXX_STANDARD 11)
+target_sources(nvshmem_bootstrap_uid PRIVATE modules/bootstrap/uid/ncclSocket/ncclsocket_socket.cpp
+					     modules/bootstrap/uid/bootstrap_uid.cpp)
+target_include_directories(nvshmem_bootstrap_uid
+		     PRIVATE include
+			     include/modules/bootstrap
+			     include/modules/common
+			     modules/bootstrap/uid
+			     modules/bootstrap/uid/ncclSocket
+           include/common
+)
+
 set_target_properties(${ACTIVE_BOOTSTRAPS}
                       PROPERTIES PREFIX ""
                       LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib"
@@ -104,7 +122,7 @@ add_library(
   nvshmem_device STATIC
 )
 
-set(INTERLIB_VERSION_MAJOR 1)
+set(INTERLIB_VERSION_MAJOR 2)
 set(INTERLIB_VERSION_MINOR 0)
 set(INTERLIB_VERSION_PATCH 0)
 
@@ -208,6 +226,7 @@ set(NVSHMEM_HOST_SOURCES
     host/init/cudawrap.cpp
     host/init/init.cu
     host/init/init_nvtx.cpp
+    host/init/nvmlwrap.cpp
     host/init/query_host.cpp
     host/launch/collective_launch.cpp
     host/mem/mem.cpp
@@ -261,18 +280,24 @@ target_include_directories(
             $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(nvshmem PRIVATE CUDA::cudart_static nvidia-ml)
-target_link_libraries(nvshmem_device PRIVATE CUDA::cudart_static nvidia-ml)
-target_link_libraries(nvshmem_host PRIVATE CUDA::cudart_static nvidia-ml)
+target_link_libraries(nvshmem PRIVATE CUDA::cudart_static)
+target_link_libraries(nvshmem_device PRIVATE CUDA::cudart_static)
+target_link_libraries(nvshmem_host PRIVATE CUDA::cudart_static)
 nvshmem_library_set_base_config(nvshmem)
 nvshmem_library_set_base_config(nvshmem_host)
 nvshmem_library_set_base_config(nvshmem_device)
 ## End generic variable configuration
 
 ## Start transports
-set(TRANSPORT_VERSION_MAJOR 1)
+set(TRANSPORT_VERSION_MAJOR 2)
 set(TRANSPORT_VERSION_MINOR 0)
 set(TRANSPORT_VERSION_PATCH 0)
+
+check_source_compiles(C
+  "#include <infiniband/verbs.h>
+  int main(void) { int x = IBV_ACCESS_RELAXED_ORDERING; return 1; }"
+  HAVE_IBV_ACCESS_RELAXED_ORDERING
+)
 
 set(ACTIVE_TRANSPORTS)
 
@@ -316,6 +341,9 @@ if(NVSHMEM_IBRC_SUPPORT)
                    modules/transport/common/transport_gdr_common.cpp
     )
   endif()
+  if(HAVE_IBV_ACCESS_RELAXED_ORDERING)
+    target_compile_definitions(nvshmem_transport_ibrc PRIVATE HAVE_IBV_ACCESS_RELAXED_ORDERING=${HAVE_IBV_ACCESS_RELAXED_ORDERING})
+  endif()
   set(ACTIVE_TRANSPORTS ${ACTIVE_TRANSPORTS} nvshmem_transport_ibrc)
 endif()
 
@@ -337,6 +365,9 @@ if(NVSHMEM_IBDEVX_SUPPORT)
   target_link_options(nvshmem_transport_ibdevx PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
   target_include_directories(nvshmem_transport_ibdevx PRIVATE include include/modules/common include/modules/transport modules/transport/common)
   target_link_libraries(nvshmem_transport_ibdevx PRIVATE ${MLX5_lib} CUDA::cudart_static)
+  if(HAVE_IBV_ACCESS_RELAXED_ORDERING)
+    target_compile_definitions(nvshmem_transport_ibdevx PRIVATE HAVE_IBV_ACCESS_RELAXED_ORDERING=${HAVE_IBV_ACCESS_RELAXED_ORDERING})
+  endif()
   set(ACTIVE_TRANSPORTS ${ACTIVE_TRANSPORTS} nvshmem_transport_ibdevx)
 endif()
 
@@ -361,6 +392,9 @@ if(NVSHMEM_IBGDA_SUPPORT)
   target_link_libraries(nvshmem_transport_ibgda PRIVATE ${MLX5_lib} CUDA::cudart_static)
   if(HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED)
     target_compile_definitions(nvshmem_transport_ibgda PRIVATE HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED=${HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED})
+  endif()
+  if(HAVE_IBV_ACCESS_RELAXED_ORDERING)
+    target_compile_definitions(nvshmem_transport_ibgda PRIVATE HAVE_IBV_ACCESS_RELAXED_ORDERING=${HAVE_IBV_ACCESS_RELAXED_ORDERING})
   endif()
   set(ACTIVE_TRANSPORTS ${ACTIVE_TRANSPORTS} nvshmem_transport_ibgda)
 endif()
@@ -453,7 +487,7 @@ add_library(NVSHMEM::nvshmem ALIAS nvshmem)
 add_executable(nvshmem-info)
 target_sources(nvshmem-info PRIVATE bin/nvshmem-info.cpp)
 set_target_properties(nvshmem-info PROPERTIES CXX_STANDARD_REQUIRED ON CXX_STANDARD 11 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
-target_link_libraries(nvshmem-info CUDA::cudart_static CUDA::cuda_driver nvidia-ml nvshmem)
+target_link_libraries(nvshmem-info CUDA::cudart_static CUDA::cuda_driver nvshmem)
 target_include_directories(nvshmem-info PRIVATE include)
 # End nvshmem-info definitions.
 
@@ -509,6 +543,16 @@ set(SHAREEXPORTS
     modules/bootstrap/pmi/bootstrap_pmi.cpp
     modules/bootstrap/pmix/bootstrap_pmix.c
     modules/bootstrap/shmem/bootstrap_shmem.c
+    modules/bootstrap/uid/ncclSocket/ncclsocket_socket.cpp
+    modules/bootstrap/uid/bootstrap_uid_remap.h
+    modules/bootstrap/uid/ncclSocket/ncclsocket_nccl.h
+    modules/bootstrap/uid/ncclSocket/ncclsocket_utils.h
+    modules/bootstrap/uid/ncclSocket/ncclsocket_param.h
+    modules/bootstrap/uid/ncclSocket/ncclsocket_debug.h
+    modules/bootstrap/uid/ncclSocket/ncclsocket_checks.h
+    modules/bootstrap/uid/ncclSocket/ncclsocket_socket.hpp
+    modules/bootstrap/uid/bootstrap_uid.cpp
+    modules/bootstrap/uid/bootstrap_uid_types.hpp
     host/bootstrap/bootstrap.cpp
 )
 

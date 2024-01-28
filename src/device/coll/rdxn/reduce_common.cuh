@@ -37,9 +37,7 @@ void nvshmemi_call_rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const 
         CUDA_RUNTIME_CHECK(cudaOccupancyMaxPotentialBlockSize(
             &tmp, (int *)&nvshmemi_reduce_maxblocksize[map_pair], rdxn_on_stream_kernel<TYPE, OP>));
     }
-    size_t num_threads_per_block = (nvshmemi_reduce_maxblocksize[map_pair] > nreduce)
-                                       ? nreduce
-                                       : nvshmemi_reduce_maxblocksize[map_pair];
+    size_t num_threads_per_block = nvshmemi_reduce_maxblocksize[map_pair];
     int num_blocks = 1;
     rdxn_on_stream_kernel<TYPE, OP>
         <<<num_blocks, num_threads_per_block, 0, stream>>>(team, dest, source, nreduce);

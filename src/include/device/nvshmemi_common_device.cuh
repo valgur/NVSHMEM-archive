@@ -24,6 +24,23 @@
 #include "device/pt-to-pt/proxy_device.cuh"
 
 #ifdef __CUDA_ARCH__
+template <threadgroup_t SCOPE>
+__device__ inline void nvshmemi_quiet() {
+    int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    if ((nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST)) {
+        nvshmemi_transfer_quiet<SCOPE>(true);
+    } else {
+        if (!myIdx)
+            __threadfence_system(); /* Use __threadfence_system instead of __threadfence
+                                     for data visibility in case of intra-node GPU transfers */
+        nvshmemi_threadgroup_sync<SCOPE>();
+    }
+}
+
+template __device__ void nvshmemi_quiet<NVSHMEMI_THREADGROUP_THREAD>();
+template __device__ void nvshmemi_quiet<NVSHMEMI_THREADGROUP_WARP>();
+template __device__ void nvshmemi_quiet<NVSHMEMI_THREADGROUP_BLOCK>();
+
 template <typename T>
 __device__ inline int nvshmemi_test(volatile T *ivar, int cmp, T cmp_value) {
     int return_value = 0;

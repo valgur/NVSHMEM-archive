@@ -631,14 +631,7 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_SOME_VECTOR)
 #undef NVSHMEM_WAIT_UNTIL_SOME_VECTOR
 
 /* nvshmem_quiet and nvshmem_fence API */
-__device__ inline void nvshmem_quiet() {
-    if ((nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST)) {
-        nvshmemi_transfer_quiet<NVSHMEMI_THREADGROUP_THREAD>(true);
-    } else {
-        __threadfence_system(); /* Use __threadfence_system instead of __threadfence
-                                 for data visibility in case of intra-node GPU transfers */
-    }
-}
+__device__ inline void nvshmem_quiet() { nvshmemi_quiet<NVSHMEMI_THREADGROUP_THREAD>(); }
 
 __device__ inline void nvshmem_fence() {
     if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST) {

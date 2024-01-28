@@ -57,10 +57,6 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
     bool transport_selected = false;
     nvshmem_local_buf_cache_t *tmp_cache_ptr = NULL;
 
-    status = nvshmemi_local_mem_cache_init(&tmp_cache_ptr);
-    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
-                          "Unable to allocate transport mem cache.\n");
-
     if (!state->transports)
         state->transports =
             (nvshmem_transport_t *)calloc(NVSHMEM_TRANSPORT_COUNT, sizeof(nvshmem_transport_t));
@@ -68,6 +64,9 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
     transports = (nvshmem_transport_t *)state->transports;
 
     if (!nvshmemi_options.DISABLE_P2P) {
+        status = nvshmemi_local_mem_cache_init(&tmp_cache_ptr);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
+                              "Unable to allocate transport mem cache.\n");
         status = nvshmemt_p2p_init(&transports[index]);
         if (!status) {
             transports[index]->boot_handle = &nvshmemi_boot_handle;
@@ -76,10 +75,10 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
             transports[index]->index = index;
             transports[index]->log2_cumem_granularity = log2_cumem_granularity;
             transports[index]->cache_handle = tmp_cache_ptr;
-            tmp_cache_ptr = NULL;
             if (transports[index]->max_op_len == 0) transports[index]->max_op_len = SIZE_MAX;
             index++;
         } else {
+            nvshmemi_local_mem_cache_fini(tmp_cache_ptr);
             NVSHMEMI_ERROR_PRINT("init failed for transport: P2P");
             status = 0;
         }
@@ -95,7 +94,7 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
              nvshmemi_options.REMOTE_TRANSPORT);
     } else {
         status = snprintf(transport_object_file, transport_object_file_len,
-                          "nvshmem_transport_ibrc.so.1");
+                          "nvshmem_transport_ibrc.so.%d", NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION);
         if (status > 0 && status < transport_object_file_len) {
             transport_selected = true;
             goto transport_init;
@@ -113,7 +112,7 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
              nvshmemi_options.REMOTE_TRANSPORT);
     } else {
         status = snprintf(transport_object_file, transport_object_file_len,
-                          "nvshmem_transport_ucx.so.1");
+                          "nvshmem_transport_ucx.so.%d", NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION);
         if (status > 0 && status < transport_object_file_len) {
             transport_selected = true;
             goto transport_init;
@@ -131,7 +130,7 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
              nvshmemi_options.REMOTE_TRANSPORT);
     } else {
         status = snprintf(transport_object_file, transport_object_file_len,
-                          "nvshmem_transport_ibdevx.so.1");
+                          "nvshmem_transport_ibdevx.so.%d", NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION);
         if (status > 0 && status < transport_object_file_len) {
             transport_selected = true;
             goto transport_init;
@@ -148,8 +147,9 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
         INFO(NVSHMEM_INIT, "Libfabric transport skipped in favor of: %s\n",
              nvshmemi_options.REMOTE_TRANSPORT);
     } else {
-        status = snprintf(transport_object_file, transport_object_file_len,
-                          "nvshmem_transport_libfabric.so.1");
+        status =
+            snprintf(transport_object_file, transport_object_file_len,
+                     "nvshmem_transport_libfabric.so.%d", NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION);
         if (status > 0 && status < transport_object_file_len) {
             transport_selected = true;
             goto transport_init;
@@ -165,10 +165,6 @@ transport_init:
         goto transport_fail;
     }
 
-    status = nvshmemi_local_mem_cache_init(&tmp_cache_ptr);
-    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
-                          "Unable to allocate transport mem cache.\n");
-
     transport_lib = dlopen(transport_object_file, RTLD_NOW);
     if (transport_lib == NULL) {
         WARN("Unable to open the %s transport. %s\n", transport_object_file, dlerror());
@@ -182,6 +178,10 @@ transport_init:
         WARN("Unable to get info from %s transport.\n", transport_object_file);
         goto transport_fail;
     }
+
+    status = nvshmemi_local_mem_cache_init(&tmp_cache_ptr);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
+                          "Unable to allocate transport mem cache.\n");
 
     status = init_fn(&transports[index], nvshmemi_cuda_syms, NVSHMEM_TRANSPORT_INTERFACE_VERSION);
     if (!status) {
@@ -205,24 +205,28 @@ transport_init:
         transports[index]->my_pe = nvshmemi_state->mype;
         transports[index]->n_pes = nvshmemi_state->npes;
         transports[index]->cache_handle = (void *)tmp_cache_ptr;
-        tmp_cache_ptr = NULL;
         if (transports[index]->max_op_len == 0) transports[index]->max_op_len = SIZE_MAX;
         state->atomic_host_endian_min_size = transports[index]->atomic_host_endian_min_size;
         index++;
     } else {
+        nvshmemi_local_mem_cache_fini(tmp_cache_ptr);
         dlclose(transport_lib);
         transport_lib = NULL;
-        NVSHMEMI_ERROR_PRINT("init failed for remote transport: %s",
-                             nvshmemi_options.REMOTE_TRANSPORT);
+        /* non-fatal error, so changing to a warning */
+        NVSHMEMI_WARN_PRINT("init failed for remote transport: %s",
+                            nvshmemi_options.REMOTE_TRANSPORT);
         status = 0;
     }
 transport_fail:
 #ifdef NVSHMEM_IBGDA_SUPPORT
     if (nvshmemi_options.IB_ENABLE_IBGDA) {
-        status = nvshmemi_local_mem_cache_init(&tmp_cache_ptr);
-        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
-                              "Unable to allocate transport mem cache.\n");
-        transport_lib_IBGDA = dlopen("nvshmem_transport_ibgda.so.1", RTLD_NOW);
+        status = snprintf(transport_object_file, transport_object_file_len,
+                          "nvshmem_transport_ibgda.so.%d", NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION);
+        if (status < 0 || status > transport_object_file_len) {
+            WARN("Unable to open the %s transport. %s\n", transport_object_file, dlerror());
+            goto out;
+        }
+        transport_lib_IBGDA = dlopen(transport_object_file, RTLD_NOW);
         if (transport_lib_IBGDA == NULL) {
             WARN("Unable to open the %s transport. %s\n", transport_object_file, dlerror());
             goto out;
@@ -235,6 +239,11 @@ transport_fail:
             WARN("Unable to get info from %s transport.\n", transport_object_file);
             goto out;
         }
+
+        status = nvshmemi_local_mem_cache_init(&tmp_cache_ptr);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
+                              "Unable to allocate transport mem cache.\n");
+
         status =
             init_fn(&transports[index], nvshmemi_cuda_syms, NVSHMEM_TRANSPORT_INTERFACE_VERSION);
         if (!status) {
@@ -251,7 +260,6 @@ transport_fail:
             transports[index]->my_pe = nvshmemi_state->mype;
             transports[index]->n_pes = nvshmemi_state->npes;
             transports[index]->cache_handle = (void *)tmp_cache_ptr;
-            tmp_cache_ptr = NULL;
             nvshmemi_ibgda_get_device_state(&transports[index]->type_specific_shared_state);
             if (transports[index]->max_op_len == 0) transports[index]->max_op_len = SIZE_MAX;
             state->atomic_host_endian_min_size = transports[index]->atomic_host_endian_min_size;
@@ -259,6 +267,7 @@ transport_fail:
             index++;
         } else {
             NVSHMEMI_ERROR_PRINT("init failed for transport: IBGDA");
+            nvshmemi_local_mem_cache_fini(tmp_cache_ptr);
             dlclose(transport_lib_IBGDA);
             transport_lib_IBGDA = NULL;
             status = 0;
@@ -274,7 +283,12 @@ transport_fail:
     }
 out:
     state->num_initialized_transports = index;
-
+    if (status > 0) {
+        for (int idx = 0; idx <= index; idx++) {
+            nvshmemi_local_mem_cache_fini(
+                (nvshmem_local_buf_cache_t *)transports[idx]->cache_handle);
+        }
+    }
     return status;
 }
 
@@ -294,8 +308,9 @@ int nvshmemi_transport_finalize(nvshmemi_state_t *state) {
                 nvshmemi_device_state.ibgda_is_initialized = true;
             }
             if (transports[i]->cache_handle) {
+                nvshmemi_transport_buffer_unregister_all(transports[i]);
                 nvshmemi_local_mem_cache_fini(
-                    transports[i], (nvshmem_local_buf_cache_t *)transports[i]->cache_handle);
+                    (nvshmem_local_buf_cache_t *)transports[i]->cache_handle);
             }
 
             status = transports[i]->host_ops.finalize(transports[i]);
@@ -325,32 +340,62 @@ int nvshmemi_setup_connections(nvshmemi_state_t *state) {
     nvshmem_transport_t tcurr;
 
     for (int i = 0; i < state->num_initialized_transports; i++) {
-        int selected_device;
-        // assumes symmetry of transport list at all PEs
-        if ((state->transport_bitmap) & (1 << i)) {
-            tcurr = transports[i];
-            if (!(tcurr->attr & NVSHMEM_TRANSPORT_ATTR_CONNECTED)) continue;
-            if (tcurr->n_devices <= 1) {
-                /* return the index of the first available device.
-                 * -1 if no devices found.
-                 */
-                selected_device = tcurr->n_devices - 1;
-            } else if (nvshmemi_options.ENABLE_NIC_PE_MAPPING) {
-                selected_device = nvshmemi_state->mype_node % tcurr->n_devices;
-                INFO(NVSHMEM_INIT, "NVSHMEM_ENABLE_NIC_PE_MAPPING = 1, setting dev_id = %d",
-                     selected_device);
-            } else {
-                nvshmemi_get_device_by_distance(&selected_device, tcurr);
-                INFO(NVSHMEM_INIT, "NVSHMEM_ENABLE_NIC_PE_MAPPING = 0, setting dev_id = %d",
-                     selected_device);
-            }
-            status = tcurr->host_ops.connect_endpoints(tcurr, selected_device);
-            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                  "endpoint connection failed \n");
-            status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
-            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "barrier failed \n");
-            status = nvshmemi_update_device_state();
+        if (!((state->transport_bitmap) & (1 << i))) continue;
+        tcurr = transports[i];
+
+        if (!(tcurr->attr & NVSHMEM_TRANSPORT_ATTR_CONNECTED)) {
+            continue;
         }
+
+        int devices_temp = tcurr->n_devices / state->npes_node;
+        if (devices_temp == 0) devices_temp = 1;
+        const int max_devices_per_pe = devices_temp;
+        int selected_devices[max_devices_per_pe];
+        int found_devices = 0;
+
+        for (int j = 0; j < max_devices_per_pe; j++) {
+            selected_devices[j] = -1;
+        }
+
+        // assumes symmetry of transport list at all PEs
+        if (tcurr->n_devices <= 1) {
+            /* return the index of the first available device.
+             * -1 if no devices found.
+             */
+            selected_devices[0] = tcurr->n_devices - 1;
+            found_devices++;
+        } else if (nvshmemi_options.ENABLE_NIC_PE_MAPPING) {
+            selected_devices[0] =
+                nvshmemi_state->mype_node % (tcurr->n_devices > 0 ? tcurr->n_devices : 1);
+            INFO(NVSHMEM_INIT, "NVSHMEM_ENABLE_NIC_PE_MAPPING = 1, setting dev_id = %d",
+                 selected_devices[0]);
+            found_devices++;
+        } else {
+            nvshmemi_get_devices_by_distance(selected_devices, max_devices_per_pe, tcurr);
+            for (int i = 0; i < max_devices_per_pe; i++) {
+                if (selected_devices[i] == -1) {
+                    break;
+                }
+                found_devices++;
+                INFO(NVSHMEM_INIT,
+                     "NVSHMEM_ENABLE_NIC_PE_MAPPING = 0, device %d setting dev_id = %d", i,
+                     selected_devices[i]);
+            }
+        }
+
+        /* setting n_devices to 0 is the transports way of
+         * letting us know it's managing devices internally.
+         */
+        if (tcurr->n_devices > 0 && selected_devices[0] == -1) {
+            NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "No devices selected.\n");
+        }
+
+        status = tcurr->host_ops.connect_endpoints(tcurr, selected_devices, found_devices);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "connect EPS failed \n");
+        status = nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "barrier failed \n");
+
+        status = nvshmemi_update_device_state();
     }
 
 out:

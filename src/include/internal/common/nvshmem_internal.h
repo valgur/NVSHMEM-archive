@@ -9,6 +9,7 @@
 
 #include "common/nvshmem_build_options.h"
 #include "modules/common/nvshmemi_bootstrap_defines.h"
+#include "internal/host/custom_malloc.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include "modules/transport/cudawrap.h"
@@ -60,8 +61,9 @@ typedef struct nvshmem_local_buf_cache {
     pthread_rwlock_t buffer_lock;
 } nvshmem_local_buf_cache_t;
 
+void nvshmemi_transport_buffer_unregister_all(nvshmem_transport_t transport);
 int nvshmemi_local_mem_cache_init(nvshmem_local_buf_cache_t **cache);
-void nvshmemi_local_mem_cache_fini(nvshmem_transport_t transport, nvshmem_local_buf_cache_t *cache);
+void nvshmemi_local_mem_cache_fini(nvshmem_local_buf_cache_t *cache);
 
 typedef struct {
     int multi_processor_count;
@@ -87,6 +89,7 @@ typedef struct nvshmemi_shared_memory_info_t {
     int shm_fd;
 } nvshmemi_shared_memory_info;
 
+class mspace;
 typedef struct nvshmemi_state_dec {
     /*PE state*/
     int mype;
@@ -107,7 +110,7 @@ typedef struct nvshmemi_state_dec {
 
     void **peer_heap_base_actual;
     void **peer_heap_base;
-    void *heap_mspace;
+    mspace *heap_mspace;
     /* variables for VMM */
 #if CUDA_VERSION >= 11000
     vector<CUmemGenericAllocationHandle> cumem_handles;
@@ -163,6 +166,11 @@ typedef struct {
     int error_checks;
 } nvshmem_options_t;
 
+typedef struct nvshmemi_session {
+    void *bootstrap;
+    /* volatile uint32_t *abort_flag; This feature needs CUDA support in nvshmem */
+} nvshmemi_session_t;
+
 extern struct nvshmemi_cuda_fn_table *nvshmemi_cuda_syms;
 extern nvshmemi_state_t *nvshmemi_state;
 extern bootstrap_handle_t nvshmemi_boot_handle;
@@ -172,10 +180,13 @@ extern int nvshmemi_cuda_driver_version;
 extern int nvshmemi_use_nccl;
 extern bool nvshmemi_is_mps_available;
 extern bool nvshmemi_use_cuda_vmm;
+extern CUmemAllocationHandleType nvshmemi_cuda_mem_handle_type;
+extern bool nvshmemi_is_mnnvl_run;
 extern int nccl_version;
 extern long nvshmemi_max_teams;
 extern bool nvshmemi_is_nvshmem_initialized;
 extern bool nvshmemi_is_nvshmem_bootstrapped;
+extern nvshmemi_session_t *nvshmemi_default_session;
 extern bool nvshmemi_is_mpg_run;
 extern bool nvshmemi_is_limited_mpg_run;
 extern size_t cumem_granularity;
@@ -199,10 +210,10 @@ void nvshmemi_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_o
                                   cudaStream_t cstrm);
 extern "C" {
 __device__ void nvshmemi_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe);
+void nvshmemi_get_mem_handle(void **dev_state_ptr, void **transport_dev_state_ptr);
 }
 
 void nvshmemi_barrier_all();
-void nvshmemi_get_mem_handle(void **dev_state_ptr, void **transport_dev_state_ptr);
 int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level);
 int nvshmemi_proxy_finalize(nvshmemi_state_t *state);
 
@@ -258,17 +269,18 @@ static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, 
     if (len) *len = *len < max_len ? *len : max_len;
 }
 
-static inline void nvshmemi_get_remote_mem_handle(nvshmem_mem_handle_t **handle, size_t *len,
-                                                  void *addr, int pe, int transport_idx) {
+static inline void nvshmemi_get_remote_mem_handle(rma_memdesc_t *handle, size_t *len, void *addr,
+                                                  int pe, int transport_idx) {
     size_t offset = (char *)addr - (char *)nvshmemi_state->heap_base;
     size_t addr_idx = offset >> log2_cumem_granularity;
     size_t handle_idx = std::get<0>(nvshmemi_state->idx_in_handles[addr_idx]);
     void *handle_start_addr = std::get<1>(nvshmemi_state->idx_in_handles[addr_idx]);
     size_t handle_size = std::get<2>(nvshmemi_state->idx_in_handles[addr_idx]);
 
-    *handle =
+    handle->handle =
         &nvshmemi_state
              ->handles[handle_idx][pe * nvshmemi_state->num_initialized_transports + transport_idx];
+    handle->offset = (char *)addr - (char *)handle_start_addr;
     if (len) *len = handle_size - ((char *)addr - (char *)handle_start_addr);
 }
 /* rptr is symmetric address on the local pe
@@ -293,8 +305,7 @@ static inline void nvshmemi_process_multisend_rma(struct nvshmem_transport *tcur
         local_chunk_size = size_remaining;
         remote_chunk_size = size_remaining;
         nvshmemi_get_local_mem_handle(&localdesc.handle, &local_chunk_size, lptr, transport_id);
-        nvshmemi_get_remote_mem_handle(&remotedesc.handle, &remote_chunk_size, rptr, pe,
-                                       transport_id);
+        nvshmemi_get_remote_mem_handle(&remotedesc, &remote_chunk_size, rptr, pe, transport_id);
         chunk_size = min(local_chunk_size, min(remote_chunk_size, size_remaining));
         bytes.nelems = chunk_size;
         status = tcurr->host_ops.rma(tcurr, pe, verb, &remotedesc, &localdesc, bytes, is_proxy);

@@ -8,7 +8,8 @@
 #define __TOPO_H
 #include "internal/common/nvshmem_internal.h"
 
-int nvshmemi_get_device_by_distance(int *device, struct nvshmem_transport *tcurr);
+int nvshmemi_get_devices_by_distance(int *device_arr, int max_dev_per_pe,
+                                     struct nvshmem_transport *tcurr);
 int nvshmemi_detect_same_device(nvshmemi_state_t *state);
 int nvshmemi_build_transport_map(nvshmemi_state_t *state);
 

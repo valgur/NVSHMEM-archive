@@ -9,6 +9,16 @@
 
 #include <cuda.h>
 
+#if CUDA_VERSION < 12040
+#define CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED 128
+#define CU_MEM_HANDLE_TYPE_FABRIC 0x8
+#define CU_CTX_SYNC_MEMOPS 0x80
+#endif
+
+#if CUDA_VERSION < 12010
+typedef CUresult(CUDAAPI *PFN_cuCtxSetFlags_v12010)(int flags);
+#endif
+
 #if CUDART_VERSION >= 11030
 #include <cudaTypedefs.h>
 #else
@@ -26,10 +36,8 @@ typedef CUresult(CUDAAPI *PFN_cuDeviceGet_v2000)(CUdevice *device, int ordinal);
 typedef CUresult(CUDAAPI *PFN_cuCtxSetCurrent_v4000)(CUcontext ctx);
 typedef CUresult(CUDAAPI *PFN_cuCtxGetDevice_v2000)(CUdevice *device);
 typedef CUresult(CUDAAPI *PFN_cuCtxGetCurrent_v4000)(CUcontext *pctx);
-typedef CUresult(CUDAAPI *PFN_cuCtxGetFlags_v7000)(int *flags);
-#if CUDA_VERSION >= 12010
+typedef CUresult(CUDAAPI *PFN_cuCtxGetFlags_v7000)(unsigned int *flags);
 typedef CUresult(CUDAAPI *PFN_cuCtxSetFlags_v12010)(int flags);
-#endif
 typedef CUresult(CUDAAPI *PFN_cuDevicePrimaryCtxRetain_v7000)(CUcontext *pctx, CUdevice dev);
 typedef CUresult(CUDAAPI *PFN_cuCtxSynchronize_v2000)();
 typedef CUresult(CUDAAPI *PFN_cuModuleGetGlobal_v3020)(CUdeviceptr *dptr, size_t *bytes,
@@ -76,9 +84,7 @@ struct nvshmemi_cuda_fn_table {
     DEFINE_SYM(cuDevicePrimaryCtxRetain, 7000)
     DEFINE_SYM(cuCtxGetCurrent, 4000)
     DEFINE_SYM(cuCtxGetFlags, 7000)
-#if CUDA_VERSION >= 12010
     DEFINE_SYM(cuCtxSetFlags, 12010)
-#endif
 #if CUDA_VERSION >= 11070
     DEFINE_SYM(cuMemGetHandleForAddressRange, 11070)  // DMA-BUF support
 #endif
@@ -113,6 +119,13 @@ struct nvshmemi_cuda_fn_table {
             fprintf(stderr, "Cuda failure '%s'", errStr);    \
         }                                                    \
         assert(err == CUDA_SUCCESS);                         \
+    } while (false)
+
+#define CUASSERTAPIAVAILABLE(table, cmd) \
+    do {                                 \
+        if (table->pfn_##cmd == NULL) {  \
+            assert(false);               \
+        }                                \
     } while (false)
 
 // Check CUDA PFN driver calls

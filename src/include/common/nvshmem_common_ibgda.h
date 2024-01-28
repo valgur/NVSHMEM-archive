@@ -19,6 +19,9 @@
 #define NVSHMEMI_IBGDA_MAX_CONST_RKEYS 64
 #define NVSHMEMI_IBGDA_MAX_CONST_DCTS 128
 
+/* This is determined by the size of nvshmem_mem_handle_t*/
+#define NVSHMEMI_IBGDA_MAX_DEVICES_PER_PE 15
+
 typedef enum {
     NVSHMEMI_IBGDA_DEVICE_QP_TYPE_DCI = 1,
     NVSHMEMI_IBGDA_DEVICE_QP_TYPE_DCT = 2,
@@ -29,15 +32,16 @@ typedef enum {
     NVSHMEMI_IBGDA_DEVICE_QP_MAP_TYPE_CTA = 0,
     NVSHMEMI_IBGDA_DEVICE_QP_MAP_TYPE_SM,
     NVSHMEMI_IBGDA_DEVICE_QP_MAP_TYPE_WARP,
-    NVSHMEMI_IBGDA_DEVICE_QP_MAP_TYPE_DCT
+    NVSHMEMI_IBGDA_DEVICE_QP_MAP_TYPE_DCT,
+    NVSHMEMI_IBGDA_DEVICE_QP_MAP_TYPE_INVALID
 } nvshmemi_ibgda_device_qp_map_type_t;
 
 typedef struct {
     void *cqe;
-    uint64_t *cons_head;
-    uint64_t *cons_tail;
-    uint64_t *wqe_head;
-    uint64_t *wqe_tail;
+    uint64_t *prod_idx;
+    uint64_t *cons_idx;
+    uint64_t *resv_head;
+    uint64_t *ready_head;
     uint32_t cqn;
     uint32_t ncqes;
     uint32_t qpn;
@@ -51,12 +55,12 @@ typedef struct {
     int post_send_lock;
     struct {
         // All indexes are in wqebb unit
-        uint64_t wqe_head;   // next not-yet-reserved wqe idx
-        uint64_t wqe_tail;   // next not-yet-posted-but-submitted wqe idx
-        uint64_t cons_head;  // num wqes that have been posted
-        uint64_t cons_tail;  // num wqes that have been polled
-        uint64_t get_head;   // last wqe idx + 1 with a "fetch" operation (g, get, amo_fetch)
-        uint64_t get_tail;   // last wqe idx + 1 polled with cst; get_tail > get_head is possible
+        uint64_t resv_head;   // last reserved wqe idx + 1
+        uint64_t ready_head;  // last ready wqe idx + 1
+        uint64_t prod_idx;    // posted wqe idx + 1 (producer index + 1)
+        uint64_t cons_idx;    // polled wqe idx + 1 (consumer index + 1)
+        uint64_t get_head;    // last wqe idx + 1 with a "fetch" operation (g, get, amo_fetch)
+        uint64_t get_tail;    // last wqe idx + 1 polled with cst; get_tail > get_head is possible
     } tx_wq;
     struct {
         uint64_t head;
@@ -67,6 +71,7 @@ typedef struct {
 typedef struct nvshmemi_ibgda_device_qp {
     nvshmemi_ibgda_device_qp_type_t qp_type;
     uint32_t qpn;
+    uint32_t dev_idx;
     struct {
         uint32_t nslots;  // num slots for fetch; always a power of 2
         void *buf;        // first NVSHMEMI_IBGDA_IBUF_SLOT_SIZE is for non-fetch
@@ -86,11 +91,11 @@ typedef struct nvshmemi_ibgda_device_qp {
 typedef struct mlx5_wqe_av nvshmemi_ibgda_device_dct_t;
 
 typedef struct nvshmemi_ibgda_device_local_only_mhandle {
-    __be32 lkey;
+    bool is_sysmem_scope;
     uint64_t start;
     uint64_t end;
-    bool is_sysmem_scope;
     struct nvshmemi_ibgda_device_local_only_mhandle *next;
+    __be32 lkeys[NVSHMEMI_IBGDA_MAX_DEVICES_PER_PE];
 } nvshmemi_ibgda_device_local_only_mhandle_t;
 
 typedef struct {
@@ -104,15 +109,18 @@ typedef struct {
     uint32_t num_exclusive_dcis;
     nvshmemi_ibgda_device_qp_map_type_t dci_map_type;
     uint32_t ndcts_per_pe;
+    uint32_t num_qp_groups;
     uint32_t num_dct_groups;
     uint32_t num_rc_per_pe;
     nvshmemi_ibgda_device_qp_map_type_t rc_map_type;
     uint32_t num_requests_in_batch; /* always a power of 2 */
+    int num_devices_initialized;
     bool nic_buf_on_gpumem;
     bool support_half_av_seg;
     bool may_skip_cst;
 
     struct {
+        uint8_t *qp_group_switches;
         nvshmemi_ibgda_device_cq_t *cqs;  // For both dcis and rcs. CQs for DCIs come first.
         nvshmemi_ibgda_device_qp_t *dcis;
         nvshmemi_ibgda_device_qp_t *rcs;

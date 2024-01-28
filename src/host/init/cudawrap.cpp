@@ -19,8 +19,10 @@
 #include <stdlib.h>
 
 #include "modules/transport/cudawrap.h"
+#include "modules/transport/env_defs_internal.h"
 #include "internal/common/debug.h"
 #include "internal/error_codes_internal.h"
+#include "internal/util.h"
 
 static enum {
     cudaUninitialized,
@@ -66,9 +68,7 @@ static int cudaPfnFuncLoader(struct nvshmemi_cuda_fn_table *table) {
     LOAD_SYM(table, cuDevicePrimaryCtxRetain, 7000, , 0);
     LOAD_SYM(table, cuCtxGetCurrent, 4000, , 0);
     LOAD_SYM(table, cuCtxGetFlags, 7000, , 0);
-#if CUDA_VERSION >= 12010
     LOAD_SYM(table, cuCtxSetFlags, 12010, , 1);
-#endif
 #if CUDA_VERSION >= 11070
     LOAD_SYM(table, cuMemGetHandleForAddressRange, 11070, , 1);  // DMA-BUF support
 #endif
@@ -97,16 +97,15 @@ int nvshmemi_cuda_library_init(struct nvshmemi_cuda_fn_table *table) {
      * Load CUDA driver library
      */
     char path[1024];
-    char *nvshmemCudaPath = getenv("NVSHMEM_CUDA_PATH");
-    if (nvshmemCudaPath == NULL)
+    if (!nvshmemi_options.CUDA_PATH_provided)
         snprintf(path, 1024, "%s", "libcuda.so");
     else
-        snprintf(path, 1024, "%s/%s", nvshmemCudaPath, "libcuda.so");
+        snprintf(path, 1024, "%s/%s", nvshmemi_options.CUDA_PATH, "libcuda.so");
 
     cudaLib = dlopen(path, RTLD_LAZY);
     if (cudaLib == NULL) {
-        WARN("Failed to find CUDA library in %s (NVSHMEM_CUDA_PATH=%s)", nvshmemCudaPath,
-             nvshmemCudaPath);
+        WARN("Failed to find CUDA library in %s (NVSHMEM_CUDA_PATH=%s)", path,
+             nvshmemi_options.CUDA_PATH);
         goto error;
     }
 

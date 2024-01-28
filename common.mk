@@ -68,10 +68,10 @@ NVSHMEM_ENABLE_ALL_DEVICE_INLINING ?= 0
 
 MPI_LIBS := $(NVSHMEM_LMPI)
 SHMEM_LIBS := $(NVSHMEM_LSHMEM)
-LDFLAGS := -L$(CUDA_LIB) -lcudart_static -L$(CUDA_DRV) -lnvidia-ml -Xlinker --enable-new-dtags -Xlinker -rpath='$$ORIGIN'
+LDFLAGS := -L$(CUDA_LIB) -lcudart_static -L$(CUDA_DRV) -Xlinker --enable-new-dtags -Xlinker -rpath='$$ORIGIN'
 TESTCUFLAGS  := -dc -ccbin $(CXX) -std=c++11 -Xcompiler -fPIC
-TESTLDFLAGS_NO_NVSHMEM := -ccbin $(CXX) -std=c++11 -lcuda -L$(CUDA_LIB) -L$(CUDA_DRV) -lnvidia-ml -lnvrtc -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
-TESTLDFLAGS := -ccbin $(CXX) -std=c++11 -lcuda -L$(CUDA_LIB) -L$(CUDA_DRV) -lnvidia-ml -lnvrtc -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
+TESTLDFLAGS_NO_NVSHMEM := -ccbin $(CXX) -std=c++11 -lcuda -L$(CUDA_LIB) -L$(CUDA_DRV) -lnvrtc -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
+TESTLDFLAGS := -ccbin $(CXX) -std=c++11 -lcuda -L$(CUDA_LIB) -L$(CUDA_DRV) -lnvrtc -L$(NVSHMEM_HOME)/lib -Xlinker -rpath=$(NVSHMEM_HOME)/lib
 ifeq ($(NVSHMEM_TEST_STATIC_LIB), 1)
 TESTLDFLAGS = $(TESTLDFLAGS_NO_NVSHMEM) -lnvshmem
 else
@@ -107,12 +107,14 @@ TESTCUFLAGS += $(NVCC_GENCODE)
 ifeq ($(NVSHMEM_SHMEM_SUPPORT), 1)
 TESTINC += -I$(SHMEM_HOME)/include -DNVSHMEMTEST_SHMEM_SUPPORT
 TESTLDFLAGS += -L$(SHMEM_HOME)/lib $(SHMEM_LIBS)
+TESTLDFLAGS_NO_NVSHMEM += -L$(SHMEM_HOME)/lib $(SHMEM_LIBS)
 endif
 TESTINC += -I$(NVSHMEM_HOME)/include
 
 ifeq ($(NVSHMEM_MPI_SUPPORT), 1)
 TESTINC += -I$(MPI_HOME)/include -DNVSHMEMTEST_MPI_SUPPORT
 TESTLDFLAGS += -L$(MPI_HOME)/lib $(MPI_LIBS)
+TESTLDFLAGS_NO_NVSHMEM += -L$(MPI_HOME)/lib $(MPI_LIBS)
 endif
 
 ifeq ($(NVSHMEM_LIBFABRIC_SUPPORT), 1)

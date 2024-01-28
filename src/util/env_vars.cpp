@@ -23,8 +23,19 @@
 #include "common/nvshmem_common.cuh"  // IWYU pragma: keep
 
 struct nvshmemi_options_s nvshmemi_options;
+bool nvshmemi_options_inited = false;
 
-int nvshmemi_options_init(void) { return nvshmemi_env_options_init(&nvshmemi_options); }
+int nvshmemi_options_init(void) {
+    int ret = 0;
+    if (!nvshmemi_options_inited) {
+        ret = nvshmemi_env_options_init(&nvshmemi_options);
+        nvshmemi_options_inited = true;
+        return (ret);
+    } else {
+        /* Options already inited */
+        return (ret);
+    }
+}
 
 static void nvshmemi_options_print_heading(const char *h, int style) {
     switch (style) {

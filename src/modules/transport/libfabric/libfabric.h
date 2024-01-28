@@ -153,7 +153,6 @@ typedef struct {
     void *local_mem_ptr;
     nvshmemt_libfabric_domain_name_t *domain_names;
     int num_domains;
-    int next_key;
     nvshmemt_libfabric_provider provider;
     int log_level;
     struct nvshmemi_cuda_fn_table *table;

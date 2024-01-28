@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include "cuda.h"
 #include <cuda_runtime.h>
+#include <nvml.h>
 
 /* This header, along with the six below, comprise
  * the ABI for transport modules.
@@ -65,11 +66,43 @@ typedef enum {
     NVSHMEM_TRANSPORT_LIB_CODE_IBGDA = 1,
 } nvshmem_transport_inline_lib_code_type_t;
 
+/* Copied from CUDA 12.4 NVML header. */
+#if ((NVML_API_VERSION < 12) || (CUDA_VERSION < 12040))
+
+#ifndef NVML_GPU_FABRIC_STATE_COMPLETED
+#define NVML_GPU_FABRIC_STATE_COMPLETED 16
+#endif
+
+#ifndef nvmlGpuFabricInfo_v2
+#define nvmlGpuFabricInfo_v2 (unsigned int)(sizeof(nvmlGpuFabricInfo_v2_t) | (2 << 24U))
+#endif
+
+#ifndef NVML_GPU_FABRIC_UUID_LEN
+#define NVML_GPU_FABRIC_UUID_LEN 80
+#endif
+
+typedef unsigned char nvmlGpuFabricState_t;
+typedef struct {
+    unsigned int version;  //!< Structure version identifier (set to \ref nvmlGpuFabricInfo_v2)
+    unsigned char
+        clusterUuid[NVML_GPU_FABRIC_UUID_LEN];  //!< Uuid of the cluster to which this GPU belongs
+    nvmlReturn_t
+        status;  //!< Error status, if any. Must be checked only if state returns "complete".
+    unsigned int cliqueId;       //!< ID of the fabric clique to which this GPU belongs
+    nvmlGpuFabricState_t state;  //!< Current state of GPU registration process
+    unsigned int healthMask;     //!< GPU Fabric health Status Mask
+} nvmlGpuFabricInfo_v2_t;
+
+typedef nvmlGpuFabricInfo_v2_t nvmlGpuFabricInfoV_t;
+#endif
+/* end NVML Header defs. */
+
 typedef struct nvshmem_transport_pe_info {
     pcie_id_t pcie_id;
     int pe;
     uint64_t hostHash;
     cudaUUID_t gpu_uuid;
+    nvmlGpuFabricInfoV_t fabricInfo;
 } nvshmem_transport_pe_info_t;
 
 typedef struct rma_verb {
@@ -100,15 +133,13 @@ typedef struct amo_verb {
 } amo_verb_t;
 
 typedef struct amo_memdesc {
-    void *ptr;
-    uint64_t offset;
+    rma_memdesc_t remote_memdesc;
     uint64_t retflag;
     void *retptr;
     void *valptr;
     void *cmpptr;
     uint64_t val;
     uint64_t cmp;
-    nvshmem_mem_handle_t *handle;
     nvshmem_mem_handle_t *ret_handle;
 } amo_memdesc_t;
 
@@ -128,7 +159,8 @@ typedef int (*quiet_handle)(struct nvshmem_transport *tcurr, int pe, int is_prox
 struct nvshmem_transport_host_ops {
     int (*can_reach_peer)(int *access, nvshmem_transport_pe_info_t *peer_info,
                           struct nvshmem_transport *transport);
-    int (*connect_endpoints)(struct nvshmem_transport *t, int selected_dev_id);
+    int (*connect_endpoints)(struct nvshmem_transport *tcurr, int *selected_dev_ids,
+                             int num_selected_devs);
     int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t *mem_handle_in,
                           void *buf, size_t size, struct nvshmem_transport *transport,
                           bool local_only);

@@ -8,6 +8,7 @@
 
 #include "host/nvshmem_api.h"
 #include "common/nvshmem_constants.h"
+#include "common/nvshmem_version.h"
 #include "internal/common/nvshmem_internal.h"
 #include "common/nvshmem_types.h"
 #include "modules/common/nvshmemi_bootstrap_defines.h"
@@ -29,6 +30,12 @@ void nvshmem_info_get_name(char *name) {
 void nvshmem_info_get_version(int *major, int *minor) {
     *major = NVSHMEM_MAJOR_VERSION;
     *minor = NVSHMEM_MINOR_VERSION;
+}
+
+void nvshmemx_vendor_get_version_info(int *major, int *minor, int *patch) {
+    *major = NVSHMEM_VENDOR_MAJOR_VERSION;
+    *minor = NVSHMEM_VENDOR_MINOR_VERSION;
+    *patch = NVSHMEM_VENDOR_PATCH_VERSION;
 }
 
 int nvshmemx_my_pe(nvshmemx_team_t team) { return nvshmem_team_my_pe((nvshmem_team_t)team); }

@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2016-2021, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2016-2023, NVIDIA CORPORATION. All rights reserved.
 #
 # See COPYRIGHT for license information
 #
@@ -67,6 +67,8 @@ NVCUFLAGS  += -Xcompiler -fPIC -ccbin $(CXX) $(NVCC_GENCODE) -D__STDC_LIMIT_MACR
 ifneq ($(NVSHMEM_PMIX_SUPPORT), 1)
 # Don't allow PMIX to be set as default unless it's in the build
 NVSHMEM_DEFAULT_PMIX := 0
+else
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVSHMEM_PMIX_SUPPORT\\n"
 endif
 
 ifeq ($(NVSHMEM_ENV_ALL), 1)
@@ -181,6 +183,10 @@ ifneq ($(cppver),)
 BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define NVTX_DISABLE\\n"
 $(info ${cppver})
 endif
+
+HAVE_IBV_ACCESS_RELAXED_ORDERING := $(shell sh ./scripts/test_HAVE_IBV_ACCESS_RELAXED_ORDERING.sh $(CXX) "$(CXXFLAGS)")
+BUILD_OPTIONS_STR:=${BUILD_OPTIONS_STR}"\#define HAVE_IBV_ACCESS_RELAXED_ORDERING $(HAVE_IBV_ACCESS_RELAXED_ORDERING)\\n"
+
 endif
 endif
 
@@ -242,6 +248,7 @@ PLUGINEXPORTS := src/modules/bootstrap/pmix/bootstrap_pmix.c \
                  src/modules/bootstrap/pmi/bootstrap_pmi.cpp \
                  src/modules/bootstrap/mpi/bootstrap_mpi.c \
                  src/modules/bootstrap/shmem/bootstrap_shmem.c \
+                 src/modules/bootstrap/uid/bootstrap_uid.cpp \
                  src/include/modules/bootstrap/bootstrap_util.h \
                  src/include/modules/bootstrap/nvshmemi_bootstrap.h \
                  src/include/modules/common/nvshmemi_bootstrap_defines.h
@@ -293,6 +300,7 @@ HOSTLIBSRCFILES += host/coll/cpu_coll.cpp \
                    host/init/init.cu \
                    host/init/cudawrap.cpp \
                    host/init/init_nvtx.cpp \
+                   host/init/nvmlwrap.cpp \
                    host/init/query_host.cpp \
                    host/launch/collective_launch.cpp \
                    host/mem/mem.cpp \
@@ -460,6 +468,12 @@ SHMEM_PLUGIN_TARGET   := $(SHMEM_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR).$(BOOTSTR
 PLUGINS    += $(LIBDIR)/$(SHMEM_PLUGIN_TARGET)
 endif
 
+UID_PLUGIN := nvshmem_bootstrap_uid.so
+UID_PLUGIN_SONAME := $(UID_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR))
+UID_PLUGIN_TARGET   := $(UID_PLUGIN:%=%.$(BOOTSTRAP_VERSION_MAJOR).$(BOOTSTRAP_VERSION_MINOR).$(BOOTSTRAP_VERSION_PATCH))
+PLUGINS    += $(LIBDIR)/$(UID_PLUGIN_TARGET)
+
+
 .PHONY: lib 
 lib : $(INCTARGETS) $(LIBDIR)/$(DEVICELIBTARGET) $(LIBDIR)/$(HOSTLIBTARGET) $(LIBDIR)/$(LIBTARGET) $(PLUGINS) $(PLUGINEXPORTTARGETS) $(TRANSPORTEXPORTTARGETS) $(TRANSPORTINCEXPORTTARGETS) $(TRANSPORTS) $(BINDIR)/nvshmem-info
 
@@ -493,6 +507,14 @@ $(PLUGINSDIR)/%: src/modules/bootstrap/mpi/%
 	cp -f $< $@
 
 $(PLUGINSDIR)/%: src/modules/bootstrap/shmem/%
+	@mkdir -p $(PLUGINSDIR)
+	cp -f $< $@
+
+$(PLUGINSDIR)/%: src/modules/bootstrap/uid/%
+	@mkdir -p $(PLUGINSDIR)
+	cp -f $< $@
+
+$(PLUGINSDIR)/uid/ncclSocket/%: src/modules/bootstrap/uid/ncclSocket/%
 	@mkdir -p $(PLUGINSDIR)
 	cp -f $< $@
 
@@ -555,6 +577,12 @@ $(LIBDIR)/$(PMI2_PLUGIN_TARGET): src/modules/bootstrap/pmi/bootstrap_pmi.cpp $(B
 	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(PMI2_PLUGIN_TARGET) -fpic -Xlinker --version-script=nvshmem_bootstrap.sym -DNVSHMEM_BUILD_PMI2 -I$(INCDIR) $(BOOTSTRAPINC) -Isrc/include -Isrc/modules/bootstrap/pmi/pmi-2 $< -o $@ $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/pmi-2/pmi2_api.o $(OBJDIR_NVSHMEM)/modules/bootstrap/pmi/pmi-2/pmi2_util.o
 	ln -sf $(PMI2_PLUGIN_SONAME) $(LIBDIR)/$(PMI2_PLUGIN)
 	ln -sf $(PMI2_PLUGIN_TARGET) $(LIBDIR)/$(PMI2_PLUGIN_SONAME)
+
+$(LIBDIR)/$(UID_PLUGIN_TARGET): src/modules/bootstrap/uid/bootstrap_uid.cpp $(BUILT_HEADERS) $(OBJDIR_NVSHMEM)/modules/bootstrap/uid/ncclSocket/ncclsocket_socket.o
+	@mkdir -p $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(UID_PLUGIN_TARGET) -fpic -I$(INCDIR) $(BOOTSTRAPINC) -Isrc/include -Isrc/include/common -Isrc/modules/bootstrap/uid -Isrc/modules/bootstrap/uid/ncclSocket $< -o $@ $(OBJDIR_NVSHMEM)/modules/bootstrap/uid/ncclSocket/ncclsocket_socket.o
+	ln -sf $(UID_PLUGIN_SONAME) $(LIBDIR)/$(UID_PLUGIN)
+	ln -sf $(UID_PLUGIN_TARGET) $(LIBDIR)/$(UID_PLUGIN_SONAME)
 
 ifeq ($(NVSHMEM_PMIX_SUPPORT), 1)
 $(LIBDIR)/$(PMIX_PLUGIN_TARGET): src/modules/bootstrap/pmix/bootstrap_pmix.c $(BUILT_HEADERS)
@@ -681,6 +709,7 @@ $(OBJDIR_NVSHMEM)/%.o : src/%.cu $(BUILT_HEADERS)
 clean :
 	rm -rf $(NVSHMEM_BUILDDIR)
 	rm -rf src/include/common/nvshmem_build_options.h
+	rm -rf src/include/common/nvshmem_version.h
 
 .PHONY: uninstall
 uninstall:
@@ -699,3 +728,9 @@ install : lib
 	cp -v $(NVSHMEM_BUILDDIR)/lib/* $(NVSHMEM_PREFIX)/lib/
 	cp -P -R -v $(NVSHMEM_BUILDDIR)/include/* $(NVSHMEM_PREFIX)/include/
 	cp -P -R -v $(NVSHMEM_BUILDDIR)/share/* $(NVSHMEM_PREFIX)/share/
+	@echo "*****************************************************************"
+	@echo "  Deprecation Notice                                             "
+	@echo "  ------------------                                             "
+	@echo "  Makefile build system will be removed in NVSHMEM 2.12.      "
+	@echo "                                                                 "
+	@echo "*****************************************************************"

@@ -75,6 +75,8 @@ NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_my_pe();
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_n_pes();
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_info_get_version(int *major, int *minor);
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_info_get_name(char *name);
+NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemx_vendor_get_version_info(int *major, int *minor,
+                                                                 int *patch);
 
 // Heap management
 void *nvshmem_malloc(size_t size);

@@ -26,6 +26,8 @@ extern "C" {
 #endif
 int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle,
                                    const int nvshmem_version);
+int nvshmemi_bootstrap_plugin_pre_init(void *arg, bootstrap_handle_t *handle,
+                                       const int nvshmem_version);
 #if __cplusplus
 }
 #endif

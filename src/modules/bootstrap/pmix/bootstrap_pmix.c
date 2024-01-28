@@ -21,6 +21,7 @@
 #define BOOTSTRAP_PMIX_KEYSIZE 64
 
 static pmix_proc_t myproc;
+int bootstrap_debug_enable = 0;
 
 static int bootstrap_pmix_barrier(bootstrap_handle_t *handle) {
     pmix_status_t status = PMIx_Fence(NULL, 0, NULL, 0);
@@ -225,6 +226,8 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
     handle->barrier = bootstrap_pmix_barrier;
     handle->global_exit = bootstrap_pmix_global_exit;
     handle->finalize = bootstrap_pmix_finalize;
+    handle->comm_state = (void *)(&myproc);
+    handle->pre_init_ops = NULL;
 
     PMIX_VALUE_RELEASE(val);
 

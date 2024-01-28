@@ -824,7 +824,8 @@ int nvshmemt_ibdevx_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
 
     status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf, length,
                                                local_only, ibdevx_state->dmabuf_support,
-                                               ibdevx_state->table, ibdevx_state->log_level);
+                                               ibdevx_state->table, ibdevx_state->log_level,
+                                               ibdevx_state->options->IB_ENABLE_RELAXED_ORDERING);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "Unable to register memory handle.");
 
@@ -875,7 +876,8 @@ int nvshmemt_ibdevx_finalize(nvshmem_transport_t transport) {
 
     if (ibdevx_state->devices) {
         for (int i = 0; i < ibdevx_state->n_dev_ids; i++) {
-            struct ibdevx_device *device = ((struct ibdevx_device *)ibdevx_state->devices + i);
+            int dev_id = ibdevx_state->dev_ids[i];
+            struct ibdevx_device *device = ((struct ibdevx_device *)ibdevx_state->devices + dev_id);
             if (device->context) {
                 status = device_destroy_shared_ep_resources(device);
                 NVSHMEMI_NZ_ERROR_JMP(status, status, out,
@@ -1137,8 +1139,9 @@ static inline int nvshmemt_ibdevx_amo_32(struct nvshmem_transport *tcurr, int pe
     wqe->ctrl.fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
     wqe->ctrl.qpn_ds =
         htobe32((uint32_t)(wqe_size / NVSHMEMT_IBDEVX_MLX5_SEND_WQE_DS) | ep->qpid << 8);
-    wqe->raddr.raddr = htobe64((uintptr_t)remote->ptr);
-    wqe->raddr.rkey = htobe32(((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey);
+    wqe->raddr.raddr = htobe64((uintptr_t)remote->remote_memdesc.ptr);
+    wqe->raddr.rkey =
+        htobe32(((struct nvshmemt_ib_common_mem_handle *)remote->remote_memdesc.handle)->rkey);
     wqe->data.byte_count = htobe32((uint32_t)4);
 
     if (verb.desc < NVSHMEMI_AMO_END_OF_NONFETCH) {
@@ -1302,8 +1305,9 @@ static inline int nvshmemt_ibdevx_amo_64(struct nvshmem_transport *tcurr, int pe
     fa_data = (struct mlx5_wqe_data_seg *)((char *)wqe_1 + sizeof(struct mlx5_wqe_ctrl_seg) +
                                            sizeof(struct mlx5_wqe_raddr_seg) +
                                            sizeof(struct ibdevx_atomic_64_masked_fetch_add_seg));
-    raddr->raddr = htobe64((uintptr_t)remote->ptr);
-    raddr->rkey = htobe32(((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey);
+    raddr->raddr = htobe64((uintptr_t)remote->remote_memdesc.ptr);
+    raddr->rkey =
+        htobe32(((struct nvshmemt_ib_common_mem_handle *)remote->remote_memdesc.handle)->rkey);
 
     switch (verb.desc) {
         case NVSHMEMI_AMO_FETCH_INC:
@@ -1565,7 +1569,8 @@ out:
     return status;
 }
 
-int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t, int selected_dev_id) {
+int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t, int *selected_dev_ids,
+                                      int num_selected_devs) {
     /* transport side */
     struct ibdevx_ep_handle *local_ep_handles = NULL, *ep_handles = NULL;
     transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)t->state;
@@ -1573,10 +1578,22 @@ int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t, int selected_dev_id
 
     int n_pes = t->n_pes;
 
-    /* allocate all EPs for transport, plus 1 for the proxy thread. */
     int ep_count = ibdevx_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
+
+    if (ibdevx_state->selected_dev_id >= 0) {
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out_already_connected,
+                           "Device already selected. IBDEVX only supports"
+                           " one NIC per PE.\n");
+    }
+
+    if (num_selected_devs > 1) {
+        INFO(ibdevx_state->log_level,
+             "IBDEVX only supports one NIC / PE. All other NICs will be ignored.");
+    }
+
+    /* allocate all EPs for transport, plus 1 for the proxy thread. */
     ibdevx_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
-    ibdevx_state->selected_dev_id = selected_dev_id;
+    ibdevx_state->selected_dev_id = selected_dev_ids[0];
 
     ibdevx_state->ep = (struct ibdevx_ep **)calloc(n_pes * ep_count, sizeof(struct ibdevx_ep *));
     NVSHMEMI_NULL_ERROR_JMP(ibdevx_state->ep, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -1620,8 +1637,11 @@ int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t, int selected_dev_id
     }
 out:
     if (status) {
+        ibdevx_state->selected_dev_id = -1;
         if (ibdevx_state->ep) free(ibdevx_state->ep);
     }
+
+out_already_connected:
     if (local_ep_handles) free(local_ep_handles);
     if (ep_handles) free(ep_handles);
     return status;
@@ -1662,6 +1682,9 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     ibdevx_state = (transport_ibdevx_state_t *)calloc(1, sizeof(transport_ibdevx_state_t));
     NVSHMEMI_NULL_ERROR_JMP(ibdevx_state, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                             "ibdevx state allocation failed \n");
+
+    /* set selected device ID to -1 to indicate none is selected. */
+    ibdevx_state->selected_dev_id = -1;
     transport->state = (void *)ibdevx_state;
 
     ibdevx_state->options =
@@ -1735,7 +1758,7 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         } else {
             user_selection = 1;
             pe_hca_map_count =
-                nvshmemt_parse_hca_list(ibdevx_state->options->HCA_LIST, pe_hca_mapping,
+                nvshmemt_parse_hca_list(ibdevx_state->options->HCA_PE_MAPPING, pe_hca_mapping,
                                         MAX_NUM_PES_PER_NODE, ibdevx_state->log_level);
         }
     }
@@ -1756,6 +1779,8 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         NVSHMEMI_NULL_ERROR_JMP(name, status, NVSHMEMX_ERROR_INTERNAL, out,
                                 "ibv_get_device_name failed \n");
         if (!strstr(name, "mlx5")) {
+            ftable.close_device(device->context);
+            device->context = NULL;
             NVSHMEMI_WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
             continue;
         }
@@ -1764,6 +1789,8 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_query_device failed \n");
 
         if (!nvshmemt_ib_common_query_mlx5_caps(device->context)) {
+            ftable.close_device(device->context);
+            device->context = NULL;
             NVSHMEMI_WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
             continue;
         }
@@ -1771,6 +1798,10 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         /* Report whether we need to do atomic endianness conversions on 8 byte operands. */
         status = nvshmemt_ib_common_query_endianness_conversion_size(&atomic_host_endian_size,
                                                                      device->context);
+        if (status != 0) {
+            ftable.close_device(device->context);
+            device->context = NULL;
+        }
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "nvshmemt_ib_common_query_endianness_conversion_size failed.\n");
 
@@ -1830,9 +1861,11 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
                 NVSHMEMI_NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out,
                                         "query_gid failed \n");
 
-                device->pd = ftable.alloc_pd(device->context);
-                NVSHMEMI_NULL_ERROR_JMP(device->pd, status, NVSHMEMX_ERROR_INTERNAL, out,
-                                        "ibv_alloc_pd failed \n");
+                if (!device->pd) {
+                    device->pd = ftable.alloc_pd(device->context);
+                    NVSHMEMI_NULL_ERROR_JMP(device->pd, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                            "ibv_alloc_pd failed \n");
+                }
 
                 for (int k = 0; k < replicate_count; k++) {
                     ibdevx_state->dev_ids[offset] = i;
@@ -1846,7 +1879,14 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
 
         if (!device_used) {
             status = ftable.close_device(device->context);
-            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_port_query failed \n");
+            if (device->pd) {
+                status = ftable.dealloc_pd(device->pd);
+            }
+
+            device->context = NULL;
+            device->pd = NULL;
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "ibv_close_device or ibv_dealloc_pd failed \n");
         }
     }
     INFO(ibdevx_state->log_level, "End - Enumerating IB devices in the system");
@@ -1930,6 +1970,11 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     int flag;
     CUdevice gpu_device_id;
 
+    if (ibdevx_state->options->IB_DISABLE_DMABUF) {
+        ibdevx_state->dmabuf_support = false;
+        goto check_nv_peer_mem;
+    }
+
     status = CUPFN(table, cuCtxGetDevice(&gpu_device_id));
     if (status != CUDA_SUCCESS) {
         status = NVSHMEMX_ERROR_INTERNAL;
@@ -1943,6 +1988,7 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     } else if (flag == 1) {
         ibdevx_state->dmabuf_support = true;
     }
+check_nv_peer_mem:
 #endif
 
     if (ibdevx_state->dmabuf_support == false) {

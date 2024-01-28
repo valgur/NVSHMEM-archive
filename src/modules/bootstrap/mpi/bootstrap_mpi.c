@@ -15,6 +15,7 @@
 
 static MPI_Comm bootstrap_comm = MPI_COMM_NULL;
 static int nvshmem_initialized_mpi = 0;
+int bootstrap_debug_enable = 0;
 
 static int bootstrap_mpi_barrier(struct bootstrap_handle *handle) {
     int status = MPI_SUCCESS;
@@ -149,6 +150,8 @@ int nvshmemi_bootstrap_plugin_init(void *mpi_comm, bootstrap_handle_t *handle,
     handle->barrier = bootstrap_mpi_barrier;
     handle->global_exit = bootstrap_mpi_global_exit;
     handle->finalize = bootstrap_mpi_finalize;
+    handle->pre_init_ops = NULL;
+    handle->comm_state = &bootstrap_comm;
 
     goto out;
 

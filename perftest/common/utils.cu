@@ -20,6 +20,7 @@ int mype = 0;
 int npes = 0;
 int use_mpi = 0;
 int use_shmem = 0;
+int use_uid = 0;
 __device__ int clockrate;
 
 #ifdef NVSHMEMTEST_SHMEM_SUPPORT
@@ -97,6 +98,8 @@ void init_wrapper(int *c, char ***v) {
     {
         char *value = getenv("NVSHMEMTEST_USE_MPI_LAUNCHER");
         if (value) use_mpi = atoi(value);
+        char *uid_value = getenv("NVSHMEMTEST_USE_UID_BOOTSTRAP");
+        if (uid_value) use_uid = atoi(uid_value);
     }
 #endif
 
@@ -123,6 +126,24 @@ void init_wrapper(int *c, char ***v) {
         select_device();
         nvshmem_barrier_all();
 
+        return;
+    } else if (use_uid) {
+        MPI_Init(c, v);
+        int rank, nranks;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &nranks);
+        DEBUG_PRINT("MPI: [%d of %d] hello MPI world! \n", rank, nranks);
+        nvshmemx_init_attr_t attr = {};
+        nvshmemx_uniqueid_t id;
+        if (rank == 0) {
+            nvshmemx_get_uniqueid(&id);
+        }
+
+        MPI_Bcast(&id, sizeof(nvshmemx_uniqueid_t), MPI_UINT8_T, 0, MPI_COMM_WORLD);
+        nvshmemx_set_attr_uniqueid_args(rank, nranks, &id, &attr);
+        nvshmemx_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID, &attr);
+        select_device();
+        nvshmem_barrier_all();
         return;
     }
 #endif
@@ -184,7 +205,9 @@ void finalize_wrapper() {
     nvshmem_finalize();
 
 #ifdef NVSHMEMTEST_MPI_SUPPORT
-    if (use_mpi) MPI_Finalize();
+    if (use_mpi || use_uid) {
+        MPI_Finalize();
+    }
 #endif
 #ifdef NVSHMEMTEST_SHMEM_SUPPORT
     if (use_shmem) shmem_finalize();

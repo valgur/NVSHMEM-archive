@@ -567,11 +567,11 @@ typedef void (*nvshmemx_device_lib_init_cb)(void **dev_state_ptr, void **transpo
 #ifdef __cplusplus
 extern "C" {
 #endif
-int nvshmemx_host_init(int requested_thread_support, int *provided_thread_support,
-                       unsigned int bootstrap_flags, nvshmemx_init_attr_t *bootstrap_attr,
-                       nvshmemi_version_t nvshmem_device_lib_version,
-                       nvshmemx_device_lib_init_cb cb);
-void nvshmemx_host_finalize(void *device_ctx, void *transport_device_ctx);
+int nvshmemid_hostlib_init_attr(int requested, int *provided, unsigned int bootstrap_flags,
+                                nvshmemx_init_attr_t *attr,
+                                nvshmemi_version_t nvshmem_device_lib_version,
+                                nvshmemx_device_lib_init_cb cb);
+void nvshmemid_hostlib_finalize(void *device_ctx, void *transport_device_ctx);
 #ifdef __cplusplus
 }
 #endif

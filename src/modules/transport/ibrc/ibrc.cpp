@@ -24,7 +24,9 @@
 
 #include "cudawrap.h"
 #include "env_defs_internal.h"
+#ifdef NVSHMEM_USE_GDRCOPY
 #include "gdrapi.h"
+#endif
 #include "infiniband/verbs.h"
 #include "common/nvshmem_build_options.h"
 #include "common/nvshmem_common_transport.h"
@@ -493,9 +495,9 @@ int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     struct ibrc_mem_handle_info *handle_info = NULL;
     struct nvshmemt_ib_common_mem_handle *handle;
 
-    status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf, length,
-                                               local_only, ibrc_state->dmabuf_support,
-                                               ibrc_state->table, ibrc_state->log_level);
+    status = nvshmemt_ib_common_reg_mem_handle(
+        &ftable, device->pd, mem_handle, buf, length, local_only, ibrc_state->dmabuf_support,
+        ibrc_state->table, ibrc_state->log_level, ibrc_state->options->IB_ENABLE_RELAXED_ORDERING);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "Unable to register memory handle.");
 
@@ -707,33 +709,35 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
 
     if (state->devices) {
         for (int i = 0; i < state->n_dev_ids; i++) {
-            if (((struct ibrc_device *)state->devices)[i].bpool_mr) {
-                status = ftable.dereg_mr(((struct ibrc_device *)state->devices)[i].bpool_mr);
+            int dev_id = state->dev_ids[i];
+            if (((struct ibrc_device *)state->devices)[dev_id].bpool_mr) {
+                status = ftable.dereg_mr(((struct ibrc_device *)state->devices)[dev_id].bpool_mr);
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "ibv_dereg_mr failed \n");
             }
-            if (((struct ibrc_device *)state->devices)[i].send_cq) {
-                status = ftable.destroy_cq(((struct ibrc_device *)state->devices)[i].send_cq);
+            if (((struct ibrc_device *)state->devices)[dev_id].send_cq) {
+                status = ftable.destroy_cq(((struct ibrc_device *)state->devices)[dev_id].send_cq);
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "ibv_destroy_cq failed \n");
             }
-            if (((struct ibrc_device *)state->devices)[i].recv_cq) {
-                status = ftable.destroy_cq(((struct ibrc_device *)state->devices)[i].recv_cq);
+            if (((struct ibrc_device *)state->devices)[dev_id].recv_cq) {
+                status = ftable.destroy_cq(((struct ibrc_device *)state->devices)[dev_id].recv_cq);
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "ibv_destroy_cq failed \n");
             }
-            if (((struct ibrc_device *)state->devices)[i].srq) {
-                status = ftable.destroy_srq(((struct ibrc_device *)state->devices)[i].srq);
+            if (((struct ibrc_device *)state->devices)[dev_id].srq) {
+                status = ftable.destroy_srq(((struct ibrc_device *)state->devices)[dev_id].srq);
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "ibv_destroy_srq failed \n");
             }
-            if (((struct ibrc_device *)state->devices)[i].pd) {
-                status = ftable.dealloc_pd(((struct ibrc_device *)state->devices)[i].pd);
+            if (((struct ibrc_device *)state->devices)[dev_id].pd) {
+                status = ftable.dealloc_pd(((struct ibrc_device *)state->devices)[dev_id].pd);
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "ibv_dealloc_pd failed \n");
             }
-            if (((struct ibrc_device *)state->devices)[i].context) {
-                status = ftable.close_device(((struct ibrc_device *)state->devices)[i].context);
+            if (((struct ibrc_device *)state->devices)[dev_id].context) {
+                status =
+                    ftable.close_device(((struct ibrc_device *)state->devices)[dev_id].context);
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "ibv_close_device failed \n");
             }
@@ -1212,9 +1216,10 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
                 sr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
                 sr->send_flags = IBV_SEND_SIGNALED;
 
-                sr->wr.atomic.remote_addr = (uint64_t)remote->ptr;
-                assert(remote->handle);
-                sr->wr.atomic.rkey = ((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey;
+                sr->wr.atomic.remote_addr = (uint64_t)remote->remote_memdesc.ptr;
+                assert(remote->remote_memdesc.handle);
+                sr->wr.atomic.rkey =
+                    ((struct nvshmemt_ib_common_mem_handle *)remote->remote_memdesc.handle)->rkey;
                 sr->wr.atomic.compare_add = remote->val;
 
                 sge->length = bytesdesc.elembytes;
@@ -1233,7 +1238,7 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
 
         // assuming GDRCopy availability is uniform on all nodes
         op.op = verb.desc;
-        op.addr = remote->ptr;
+        op.addr = remote->remote_memdesc.ptr;
         op.retaddr = remote->retptr;
         op.retflag = remote->retflag;
         op.compare = remote->cmp;
@@ -1265,9 +1270,10 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
                 sr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
                 sr->send_flags = IBV_SEND_SIGNALED;
 
-                sr->wr.atomic.remote_addr = (uint64_t)remote->ptr;
-                assert(remote->handle);
-                sr->wr.atomic.rkey = ((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey;
+                sr->wr.atomic.remote_addr = (uint64_t)remote->remote_memdesc.ptr;
+                assert(remote->remote_memdesc.handle);
+                sr->wr.atomic.rkey =
+                    ((struct nvshmemt_ib_common_mem_handle *)remote->remote_memdesc.handle)->rkey;
                 sr->wr.atomic.compare_add = remote->val;
 
                 sge->length = bytesdesc.elembytes;
@@ -1280,9 +1286,10 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
             sr->send_flags = IBV_SEND_SIGNALED;
             sr->send_flags |= IBV_SEND_INLINE;
 
-            sr->wr.rdma.remote_addr = (uint64_t)remote->ptr;
-            assert(remote->handle);
-            sr->wr.rdma.rkey = ((struct nvshmemt_ib_common_mem_handle *)remote->handle)->rkey;
+            sr->wr.rdma.remote_addr = (uint64_t)remote->remote_memdesc.ptr;
+            assert(remote->remote_memdesc.handle);
+            sr->wr.rdma.rkey =
+                ((struct nvshmemt_ib_common_mem_handle *)remote->remote_memdesc.handle)->rkey;
 
             sge->length = bytesdesc.elembytes;
             sge->addr = (uintptr_t)&remote->val;
@@ -1433,18 +1440,31 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_connect_endpoints(nvshmem_transport_t t, int selected_dev_id) {
+int nvshmemt_ibrc_connect_endpoints(nvshmem_transport_t t, int *selected_dev_ids,
+                                    int num_selected_devs) {
     /* transport side */
     struct ibrc_ep_handle *local_ep_handles = NULL, *ep_handles = NULL;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)t->state;
     int status = 0;
     int n_pes = t->n_pes;
+    int ep_count;
+
+    if (ibrc_state->selected_dev_id >= 0) {
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out_already_connected,
+                           "Device already selected. IBRC only supports"
+                           " one NIC per PE.\n");
+    }
+
+    if (num_selected_devs > 1) {
+        INFO(ibrc_state->log_level,
+             "IBRC only supports One NIC / PE. All other NICs will be ignored.");
+    }
 
     /* allocate all EPs for transport, plus 1 for the proxy thread. */
-    int ep_count = ibrc_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
+    ep_count = ibrc_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
     ibrc_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
 
-    ibrc_state->selected_dev_id = selected_dev_id;
+    ibrc_state->selected_dev_id = selected_dev_ids[0];
 
     ibrc_state->ep = (struct ibrc_ep **)calloc(n_pes * ep_count, sizeof(struct ibrc_ep *));
     NVSHMEMI_NULL_ERROR_JMP(ibrc_state->ep, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -1487,8 +1507,11 @@ int nvshmemt_ibrc_connect_endpoints(nvshmem_transport_t t, int selected_dev_id) 
     }
 out:
     if (status) {
+        ibrc_state->selected_dev_id = -1;
         if (ibrc_state->ep) free(ibrc_state->ep);
     }
+
+out_already_connected:
     if (local_ep_handles) free(local_ep_handles);
     if (ep_handles) free(ep_handles);
     return status;
@@ -1526,6 +1549,9 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     ibrc_state = (transport_ibrc_state_t *)calloc(1, sizeof(transport_ibrc_state_t));
     NVSHMEMI_NULL_ERROR_JMP(ibrc_state, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                             "p2p state allocation failed \n");
+
+    /* set selected device ID to -1 to indicate none is selected. */
+    ibrc_state->selected_dev_id = -1;
     transport->state = (void *)ibrc_state;
 
     ibrc_state->options = (struct nvshmemi_options_s *)calloc(1, sizeof(struct nvshmemi_options_s));
@@ -1600,7 +1626,7 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         } else {
             user_selection = 1;
             pe_hca_map_count =
-                nvshmemt_parse_hca_list(ibrc_state->options->HCA_LIST, pe_hca_mapping,
+                nvshmemt_parse_hca_list(ibrc_state->options->HCA_PE_MAPPING, pe_hca_mapping,
                                         MAX_NUM_PES_PER_NODE, ibrc_state->log_level);
         }
     }
@@ -1680,9 +1706,11 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
                 NVSHMEMI_NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out,
                                         "query_gid failed \n");
 
-                device->pd = ftable.alloc_pd(device->context);
-                NVSHMEMI_NULL_ERROR_JMP(device->pd, status, NVSHMEMX_ERROR_INTERNAL, out,
-                                        "ibv_alloc_pd failed \n");
+                if (!device->pd) {
+                    device->pd = ftable.alloc_pd(device->context);
+                    NVSHMEMI_NULL_ERROR_JMP(device->pd, status, NVSHMEMX_ERROR_INTERNAL, out,
+                                            "ibv_alloc_pd failed \n");
+                }
 
                 for (int k = 0; k < replicate_count; k++) {
                     ibrc_state->dev_ids[offset] = i;
@@ -1696,9 +1724,14 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
 
         if (!device_used) {
             status = ftable.close_device(device->context);
+            if (device->pd) {
+                status = ftable.dealloc_pd(device->pd);
+            }
+
             device->context = NULL;
             device->pd = NULL;
-            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_port_query failed \n");
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "ibv_close_device or ibv_dealloc_pd failed \n");
         }
     }
     INFO(ibrc_state->log_level, "End - Enumerating IB devices in the system");
@@ -1791,6 +1824,11 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     int flag;
     CUdevice gpu_device_id;
 
+    if (ibrc_state->options->IB_DISABLE_DMABUF) {
+        ibrc_state->dmabuf_support = false;
+        goto check_nv_peer_mem;
+    }
+
     status = CUPFN(table, cuCtxGetDevice(&gpu_device_id));
     if (status != CUDA_SUCCESS) {
         status = NVSHMEMX_ERROR_INTERNAL;
@@ -1804,6 +1842,7 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     } else if (flag == 1) {
         ibrc_state->dmabuf_support = true;
     }
+check_nv_peer_mem:
 #endif
 
     if (ibrc_state->dmabuf_support == false) {

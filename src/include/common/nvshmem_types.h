@@ -10,24 +10,39 @@
 typedef int32_t nvshmem_team_t;
 typedef nvshmem_team_t nvshmemx_team_t;
 
-#define INIT_HANDLE_BYTES 128
-typedef struct {
-    char content[INIT_HANDLE_BYTES];
-} nvshmemx_init_handle_t;
+#define INIT_ARGS_BYTES 128
+#define UNIQUEID_BYTES 128
 
 typedef struct {
-    size_t heap_size;
-    int num_threads;
-    int n_pes;
-    int my_pe;
+    char internal[UNIQUEID_BYTES];
+} nvshmemx_uniqueid_t;
+
+typedef struct {
+    nvshmemx_uniqueid_t *id;
+    int myrank;
+    int nranks;
+} nvshmemx_uniqueid_args_t;
+
+typedef union {
+    char content[INIT_ARGS_BYTES];
+    nvshmemx_uniqueid_args_t uid_args;
+} nvshmemx_init_args_t;
+
+typedef struct {
+    /* Mark the internal fields as rsvd for ensuring ABI compatibility */
+    size_t rsvd_field0;
+    int rsvd_field1;
+    int rsvd_field2;
+    int rsvd_field3;
     void *mpi_comm;
-    nvshmemx_init_handle_t handle;
+    nvshmemx_init_args_t args;
 } nvshmemx_init_attr_t;
 
 typedef enum {
     NVSHMEMI_PE_DIST_ROUNDROBIN = 0,
     NVSHMEMI_PE_DIST_BLOCK,
-    NVSHMEMI_PE_DIST_MISC
+    NVSHMEMI_PE_DIST_MISC,
+    NVSHMEMI_PE_DIST_MAX = INT_MAX
 } nvshmemi_pe_dist_t;
 
 typedef struct {

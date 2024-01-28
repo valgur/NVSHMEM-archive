@@ -1,5 +1,6 @@
 NVSHMEM {
   global: nvshmem_*;
+          nvshmemid_*;
           nvshmemx_*;
           nvshmem_debug_log;
           nvshmemi_malloc;

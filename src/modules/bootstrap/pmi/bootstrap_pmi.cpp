@@ -117,6 +117,7 @@ typedef struct {
 } pmi_info_t;
 
 static pmi_info_t pmi_info;
+int bootstrap_debug_enable = 0;
 
 static char encoding_table[] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
                                 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
@@ -380,6 +381,8 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
         handle->alltoall = bootstrap_pmi_alltoall;
         handle->global_exit = bootstrap_pmi_global_exit;
         handle->barrier = bootstrap_pmi_barrier;
+        handle->pre_init_ops = NULL;
+        handle->comm_state = (void *)&pmi_info;
     } else {
 #endif
         status = WRAP_PMI_Get_rank(&rank);
@@ -396,6 +399,8 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
         handle->alltoall = bootstrap_pmi_alltoall;
         handle->global_exit = bootstrap_pmi_global_exit;
         handle->barrier = bootstrap_pmi_barrier;
+        handle->pre_init_ops = NULL;
+        handle->comm_state = (void *)&pmi_info;
 
         status = WRAP_PMI_KVS_Get_name_length_max(&name_length);
         BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,

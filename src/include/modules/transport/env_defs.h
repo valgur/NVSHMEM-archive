@@ -53,10 +53,10 @@ NVSHMEMI_ENV_DEF(SYMMETRIC_SIZE, size, (size_t)(SYMMETRIC_SIZE_DEFAULT), NVSHMEM
                  "An invalid value for ``NVSHMEM_SYMMETRIC_SIZE`` is an error, which the NVSHMEM "
                  "library shall report by either returning a nonzero value from "
                  "``nvshmem_init_thread`` or causing program termination.")
-NVSHMEMI_ENV_DEF(HEAP_KIND, string, "DEVICE", NVSHMEMI_ENV_CAT_OTHER,
-                 "Select where default NVSHMEM heapo would be.\n"
-                 "Optional values: DEVICE, SYSMEM")
-NVSHMEMI_ENV_DEF(ENABLE_RAIL_OPT, bool, 0, NVSHMEMI_ENV_CAT_OTHER,
+NVSHMEMI_ENV_DEF(HEAP_KIND, string, "DEVICE", NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Specify the memory kind used by the NVSHMEM symmetric heap.\n"
+                 "Allowed values: VIDMEM, SYSMEM")
+NVSHMEMI_ENV_DEF(ENABLE_RAIL_OPT, bool, 0, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Enable Rail Optimization when heap is in SYSMEM")
 NVSHMEMI_ENV_DEF(DEBUG, string, "", NVSHMEMI_ENV_CAT_OPENSHMEM,
                  "Set to enable debugging messages.\n"
@@ -66,7 +66,7 @@ NVSHMEMI_ENV_DEF(DEBUG, string, "", NVSHMEMI_ENV_CAT_OPENSHMEM,
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP, string, "PMI", NVSHMEMI_ENV_CAT_BOOTSTRAP,
                  "Name of the default bootstrap that should be used to initialize NVSHMEM.\n"
-                 "Allowed values: PMI, MPI, SHMEM, plugin")
+                 "Allowed values: PMI, MPI, SHMEM, plugin, UID")
 
 #if defined(NVSHMEM_DEFAULT_PMIX)
 #define NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT "PMIX"
@@ -102,9 +102,25 @@ NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI2_PLUGIN, string, "nvshmem_bootstrap_pmi2.so",
 NVSHMEMI_ENV_DEF(BOOTSTRAP_PMIX_PLUGIN, string, "nvshmem_bootstrap_pmix.so",
                  NVSHMEMI_ENV_CAT_BOOTSTRAP, "Name of the PMIx bootstrap plugin file")
 
+NVSHMEMI_ENV_DEF(BOOTSTRAP_UID_PLUGIN, string, "nvshmem_bootstrap_uid.so",
+                 NVSHMEMI_ENV_CAT_BOOTSTRAP, "Name of the UID bootstrap plugin file")
+
+NVSHMEMI_ENV_DEF(BOOTSTRAP_UID_SOCK_IFNAME, string, "", NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Name of the UID bootstrap socket interface name")
+
+NVSHMEMI_ENV_DEF(BOOTSTRAP_UID_SOCK_FAMILY, string, "AF_INET", NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Name of the UID bootstrap socket family name")
+
+NVSHMEMI_ENV_DEF(BOOTSTRAP_UID_SESSION_ID, string, "", NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Name of the UID bootstrap session identifier")
+
 NVSHMEMI_ENV_DEF(BOOTSTRAP_TWO_STAGE, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Ignore CUDA device setting during initialization,"
                  "forcing two-stage initialization")
+
+/** Library initialization **/
+NVSHMEMI_ENV_DEF(CUDA_PATH, string, "", NVSHMEMI_ENV_CAT_OTHER,
+                 "Path to directory containing libcuda.so (for use when not in default location)")
 
 /** Debugging **/
 
@@ -137,6 +153,12 @@ NVSHMEMI_ENV_DEF(DISABLE_CUDA_VMM, bool, NVSHMEMI_ENV_DISABLE_CUDA_VMM_DEFAULT,
 
 NVSHMEMI_ENV_DEF(DISABLE_P2P, bool, false, NVSHMEMI_ENV_CAT_OTHER,
                  "Disable P2P connectivity of GPUs even when available")
+NVSHMEMI_ENV_DEF(IGNORE_CUDA_MPS_ACTIVE_THREAD_PERCENTAGE, bool, false, NVSHMEMI_ENV_CAT_OTHER,
+                 "When doing Multi-Process Per GPU (MPG) run, full API support is available "
+                 "only if sum of CUDA_MPS_ACTIVE_THREAD_PERCENTAGE of processes running on a "
+                 "GPU is <= 100%. Through this variable, user can request NVSHMEM runtime to "
+                 "ignore the active thread percentage and allow full MPG support. Users "
+                 "enable it at their own risk as NVSHMEM might deadlock.")
 NVSHMEMI_ENV_DEF(CUMEM_GRANULARITY, size, (size_t)((size_t)1 << 29), NVSHMEMI_ENV_CAT_OTHER,
                  "Granularity for ``cuMemAlloc``/``cuMemCreate``")
 
@@ -201,9 +223,14 @@ NVSHMEMI_ENV_DEF(ENABLE_NIC_PE_MAPPING, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "closest to it by distance. When set to 1, NVSHMEM either assigns NICs to "
                  "PEs on a round-robin basis or uses ``NVSHMEM_HCA_PE_MAPPING`` or "
                  "``NVSHMEM_HCA_LIST`` when they are specified.")
+NVSHMEMI_ENV_DEF(IB_DISABLE_DMABUF, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Disable use of DMABUF in IBRC/IBDEVX/IBGDA Transports")
 NVSHMEMI_ENV_DEF(IB_GID_INDEX, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT, "Source GID Index for ROCE")
 NVSHMEMI_ENV_DEF(IB_TRAFFIC_CLASS, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT, "Traffic calss for ROCE")
 NVSHMEMI_ENV_DEF(IB_SL, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT, "Service level to use over IB/ROCE")
+NVSHMEMI_ENV_DEF(
+    IB_ENABLE_RELAXED_ORDERING, bool, true, NVSHMEMI_ENV_CAT_TRANSPORT,
+    "Enable PCIe relaxed ordering on transports over IB/ROCE (e.g., IBRC, IBGDA, IBDEVX)")
 
 NVSHMEMI_ENV_DEF(HCA_LIST, string, "", NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Comma-separated list of HCAs to use in the NVSHMEM application. Entries "
@@ -227,7 +254,7 @@ NVSHMEMI_ENV_DEF(DISABLE_LOCAL_ONLY_PROXY, bool, false, NVSHMEMI_ENV_CAT_TRANSPO
                  "device side wait timeout polling (enabled by ``NVSHMEM_TIMEOUT_DEVICE_POLLING`` "
                  "build-time variable) because these are processed by the proxy thread.")
 
-NVSHMEMI_ENV_DEF(LIBFABRIC_PROVIDER, string, "cxi", NVSHMEMI_ENV_CAT_HIDDEN,
+NVSHMEMI_ENV_DEF(LIBFABRIC_PROVIDER, string, "cxi", NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Set the feature set provider for the libfabric transport: cxi, efa, verbs")
 
 /** Runtime optimimzations **/
@@ -242,6 +269,9 @@ NVSHMEMI_ENV_DEF(NVTX, string, "off", NVSHMEMI_ENV_CAT_NVTX,
 
 #if defined(NVSHMEM_IBGDA_SUPPORT) || defined(NVSHMEM_ENV_ALL)
 /** GPU-initiated communication **/
+NVSHMEMI_ENV_DEF(IBGDA_ENABLE_MULTI_PORT, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Enable multiple NICs per PE if available. Note: Enabling this on "
+                 "Hopper+ for latency sensitive applications is discouraged.")
 NVSHMEMI_ENV_DEF(IBGDA_NUM_DCT, int, 2, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Number of DCT QPs used in GPU-initiated communication transport.")
 NVSHMEMI_ENV_DEF(IBGDA_NUM_DCI, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT,

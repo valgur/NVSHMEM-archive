@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <string>
 
 #include "internal/common/debug.h"
 #include "internal/error_codes_internal.h"
@@ -86,7 +87,7 @@ char *nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent,
                     const int strip_backticks) {
     const size_t indent_len = indent != NULL ? strlen(indent) : 0;
     size_t str_len = 0, line_len = 0, line_breaks = 0;
-    char *str_s = NULL, *out_s = NULL;
+    char *str_s = NULL;
 
     /* Count characters and newlines */
     for (const char *s = str; *s != '\0'; s++, str_len++)
@@ -96,40 +97,36 @@ char *nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent,
      * wrap adds an indent string. The newline is either already in the source
      * string or replaces a whitespace in the source string */
     const size_t out_len = str_len + 1 + (2 * (str_len / wraplen + 1) + line_breaks) * indent_len;
-    char *out = (char *)malloc(out_len);
-    char *out_p = out;
+    char *out = (char *)calloc(out_len, sizeof(char));
     char *str_p = (char *)str;
+    std::string statement = "";
 
     if (out == NULL) {
         fprintf(stderr, "%s:%d Unable to allocate output buffer\n", __FILE__, __LINE__);
         return NULL;
     }
 
-    while (*str_p != '\0' && /* avoid overflowing out */ out_p - out < (ssize_t)out_len - 1) {
+    while (*str_p != '\0' &&
+           /* avoid overflowing out */ statement.length() < (out_len - 1)) {
         /* Remember location of last space */
         if (*str_p == ' ') {
             str_s = str_p;
-            out_s = out_p;
         }
         /* Wrap here if there is a newline */
         else if (*str_p == '\n') {
             str_s = str_p;
-            out_s = out_p;
-
-            *out_p = '\n'; /* Append newline and indent */
-            out_p++;
+            statement += "\n"; /* Append newline and indent */
             if (indent) {
-                strcpy(out_p, indent); /* NULL will be overwritten */
-                out_p += indent_len;
+                statement += indent;
             }
             str_p++;
-            out_s = str_s = NULL;
+            str_s = NULL;
             line_len = 0;
             continue;
         }
+
         /* Remove backticks from the input string */
         else if (*str_p == '`' && strip_backticks) {
-            out_p++;
             str_p++;
             continue;
         }
@@ -137,26 +134,29 @@ char *nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent,
         /* Reached end of line, try to wrap */
         if (line_len >= wraplen) {
             if (str_s != NULL) {
-                out_p = out_s; /* Jump back to last space */
-                str_p = str_s;
-                *out_p = '\n'; /* Append newline and indent */
-                out_p++;
+                str_p = str_s; /* Jump back to last space */
+                size_t found =
+                    statement.find_last_of(" "); /* Find the last token, remove it from statement as
+                                                    it will be appended subsequently */
+                auto last_word = statement.substr(found + 1);
+                statement.erase(found, found + 1 + last_word.length());
+                statement += "\n"; /* Append newline and indent */
                 if (indent) {
-                    strcpy(out_p, indent); /* NULL will be overwritten */
-                    out_p += indent_len;
+                    statement += indent;
                 }
                 str_p++;
-                out_s = str_s = NULL;
+                str_s = NULL;
                 line_len = 0;
                 continue;
             }
         }
-        *out_p = *str_p;
-        out_p++;
+        statement += (*str_p);
         str_p++;
         line_len++;
     }
-    *out_p = '\0';
+
+    memset(out, '\0', out_len);
+    memcpy(out, statement.c_str(), statement.length());
     return out;
 }
 

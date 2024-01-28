@@ -31,11 +31,13 @@ int nvshmemt_ib_common_nv_peer_mem_available() {
 int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable, struct ibv_pd *pd,
                                       nvshmem_mem_handle_t *mem_handle, void *buf, size_t length,
                                       bool local_only, bool dmabuf_support,
-                                      struct nvshmemi_cuda_fn_table *table, int log_level) {
+                                      struct nvshmemi_cuda_fn_table *table, int log_level,
+                                      bool relaxed_ordering) {
     struct nvshmemt_ib_common_mem_handle *handle =
         (struct nvshmemt_ib_common_mem_handle *)mem_handle;
     struct ibv_mr *mr = NULL;
     int status = 0;
+    int ro_flag = 0;
 
     assert(sizeof(struct nvshmemt_ib_common_mem_handle) <= NVSHMEM_MEM_HANDLE_SIZE);
 #if CUDA_VERSION >= 11070
@@ -49,6 +51,15 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
     } else if (attr.type != cudaMemoryTypeDevice) {
         host_memory = true;
     }
+
+#if defined(HAVE_IBV_ACCESS_RELAXED_ORDERING)
+#if HAVE_IBV_ACCESS_RELAXED_ORDERING
+    // IBV_ACCESS_RELAXED_ORDERING has been introduced to rdma-core since v28.0.
+    if (relaxed_ordering) {
+        ro_flag = IBV_ACCESS_RELAXED_ORDERING;
+    }
+#endif
+#endif
 
     if (ftable->reg_dmabuf_mr != NULL && !host_memory && dmabuf_support &&
         CUPFN(table, cuMemGetHandleForAddressRange)) {
@@ -66,7 +77,7 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
 
         mr = ftable->reg_dmabuf_mr(pd, 0, size_aligned, (uint64_t)p, handle->fd,
                                    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-                                       IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+                                       IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC | ro_flag);
         if (mr == NULL) {
             close(handle->fd);
             goto reg_dmabuf_failure;
@@ -79,7 +90,7 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
         handle->fd = 0;
         mr = ftable->reg_mr(pd, buf, length,
                             IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-                                IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+                                IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC | ro_flag);
         NVSHMEMI_NULL_ERROR_JMP(mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                                 "mem registration failed \n");
         INFO(log_level, "ibv_reg_mr handle %p handle->mr %p", handle, handle->mr);

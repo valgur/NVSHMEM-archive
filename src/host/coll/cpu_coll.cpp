@@ -51,6 +51,15 @@ int nvshmemi_coll_common_cpu_init() {
         goto fn_out;
     }
 
+    if (nvshmemi_is_mpg_run) {
+        WARN(
+            "NVSHMEM has detected multiple PEs per GPU which is not supported "
+            "by NCCL and is disabling NCCL accordingly. To silence this warning, "
+            "set the NVSHMEM_DISABLE_NCCL=1 variable to explicitly disable NCCL.");
+        nvshmemi_use_nccl = 0;
+        goto fn_out;
+    }
+
     nccl_handle = dlopen("libnccl.so.2", RTLD_LAZY);
     if (!nccl_handle) {
         NVSHMEMI_WARN_PRINT("NCCL library not found...\n");

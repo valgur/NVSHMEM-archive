@@ -14,7 +14,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-int ipcOpenSocket(ipcHandle *&handle) {
+int ipcOpenSocket(ipcHandle *&handle, pid_t send_process, pid_t recv_process) {
     int sock = 0;
     struct sockaddr_un cliaddr;
 
@@ -29,10 +29,10 @@ int ipcOpenSocket(ipcHandle *&handle) {
 
     bzero(&cliaddr, sizeof(cliaddr));
     cliaddr.sun_family = AF_UNIX;
-    char temp[50];
+    char temp[50] = {0};
 
     // Create unique name for the socket.
-    int name_len = snprintf(temp, 50, "/tmp/nvshmem-socket-%u", getpid());
+    int name_len = snprintf(temp, 50, "/tmp/nvshmem-socket-%u-%u", send_process, recv_process);
     if (name_len < 0 || name_len >= 50) {
         printf("Error formatting socket file name\n");
         delete handle;
@@ -40,7 +40,8 @@ int ipcOpenSocket(ipcHandle *&handle) {
         return -1;
     }
 
-    strncpy(cliaddr.sun_path, temp, 50);
+    temp[strlen(temp)] = '\0';
+    strncpy(cliaddr.sun_path, temp, strlen(temp));
     if (bind(sock, (struct sockaddr *)&cliaddr, sizeof(cliaddr)) < 0) {
         perror(
             "IPC failure: Binding socket failed. If you have any (stale) files"
@@ -52,7 +53,8 @@ int ipcOpenSocket(ipcHandle *&handle) {
 
     handle->socket = sock;
     handle->socketName = new char[strlen(temp) + 1];
-    strcpy(handle->socketName, temp);
+    strncpy(handle->socketName, temp, strlen(temp));
+    handle->socketName[strlen(temp)] = '\0';
 
     return 0;
 }
@@ -62,13 +64,18 @@ int ipcCloseSocket(ipcHandle *handle) {
         return -1;
     }
 
+    int rc = 0;
     if (handle->socketName) {
-        unlink(handle->socketName);
+        if (unlink(handle->socketName) < 0) {
+            perror("unlink failed for /tmp/nvshmem-socket-<0-9>-* !");
+            rc = -1;
+        }
+
         delete[] handle->socketName;
     }
     close(handle->socket);
     delete handle;
-    return 0;
+    return (rc);
 }
 
 int ipcRecvFd(ipcHandle *handle, int *shHandle) {
@@ -113,7 +120,8 @@ int ipcRecvFd(ipcHandle *handle, int *shHandle) {
     return 0;
 }
 
-int ipcSendFd(ipcHandle *handle, const int shareableHandle, pid_t process) {
+int ipcSendFd(ipcHandle *handle, const int shareableHandle, pid_t send_process,
+              pid_t recv_process) {
     struct msghdr msg;
     struct iovec iov[1];
 
@@ -129,7 +137,7 @@ int ipcSendFd(ipcHandle *handle, const int shareableHandle, pid_t process) {
     bzero(&cliaddr, sizeof(cliaddr));
     cliaddr.sun_family = AF_UNIX;
     char temp[50];
-    int name_len = snprintf(temp, 50, "/tmp/nvshmem-socket-%u", process);
+    int name_len = snprintf(temp, 50, "/tmp/nvshmem-socket-%u-%u", send_process, recv_process);
     if (name_len < 0 || name_len >= 50) {
         printf("Error formatting socket file name\n");
         return -1;

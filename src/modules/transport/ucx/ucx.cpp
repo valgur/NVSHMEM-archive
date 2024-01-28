@@ -373,7 +373,8 @@ error:
     return status;
 }
 
-int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t, int selected_device_id) {
+int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t, int *selected_dev_ids,
+                                   int num_selected_devs) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)t->state;
     ucx_ep_handle_t local_ep_handle, *ep_handles = NULL;
     ucs_status_t ucs_rc;
@@ -387,6 +388,12 @@ int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t, int selected_device_id
 
     ep_count = ucx_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
     ucx_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
+
+    if (ucx_state->endpoints != NULL) {
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out_already_connected,
+                           "Device already selected. ucx only supports"
+                           " one NIC per PE.\n");
+    }
 
     ucx_state->endpoints = (ucp_ep_h *)calloc(n_pes * ep_count, sizeof(ucp_ep_h));
     NVSHMEMI_NULL_ERROR_JMP(ucx_state->endpoints, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -439,8 +446,10 @@ out:
             }
         }
         free(ucx_state->endpoints);
+        ucx_state->endpoints = NULL;
     }
 
+out_already_connected:
     free(ep_handles);
     return status;
 }
@@ -738,7 +747,7 @@ int nvshmemt_ucx_local_amo(struct nvshmem_transport *transport, int pe, void *cu
         }
 
         header = nvshmemt_ucx_get_header(transport);
-        header->header.send_h.addr = remote->ptr;
+        header->header.send_h.addr = remote->remote_memdesc.ptr;
         header->header.send_h.op_size = bytesdesc.elembytes;
         header->header.send_h.value = remote->val;
         header->header.send_h.cmp = remote->cmp;
@@ -803,8 +812,8 @@ int nvshmemt_ucx_remote_amo(struct nvshmem_transport *transport, int pe, void *c
     param.memory_type = UCS_MEMORY_TYPE_CUDA;
     param.datatype = ucp_dt_make_contig(bytesdesc.elembytes);
 
-    assert(remote->handle);
-    mem_handle = (nvshmemt_ucx_mem_handle_t *)remote->handle;
+    assert(remote->remote_memdesc.handle);
+    mem_handle = (nvshmemt_ucx_mem_handle_t *)remote->remote_memdesc.handle;
     if (is_proxy) {
         ep_index = (ucx_state->ep_count * pe + ucx_state->proxy_ep_idx);
         rkey_ptr = &mem_handle->ep_rkey_proxy;
@@ -826,22 +835,22 @@ int nvshmemt_ucx_remote_amo(struct nvshmem_transport *transport, int pe, void *c
         case NVSHMEMI_AMO_ADD:
         case NVSHMEMI_AMO_SIGNAL_ADD: {
             ucs_rc = ucp_atomic_post(ep, UCP_ATOMIC_POST_OP_ADD, remote->val, bytesdesc.elembytes,
-                                     (uint64_t)remote->ptr, rkey);
+                                     (uint64_t)remote->remote_memdesc.ptr, rkey);
             break;
         }
         case NVSHMEMI_AMO_AND: {
             ucs_rc = ucp_atomic_post(ep, UCP_ATOMIC_POST_OP_AND, remote->val, bytesdesc.elembytes,
-                                     (uint64_t)remote->ptr, rkey);
+                                     (uint64_t)remote->remote_memdesc.ptr, rkey);
             break;
         }
         case NVSHMEMI_AMO_OR: {
             ucs_rc = ucp_atomic_post(ep, UCP_ATOMIC_POST_OP_OR, remote->val, bytesdesc.elembytes,
-                                     (uint64_t)remote->ptr, rkey);
+                                     (uint64_t)remote->remote_memdesc.ptr, rkey);
             break;
         }
         case NVSHMEMI_AMO_XOR: {
             ucs_rc = ucp_atomic_post(ep, UCP_ATOMIC_POST_OP_XOR, remote->val, bytesdesc.elembytes,
-                                     (uint64_t)remote->ptr, rkey);
+                                     (uint64_t)remote->remote_memdesc.ptr, rkey);
             break;
         }
         default: { goto fetch_atomic; }
@@ -926,8 +935,8 @@ fetch_atomic:
             }
         }
 
-        ucs_ptr_rc =
-            ucp_atomic_op_nbx(ep, opcode, buffer_value, 1, (uint64_t)remote->ptr, rkey, &param);
+        ucs_ptr_rc = ucp_atomic_op_nbx(ep, opcode, buffer_value, 1,
+                                       (uint64_t)remote->remote_memdesc.ptr, rkey, &param);
 
         if (ucs_ptr_rc != NULL) {
             if (UCS_PTR_IS_ERR(ucs_ptr_rc)) {

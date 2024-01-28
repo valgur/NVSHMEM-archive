@@ -28,6 +28,7 @@ int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, 
 
 int nvshmemi_collective_launch_query_gridsize(const void *func, dim3 blockDims, void **args,
                                               size_t sharedMem, int *gridsize);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,7 +37,8 @@ enum flags {
     NVSHMEMX_INIT_THREAD_PES = 1,
     NVSHMEMX_INIT_WITH_MPI_COMM = 1 << 1,
     NVSHMEMX_INIT_WITH_SHMEM = 1 << 2,
-    NVSHMEMX_INIT_WITH_HANDLE = 1 << 3
+    NVSHMEMX_INIT_WITH_UNIQUEID = 1 << 3,
+    NVSHMEMX_INIT_MAX = 1 << 31
 };
 
 // Local buffer registration
@@ -48,6 +50,9 @@ void nvshmemx_buffer_unregister_all();
 int nvshmemx_init_thread(int requested, int *provided) __attribute__((deprecated));
 void nvshmemx_query_thread(int *provided) __attribute__((deprecated));
 
+int nvshmemx_hostlib_init_attr(unsigned int flags, nvshmemx_init_attr_t *attr);
+void nvshmemx_hostlib_finalize();
+
 static inline int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attributes) {
     int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
     nvshmemi_version_t app_nvshmem_version = {NVSHMEM_INTERLIB_MAJOR_VERSION,
@@ -57,15 +62,18 @@ static inline int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *a
     NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
     return status;
 }
+
+int nvshmemx_set_attr_uniqueid_args(const int myrank, const int nranks,
+                                    const nvshmemx_uniqueid_t *uniqueid,
+                                    nvshmemx_init_attr_t *attr);
+int nvshmemx_get_uniqueid(nvshmemx_uniqueid_t *uniqueid);
+
 int nvshmemx_cumodule_init(CUmodule module);
 int nvshmemx_cumodule_finalize(CUmodule module);
 
 /* Replaced by teams API */
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_my_pe(nvshmemx_team_t team) __attribute__((deprecated));
 NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_n_pes(nvshmemx_team_t team) __attribute__((deprecated));
-
-int nvshmemx_get_init_handle(nvshmemx_init_handle_t *handle);
-int nvshmemx_free_init_handle(nvshmemx_init_handle_t handle);
 
 static inline int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims,
                                              void **args, size_t sharedMem, cudaStream_t stream) {
