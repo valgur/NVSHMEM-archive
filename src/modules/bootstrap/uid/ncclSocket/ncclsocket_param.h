@@ -7,8 +7,7 @@
 #ifndef NCCL_SOCKET_PARAM_H_
 #define NCCL_SOCKET_PARAM_H_
 
-#include <stdint.h>
-#include <stdlib.h>
+#include <stdlib.h>  // for getenv
 
 static inline const char *ncclGetEnv(const char *name) {
   return getenv(name);

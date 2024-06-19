@@ -5,19 +5,18 @@
  * no thread safety
  * only linux*/
 
-#include <assert.h>
-#include <stdint.h>  // IWYU pragma: keep
-// IWYU pragma: no_include <bits/stdint-uintn.h>
-#include <cuda_runtime.h>
-#include <driver_types.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <utility>
-
-#include "internal/common/debug.h"
-#include "internal/host/custom_malloc.h"
-#include "internal/util.h"
+#include <assert.h>                       // for assert
+#include <cuda_runtime.h>                 // for cudaMemcpy, cudaMemset
+#include <driver_types.h>                 // for cudaMemcpyDeviceToDevice
+#include <stdint.h>                       // for uint64_t
+#include <stdio.h>                        // for size_t, printf, NULL
+#include <stdlib.h>                       // for exit
+#include <iosfwd>                         // for std
+#include <map>                            // for map, operator!=, map<>::ite...
+#include <utility>                        // for pair
+#include "internal/host/debug.h"          // for INFO, NVSHMEM_MEM
+#include "internal/host/custom_malloc.h"  // for mspace, NVSHMEMI_MALLOC_ALI...
+#include "internal/host/util.h"           // for CUDA_RUNTIME_CHECK
 
 using namespace std;
 

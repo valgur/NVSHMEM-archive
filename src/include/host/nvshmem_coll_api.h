@@ -12,6 +12,9 @@
 
 #ifndef _NVSHMEM_COLL_API_H_
 #define _NVSHMEM_COLL_API_H_
+#include "device_host/nvshmem_types.h"
+#include "device_host/nvshmem_common.cuh"
+#include "host/nvshmem_macros.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -55,6 +58,9 @@ NVSHMEMI_HOSTDEVICE_PREFIX void nvshmem_sync_all();
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_BROADCAST)
 #undef DECL_NVSHMEM_TYPENAME_BROADCAST
 
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_broadcastmem(nvshmem_team_t team, void *dest,
+                                                    const void *src, size_t nelems, int PE_root);
+
 // fcollect collective
 #define DECL_NVSHMEM_TYPENAME_FCOLLECT(TYPENAME, TYPE)                                            \
     NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##TYPENAME##_fcollect(nvshmem_team_t team, TYPE *dest, \
@@ -62,6 +68,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_BROADCAST)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEM_TYPENAME_FCOLLECT)
 #undef DECL_NVSHMEM_TYPENAME_FCOLLECT
 
+NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_fcollectmem(nvshmem_team_t team, void *dest, const void *src,
+                                                   size_t nelems);
 // reduction collectives
 #define NVSHMEMI_DECL_TEAM_REDUCE(NAME, TYPE, OP)                  \
     NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_##NAME##_##OP##_reduce( \

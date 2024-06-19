@@ -5,14 +5,11 @@
  */
 
 #define NVSHMEMI_HOST_ONLY
-#include "host/nvshmem_api.h"  // IWYU pragma: keep
-#include <stdint.h>            // IWYU pragma: keep
-// IWYU pragma: no_include <bits/stdint-intn.h>
-// IWYU pragma: no_include <bits/stdint-uintn.h>
-#include <stddef.h>
-
-#include "internal/common/nvshmem_internal.h"
-#include "host/nvshmemx_error.h"
+#include <stddef.h>                        // for ptrdiff_t, size_t
+#include <stdint.h>                        // for int32_t, int64_t, uint32_t
+#include "host/nvshmem_api.h"              // for nvshmem_double_atomic_fetch
+#include "non_abi/nvshmemx_error.h"        // for NVSHMEMI_ERROR_PRINT
+#include "internal/host/nvshmemi_types.h"  // for nvshmemi_state, nvshmemi_s...
 
 #define NVSHMEM_TYPE_INC_NOT_IMPLEMENTED(Name, TYPE)                                \
     void nvshmem_##Name##_atomic_inc(TYPE *target, int pe) {                        \

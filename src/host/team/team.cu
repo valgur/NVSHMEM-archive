@@ -4,8 +4,9 @@
  * See COPYRIGHT for license information
  */
 
-#include "internal/common/nvshmem_internal.h"
-#include "internal/util.h"
+#include "team_internal.h"
+#include "internal/host/nvshmem_internal.h"
+#include "internal/host/util.h"
 #include "internal/host/nvshmemi_team.h"
 
 /* Team Managment Routines */

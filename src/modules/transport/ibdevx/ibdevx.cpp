@@ -5,40 +5,36 @@
  */
 
 #include "ibdevx.h"
-#include <assert.h>        // for assert
-#include <stdint.h>        // for uint32_t, uint64_t, uint8_t
-#include <cuda.h>          // for cudaError_enum::CUDA_SUCCESS
-#include <cuda_runtime.h>  // for cudaGetLastError
-#include <endian.h>        // for htobe32, htobe64, htobe16
-#include <errno.h>         // for ENOMEM
-#include <netinet/in.h>    // for ntohl
-#include <pthread.h>       // for pthread_mutex_destroy, pthre...
-#include <stdbool.h>       // for false, true, bool
-#include <stdint.h>        // IWYU pragma: keep
-// IWYU pragma: no_include <bits/stdint-uintn.h>
-#include <stdio.h>   // for printf
-#include <stdlib.h>  // for free, calloc, malloc
-#include <string.h>  // for NULL, memset, memcpy, strcmp
-#include <unistd.h>  // for sysconf, _SC_PAGESIZE
-#include <cmath>     // for log2
-#include <map>       // for map, _Rb_tree_iterator
-#include <string>    // for string
-#include <utility>   // for pair, make_pair
-#include <vector>    // for vector
-
-#include "cudawrap.h"                         // for CUPFN, nvshmemi_cuda_fn_table
-#include "env_defs_internal.h"                // for nvshmemi_options_s, nvshmemi...
-#include "infiniband/mlx5dv.h"                // for DEVX_SET, mlx5_wqe_ctrl_seg
-#include "infiniband/verbs.h"                 // for ibv_port_attr, ibv_ah_attr
-#include "mlx5_ifc.h"                         // for mlx5_ifc_qpc_bits, mlx5_ifc_...
-#include "common/nvshmem_common_transport.h"  // for ::NVSHMEMI_OP_P, ::NVSHMEMI_...
-#include "nvshmemi_bootstrap_defines.h"       // for bootstrap_handle_t
-#include "nvshmemi_transport_defines.h"       // for nvshmem_mem_handle_t
-#include "host/nvshmemx_error.h"              // for nvshmemx_status::NVSHMEMX_ER...
-#include "transport.h"                        // for nvshmem_transport, amo_memde...
-#include "transport_common.h"                 // for nvshmemt_hca_info, nvshmemt_...
-#include "transport_ib_common.h"              // for nvshmemt_ib_common_mem_handle
-#include "transport_mlx5_common.h"            // for nvshmemt_ib_common_query_end...
+#include <assert.h>                                          // for assert
+#include <cuda.h>                                            // for CUDA_SUCCESS, CU_DEVICE...
+#include <cuda_runtime.h>                                    // for cudaGetLastError
+#include <endian.h>                                          // for htobe32, htobe64, htobe16
+#include <errno.h>                                           // for ENOMEM
+#include <netinet/in.h>                                      // for ntohl
+#include <pthread.h>                                         // for pthread_mutex_destroy
+#include <stdint.h>                                          // for uint32_t, uint64_t, uin...
+#include <stdio.h>                                           // for NULL, printf, size_t
+#include <stdlib.h>                                          // for free, calloc, malloc
+#include <string.h>                                          // for memset, memcpy, strcmp
+#include <unistd.h>                                          // for sysconf, _SC_PAGESIZE
+#include <cmath>                                             // for log2
+#include <map>                                               // for map, _Rb_tree_iterator
+#include <string>                                            // for string
+#include <utility>                                           // for pair, make_pair
+#include <vector>                                            // for vector
+#include "device_host_transport/nvshmem_common_transport.h"  // for NVSHMEMI_OP_P, NVSHMEMI...
+#include "internal/host_transport/cudawrap.h"                // for CUPFN, nvshmemi_cuda_fn...
+#include "bootstrap_host_transport/env_defs_internal.h"      // for nvshmemi_options_s, nvs...
+#include "non_abi/nvshmemx_error.h"                          // for NVSHMEMX_ERROR_INTERNAL
+#include "infiniband/mlx5dv.h"                               // for DEVX_SET, mlx5_wqe_ctrl...
+#include "infiniband/verbs.h"                                // for ibv_port_attr, ibv_ah_attr
+#include "mlx5_ifc.h"                                        // for mlx5_ifc_qpc_bits, mlx5...
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for bootstrap_handle_t
+#include "internal/host_transport/nvshmemi_transport_defines.h"  // for nvshmem_mem_handle_t
+#include "internal/host_transport/transport.h"                   // for nvshmem_transport, amo_...
+#include "transport_common.h"                                    // for nvshmemt_hca_info, nvsh...
+#include "transport_ib_common.h"                                 // for nvshmemt_ib_common_mem_...
+#include "transport_mlx5_common.h"                               // for nvshmemt_ib_common_chec...
 
 #define ibdevx_MAX_INLINE_SIZE 128
 
@@ -261,17 +257,8 @@ static void *ibv_handle;
 int check_poll_avail(struct ibdevx_ep *ep, int wait_predicate);
 int progress_send(transport_ibdevx_state_t *ibdevx_state);
 
-int nvshmemt_ibdevx_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
-                              int transport_count, int npes, int mype) {
-    for (int i = 0; i < npes; ++i) {
-        printf("[%d] mem_handle %d : %p", mype, transport_id,
-               &mem_handles[i * transport_count + transport_id]);
-        struct nvshmemt_ib_common_mem_handle *mem_handle =
-            (struct nvshmemt_ib_common_mem_handle
-                 *)&mem_handles[i * transport_count + transport_id];
-        printf("[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey, mem_handle->rkey,
-               mem_handle->mr);
-    }
+int nvshmemt_ibdevx_show_info(struct nvshmem_transport *transport, int style) {
+    NVSHMEMI_ERROR_PRINT("ibdevx show info not implemented");
     return 0;
 }
 
@@ -1663,12 +1650,14 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     int offset = 0;
     int log_qp_depth;
     uint32_t atomic_host_endian_size = 0;
+    int flag;
+    CUdevice gpu_device_id;
 
-    if (api_version != NVSHMEM_TRANSPORT_INTERFACE_VERSION) {
+    if (NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version) != NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION) {
         NVSHMEMI_ERROR_PRINT(
             "NVSHMEM provided an incompatible version of the transport interface. "
-            "This transport supports a maximum API version of %d",
-            NVSHMEM_TRANSPORT_INTERFACE_VERSION);
+            "This transport supports transport API major version %d. Host has %d",
+            NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION, NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version));
         return NVSHMEMX_ERROR_INVALID_VALUE;
     }
 
@@ -1804,6 +1793,17 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         }
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "nvshmemt_ib_common_query_endianness_conversion_size failed.\n");
+
+        status = nvshmemt_ib_common_check_nic_ext_atomic_support(device->context);
+        if (status) {
+            ftable.close_device(device->context);
+            device->context = NULL;
+            NVSHMEMI_WARN_PRINT(
+                "device %s does not support all necessary atomic operations. You may want to check "
+                "the PCI_ATOMIC_MODE value in the NIC firmware. Skipping...\n",
+                name);
+            continue;
+        }
 
         NVSHMEMT_IBDEVX_MAX_RD_ATOMIC = (device->device_attr).max_qp_rd_atom;
         INFO(ibdevx_state->log_level,
@@ -1960,15 +1960,14 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     transport->atomics_complete_on_quiet = true;
     transport->max_op_len = 1ULL << 30;
     transport->atomic_host_endian_min_size = atomic_host_endian_size;
-    transport->api_version = NVSHMEM_TRANSPORT_INTERFACE_VERSION;
+    transport->api_version = api_version < NVSHMEM_TRANSPORT_INTERFACE_VERSION
+                                 ? api_version
+                                 : NVSHMEM_TRANSPORT_INTERFACE_VERSION;
 
     *t = transport;
 
     ibdevx_state->table = table;
     ibdevx_state->dmabuf_support = false;
-#if CUDA_VERSION >= 11070
-    int flag;
-    CUdevice gpu_device_id;
 
     if (ibdevx_state->options->IB_DISABLE_DMABUF) {
         ibdevx_state->dmabuf_support = false;
@@ -1980,8 +1979,9 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         status = NVSHMEMX_ERROR_INTERNAL;
         goto out;
     }
-    status = CUPFN(
-        table, cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, gpu_device_id));
+    status = CUPFN(table, cuDeviceGetAttribute(
+                              &flag, (CUdevice_attribute)CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED,
+                              gpu_device_id));
     if (status != CUDA_SUCCESS) {
         status = 0;
         cudaGetLastError();
@@ -1989,7 +1989,6 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         ibdevx_state->dmabuf_support = true;
     }
 check_nv_peer_mem:
-#endif
 
     if (ibdevx_state->dmabuf_support == false) {
         if (nvshmemt_ib_common_nv_peer_mem_available() != NVSHMEMX_SUCCESS) {

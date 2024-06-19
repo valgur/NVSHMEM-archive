@@ -4,19 +4,16 @@
  * See COPYRIGHT for license information
  */
 
-#include "host/nvshmemx_api.h"  // IWYU pragma: keep
-#include <stdint.h>             // IWYU pragma: keep
-// IWYU pragma: no_include <bits/stdint-intn.h>
-// IWYU pragma: no_include <bits/stdint-uintn.h>
-#include <driver_types.h>
-#include <stddef.h>
-
-#include "alltoall.h"
-#include "common/nvshmem_common.cuh"
-#include "internal/common/nvshmem_internal.h"
-#include "internal/host/nvshmem_nvtx.hpp"
-#include "common/nvshmem_types.h"
-#include "internal/util.h"
+#include <driver_types.h>                    // for cudaStream_t
+#include <stddef.h>                          // for size_t, ptrdiff_t
+#include <stdint.h>                          // for int16_t, int32_t, int64_t
+#include "alltoall.h"                        // for nvshmemi_alltoall_on_s...
+#include "device_host/nvshmem_common.cuh"    // for NVSHMEMI_REPT_FOR_STAN...
+#include "device_host/nvshmem_types.h"       // for nvshmem_team_t
+#include "host/nvshmemx_coll_api.h"          // for nvshmemx_alltoallmem_o...
+#include "internal/host/nvshmem_internal.h"  // for NVSHMEMI_CHECK_INIT_ST...
+#include "internal/host/nvshmem_nvtx.hpp"    // for nvtx_cond_range, NVTX_...
+#include "internal/host/util.h"              // for NVSHMEM_API_NOT_SUPPOR...
 
 #define DEFN_NVSHMEMX_TYPENAME_ALLTOALL_ON_STREAM(TYPENAME, TYPE)                                  \
     int nvshmemx_##TYPENAME##_alltoall_on_stream(                                                  \

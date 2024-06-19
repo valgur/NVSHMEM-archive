@@ -4,25 +4,22 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include <cuda.h>
+#include <cuda.h>  // for CUresult
 #if CUDART_VERSION >= 11030
 #include <cudaTypedefs.h>
 #else
 // IWYU pragma: no_include <cudaTypedefs.h>
 #endif
 
-#include <cuda_runtime.h>
-#include <dlfcn.h>
-#include <driver_types.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-#include "modules/transport/cudawrap.h"
-#include "modules/transport/env_defs_internal.h"
-#include "internal/common/debug.h"
-#include "internal/error_codes_internal.h"
-#include "internal/util.h"
+#include <cuda_runtime.h>                                // for cudaDriverGetVersion
+#include <dlfcn.h>                                       // for dlsym, dlopen, RTLD...
+#include <driver_types.h>                                // for cudaError_t
+#include <stdio.h>                                       // for NULL, snprintf
+#include "internal/host/debug.h"                         // for WARN, INFO, NVSHMEM...
+#include "internal/host/error_codes_internal.h"          // for NVSHMEMI_SYSTEM_ERROR
+#include "internal/host/util.h"                          // for nvshmemi_options
+#include "internal/host_transport/cudawrap.h"            // for nvshmemi_cuda_fn_table
+#include "bootstrap_host_transport/env_defs_internal.h"  // for nvshmemi_options_s
 
 static enum {
     cudaUninitialized,
@@ -69,10 +66,8 @@ static int cudaPfnFuncLoader(struct nvshmemi_cuda_fn_table *table) {
     LOAD_SYM(table, cuCtxGetCurrent, 4000, , 0);
     LOAD_SYM(table, cuCtxGetFlags, 7000, , 0);
     LOAD_SYM(table, cuCtxSetFlags, 12010, , 1);
-#if CUDA_VERSION >= 11070
+    LOAD_SYM(table, cuFlushGPUDirectRDMAWrites, 11030, , 1);
     LOAD_SYM(table, cuMemGetHandleForAddressRange, 11070, , 1);  // DMA-BUF support
-#endif
-#if CUDA_VERSION >= 11000
     LOAD_SYM(table, cuMemCreate, 10020, , 1);
     LOAD_SYM(table, cuMemMap, 10020, , 1);
     LOAD_SYM(table, cuMemAddressReserve, 10020, , 1);
@@ -83,7 +78,6 @@ static int cudaPfnFuncLoader(struct nvshmemi_cuda_fn_table *table) {
     LOAD_SYM(table, cuMemRelease, 10020, , 1);
     LOAD_SYM(table, cuMemSetAccess, 10020, , 1);
     LOAD_SYM(table, cuMemUnmap, 10020, , 1);
-#endif
     return NVSHMEMI_SUCCESS;
 }
 
@@ -98,9 +92,9 @@ int nvshmemi_cuda_library_init(struct nvshmemi_cuda_fn_table *table) {
      */
     char path[1024];
     if (!nvshmemi_options.CUDA_PATH_provided)
-        snprintf(path, 1024, "%s", "libcuda.so");
+        snprintf(path, 1024, "%s", "libcuda.so.1");
     else
-        snprintf(path, 1024, "%s/%s", nvshmemi_options.CUDA_PATH, "libcuda.so");
+        snprintf(path, 1024, "%s/%s", nvshmemi_options.CUDA_PATH, "libcuda.so.1");
 
     cudaLib = dlopen(path, RTLD_LAZY);
     if (cudaLib == NULL) {

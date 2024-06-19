@@ -8,18 +8,22 @@
 #include <algorithm>
 #include <cuda_runtime.h>
 
-#include "common/nvshmem_version.h"
-#include "internal/common/nvshmem_internal.h"
-#include "internal/util.h"
-#include "device/pt-to-pt/proxy_device.cuh"
+#include "non_abi/nvshmem_build_options.h"
+#include "non_abi/nvshmem_version.h"
+#include "non_abi/nvshmemx_error.h"
+#include "internal/device/nvshmemi_device.h"
+#include "non_abi/device/pt-to-pt/proxy_device.cuh"
+#include "device_host/nvshmem_common.cuh"
+#include "device_host/nvshmem_types.h"
 
 #ifdef NVSHMEM_IBGDA_SUPPORT
-#include "common/nvshmem_common_ibgda.h"
+#include "device_host_transport/nvshmem_common_ibgda.h"
 
 __constant__ nvshmemi_ibgda_device_state_t nvshmemi_ibgda_device_state_d;
 #endif
 
-__constant__ nvshmemi_device_state_t nvshmemi_device_state_d;
+nvshmemi_device_state_t nvshmemi_device_only_state;
+__constant__ nvshmemi_device_host_state_t nvshmemi_device_state_d;
 const nvshmemi_version_t nvshmemi_device_lib_version = {
     NVSHMEM_INTERLIB_MAJOR_VERSION, NVSHMEM_INTERLIB_MINOR_VERSION, NVSHMEM_INTERLIB_PATCH_VERSION};
 __constant__ nvshmemi_version_t nvshmemi_device_lib_version_d = {
@@ -53,13 +57,24 @@ void nvshmemi_get_mem_handle(void **dev_state_ptr, void **transport_dev_state_pt
 }
 #endif
 
+static int _nvshmemi_init_device_only_state() {
+    int status = 0;
+    status = nvshmemi_setup_collective_launch();
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "_nvshmemi_init_device_only_state failed\n");
+    nvshmemi_device_only_state.is_initialized = true;
+
+out:
+    return status;
+}
+
 void nvshmemi_check_state_and_init_d() {
     int status;
     int ret;
 
-    if (!nvshmemi_is_nvshmem_bootstrapped)
+    if (nvshmemid_init_status() == NVSHMEM_STATUS_NOT_INITIALIZED)
         NVSHMEMI_ERROR_EXIT("nvshmem API called before nvshmem_init \n");
-    if (!nvshmemi_is_nvshmem_initialized) {
+    if (nvshmemid_init_status() == NVSHMEM_STATUS_IS_BOOTSTRAPPED) {
         /* The fact that we can pass NVSHMEM_THREAD_SERIALIZED
          * here is an implementation detail. It should be fixed
          * if/when NVSHMEM_THREAD_* becomes significant. */
@@ -68,7 +83,18 @@ void nvshmemi_check_state_and_init_d() {
         if (status) {
             NVSHMEMI_ERROR_EXIT("nvshmem initialization failed, exiting \n");
         }
+
+        status = cudaGetDevice(&nvshmemi_device_only_state.cuda_device_id);
+        if (status) {
+            NVSHMEMI_ERROR_EXIT("nvshmem cuda device query failed, exiting \n");
+        }
+
         nvshmemid_hostlib_finalize(NULL, NULL);
+    }
+
+    status = _nvshmemi_init_device_only_state();
+    if (status) {
+        NVSHMEMI_ERROR_EXIT("nvshmem device initialization failed, exiting \n");
     }
 }
 
@@ -93,17 +119,22 @@ int nvshmemi_init_thread(int requested_thread_support, int *provided_thread_supp
                          nvshmemi_version_t nvshmem_app_version) {
     int status = 0;
 
-    if (nvshmemi_is_version_compatible(nvshmem_app_version, nvshmemi_device_lib_version) != 0) {
-        printf(
-            "NVSHMEM version used in application does not match with NVSHMEM device library "
-            "version\n");
-        return 1;
-    }
     status = nvshmemid_hostlib_init_attr(requested_thread_support, provided_thread_support,
                                          bootstrap_flags, bootstrap_attr,
                                          nvshmemi_device_lib_version, &nvshmemi_get_mem_handle);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmem_internal_init_thread failed \n");
+
+    if (nvshmemid_init_status() > NVSHMEM_STATUS_IS_BOOTSTRAPPED) {
+        status = _nvshmemi_init_device_only_state();
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "nvshmem_internal_init_thread failed at init_device_only_state.\n");
+
+        status = cudaGetDevice(&nvshmemi_device_only_state.cuda_device_id);
+        if (status) {
+            NVSHMEMI_ERROR_EXIT("nvshmem cuda device query failed, exiting \n");
+        }
+    }
 
 out:
     return status;

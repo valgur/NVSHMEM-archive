@@ -1,4 +1,69 @@
 ===============================================================================
+				Changes in 3.0.6
+===============================================================================
+# Added support for Multi-node systems that have both RDMA networks
+(IB, RoCE, Slingshot, etc) as well as NVLink as a multi-node interconnects.
+# Added support for ABI backward compatibility between host and device libraries.
+Within the same NVSHMEM major version, newer host library will continue to be
+compatible with an older device library version. The work involved minimizing
+ABI surface between host and device libraries and versioning of structs and
+functions that are part of the new ABI surface. 
+# Enhance NVSHMEM's memory management infrastructure using object oriented
+programming (OOP) framework with multi-level inheritance to manage support for
+various memory types and to enable support for newer memory types in the future. 
+# Added support for PTX testing in NVSHMEM.
+# Added support for CPU assisted IBGDA via the NIC handler to manage NIC doorbell.
+The NIC handler can now be selected through the new environment variable -
+`NVSHMEM_IBGDA_NIC_HANDLER`. This feature would enable IBGDA adoption on systems
+that don't have `PeerMappingOverride=1` driver setting.
+# Improved performance of IBGDA transport initialization by 20-50% when scaling up
+the number of PEs, by batching and minimizing the number of memory registration
+invocations for IB control structures. 
+# Enhance support for composing NVSHMEM_TEAM_SHARED on Multi-node NVLink (MNNVL)
+based systems.
+# Improved performance for block scoped reductions by parallelizing send/recv data,
+when sending small size messages. Also, NVSHMEM device code compiled with CUDA 11.0
+and std=c++17 will automatically make use of cooperative group reduction APIs to
+improve performance of local reductions.
+# Fixed implementation of system scoped atomic memory operations (AMO) 
+such as `nvshmem_fence/atomic_<ops>` and signaled operations `nvshmem_signal_<op>`
+when communicating over NVLink.
+# Added IBGDA support to automatically prefer RC over DC connected QPs and update
+the default values of `NVSHMEM_IBGDA_NUM_RC_PER_PE/NVSHMEM_IBGDA_NUM_DCI` to be 1.
+# Added assertions in DEVX and IBGDA transport for checking extended atomics
+support in the RDMA NICs.
+# Added support for no-collective synchronization action in
+`nvshmem_malloc/calloc/align/free`, to follow OpenSHMEM spec compliant behavior,
+when requested size or buffer in heap is 0 and NULL respectively.
+# Added support for `nvshmemx_fcollectmem/broadcastmem` device and onstream APIs
+# Improved performance tracing for on-stream and host collectives performance
+benchmarks using `cudaEventElapsedTime` instead of `gettimeofday` API.
+# Added support for performance benchmark `bootstrap_coll` for various bootstrap
+modalities in NVSHMEM.
+# Added support for "Include-What-You-Use" (IWYU) framework in CMake build system.
+# Removed support for deprecated Power-9 systems.
+# Removed support for deprecated makefile build system. NVSHMEM now support CMake
+build system exclusively
+# Fixed a bug in remote transports during memory regisration and deregistration,
+with respect to memory handle management cache.
+# Fixed a bug in QP mapping options `NVSHMEM_IBGDA_DCI_MAP_BY=warp` or
+`NVSHMEM_IBGDA_RC_MAP_BY=warp`, which previously lead to suboptimal mapping of
+QPs to warps/DCTs.
+# Fixed a bug to dynamically load explicitly versioned `libcuda.so` and `libnvml.so`.
+# Fixed a bug in computing NVSHMEM team symmetric heap memory requirements during
+runtime initialization. 
+# Fixed a bug related to stale filepaths when aborting a NVSHMEM runtime. 
+# Fixed a bug when building NVSHMEM remote transports with
+`HAVE_IBV_ACCESS_RELAXED_ORDERING` set.
+# Fixed a bug that exhibits the behavior of a GPU device hang, when using RC QP
+type with IBGDA.
+# Fixed a bug with an incorrect value of broadcast LL threshold.
+# Fixed a bug in IBDEVX related to incorrect endianness check.
+# Fixed a memory leak in `nvshmem_team_destroy` related to missing teardown for
+two internal subteams for each user created team.
+# Fixed several minor bugs and memory leaks.
+
+===============================================================================
 				Changes in 2.11.0
 ===============================================================================
 

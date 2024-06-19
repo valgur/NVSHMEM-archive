@@ -4,6 +4,7 @@
  * See COPYRIGHT for license information
  */
 
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -13,15 +14,60 @@
 #include <stdbool.h>
 
 #include "bootstrap_util.h"
-#include "modules/common/nvshmemi_bootstrap_defines.h"
-#include "nvshmemi_bootstrap.h"
-#include "host/nvshmemx_error.h"
+#include "bootstrap_host_transport/env_defs_internal.h"  // IWYU pragma: keep
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"
+#include "internal/bootstrap_host/nvshmemi_bootstrap.h"
+#include "non_abi/nvshmemx_error.h"
 #include "pmix_common.h"
 
 #define BOOTSTRAP_PMIX_KEYSIZE 64
 
 static pmix_proc_t myproc;
 int bootstrap_debug_enable = 0;
+static struct nvshmemi_options_s env_attr;
+
+/* Define common types */
+#define BOOTPRI_string "\"%s\""
+
+#define BOOTSTRAP_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, DESIRED_CAT, STYLE) \
+    if (CATEGORY == DESIRED_CAT) {                                                                 \
+        switch (STYLE) {                                                                           \
+            char *desc_wrapped;                                                                    \
+            case BOOTSTRAP_OPTIONS_STYLE_INFO:                                                     \
+                desc_wrapped = bootstrap_util_wrap_string(SHORT_DESC, 80, "\t", 1);                \
+                printf("  NVSHMEM_%-20s " BOOTPRI_##KIND " (type: %s, default: " BOOTPRI_##KIND    \
+                       ")\n\t%s\n",                                                                \
+                       #NAME, NVSHFMT_##KIND(env_attr.NAME), #KIND, NVSHFMT_##KIND(DEFAULT),       \
+                       desc_wrapped);                                                              \
+                free(desc_wrapped);                                                                \
+                break;                                                                             \
+            case BOOTSTRAP_OPTIONS_STYLE_RST:                                                      \
+                desc_wrapped = bootstrap_util_wrap_string(SHORT_DESC, 80, NULL, 0);                \
+                printf(".. c:var:: NVSHMEM_%s\n", #NAME);                                          \
+                printf("\n");                                                                      \
+                printf("| *Type: %s*\n", #KIND);                                                   \
+                printf("| *Default: " BOOTPRI_##KIND "*\n", NVSHFMT_##KIND(DEFAULT));              \
+                printf("\n");                                                                      \
+                printf("%s\n", desc_wrapped);                                                      \
+                printf("\n");                                                                      \
+                free(desc_wrapped);                                                                \
+                break;                                                                             \
+            default:                                                                               \
+                assert(0);                                                                         \
+        }                                                                                          \
+    }
+
+static int bootstrap_pmix_showinfo(struct bootstrap_handle *handle, int style) {
+    bootstrap_util_print_header(style, "Bootstrap Options");
+
+#define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)        \
+    BOOTSTRAP_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, \
+                                NVSHMEMI_ENV_CAT_BOOTSTRAP, style)
+#include "env_defs.h"
+#undef NVSHMEMI_ENV_DEF
+    printf("\n");
+    return 0;
+}
 
 static int bootstrap_pmix_barrier(bootstrap_handle_t *handle) {
     pmix_status_t status = PMIx_Fence(NULL, 0, NULL, 0);
@@ -200,7 +246,7 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
     proc.rank = PMIX_RANK_WILDCARD;
     pmix_value_t *val;
     int bootstrap_version = NVSHMEMI_BOOTSTRAP_ABI_VERSION;
-    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version)) {
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version, true)) {
         BOOTSTRAP_ERROR_PRINT(
             "PMIx bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
             bootstrap_version, abi_version);
@@ -219,6 +265,10 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
     BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                            "PMIx_Get(PMIX_JOB_SIZE) failed\n");
 
+    handle->version = NVSHMEM_BOOTSTRAP_MAJOR_MINOR_VERSION(abi_version) <
+                              NVSHMEM_BOOTSTRAP_MAJOR_MINOR_VERSION(bootstrap_version)
+                          ? abi_version
+                          : bootstrap_version;
     handle->pg_rank = myproc.rank;
     handle->pg_size = val->data.uint32;
     handle->allgather = bootstrap_pmix_allgather;
@@ -228,6 +278,7 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
     handle->finalize = bootstrap_pmix_finalize;
     handle->comm_state = (void *)(&myproc);
     handle->pre_init_ops = NULL;
+    handle->show_info = bootstrap_pmix_showinfo;
 
     PMIX_VALUE_RELEASE(val);
 

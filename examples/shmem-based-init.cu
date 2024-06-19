@@ -15,7 +15,7 @@
 #include "nvshmem.h"
 
 int main(int c, char *v[]) {
-    nvshmemx_init_attr_t attr;
+    nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
 
     shmem_init();
     nvshmemx_init_attr(NVSHMEMX_INIT_WITH_SHMEM, &attr);

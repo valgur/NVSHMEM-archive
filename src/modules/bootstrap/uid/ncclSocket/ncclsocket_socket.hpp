@@ -7,13 +7,11 @@
 #ifndef NCCL_SOCKET_SOCKET_H_
 #define NCCL_SOCKET_SOCKET_H_
 
-#include "ncclsocket_nccl.h"
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
-#include <fcntl.h>
-#include <poll.h>
+#include <netdb.h>            // for NI_MAXHOST, NI_MAXSERV
+#include <netinet/in.h>       // for sockaddr_in, sockaddr_in6
+#include <stdint.h>           // for uint32_t, uint64_t
+#include <sys/socket.h>       // for sockaddr
+#include "ncclsocket_nccl.h"  // for ncclResult_t
 
 #define MAX_IFS 16
 #define MAX_IF_NAME_SIZE 16

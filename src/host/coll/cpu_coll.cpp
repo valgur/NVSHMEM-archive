@@ -5,15 +5,26 @@
  */
 
 #include "cpu_coll.h"
-#include "modules/transport/env_defs_internal.h"
-#include "common/nvshmem_common.cuh"  // for nvshmemi_device_state
-#include "common/nvshmem_types.h"
-#include "internal/util.h"
+#include <assert.h>                                      // for assert
+#include <algorithm>                                     // for max
+#include <iosfwd>                                        // for std
+#include "bootstrap_host_transport/env_defs_internal.h"  // for nvshmemi_opt...
+#include "device_host/nvshmem_types.h"                   // for gpu_coll_env...
+#include "internal/host/debug.h"                         // for WARN
+#include "internal/host/nvshmem_internal.h"              // for nvshmemi_is_...
+#include "internal/host/util.h"                          // for nvshmemi_opt...s
+#include "non_abi/nvshmem_build_options.h"               // for NVSHMEM_USE_...
+#include "non_abi/nvshmemx_error.h"                      // for NVSHMEMI_WAR...
+
+using namespace std;
+
 #ifdef NVSHMEM_USE_NCCL
-#include <dlfcn.h>
-#include "nccl.h"
+#include <dlfcn.h>  // for dlsym, dlopen, RTLD...
+#include "nccl.h"   // for NCCL_VERSION_CODE
 struct nccl_function_table nccl_ftable;
 #endif /* NVSHMEM_USE_NCCL */
+
+#define MIN_REDUCE_RECEXCH_VALUE 2
 
 #define LOAD_SYM(handle, symbol, funcptr)  \
     do {                                   \
@@ -25,9 +36,25 @@ struct nccl_function_table nccl_ftable;
 int nvshmemi_use_nccl = 0;
 int nccl_version;
 
-int nvshmemi_coll_common_cpu_read_env() {
+static int nvshmemi_coll_common_cpu_read_env() {
     int status = 0;
-    nvshmemi_device_state.fcollect_ll_threshold = nvshmemi_options.FCOLLECT_LL_THRESHOLD;
+    nvshmemi_device_state.gpu_coll_env_params_var.barrier_tg_dissem_kval =
+        nvshmemi_options.BARRIER_TG_DISSEM_KVAL;
+    nvshmemi_device_state.gpu_coll_env_params_var.fcollect_ll_threshold =
+        nvshmemi_options.FCOLLECT_LL_THRESHOLD;
+    nvshmemi_device_state.gpu_coll_env_params_var.reduce_recexch_kval =
+        nvshmemi_options.REDUCE_RECEXCH_KVAL;
+
+    if (nvshmemi_device_state.gpu_coll_env_params_var.reduce_recexch_kval > nvshmemi_state->npes)
+        nvshmemi_device_state.gpu_coll_env_params_var.reduce_recexch_kval =
+            max(MIN_REDUCE_RECEXCH_VALUE, nvshmemi_state->npes);
+
+    nvshmemi_device_state.gpu_coll_env_params_var.bcast_tree_kval =
+        nvshmemi_options.BCAST_TREE_KVAL;
+    assert(nvshmemi_options.BCAST_TREE_KVAL >= 2);
+
+    nvshmemi_device_state.gpu_coll_env_params_var.bcast_algo = nvshmemi_options.BCAST_ALGO;
+    nvshmemi_device_state.gpu_coll_env_params_var.reduce_algo = nvshmemi_options.REDMAXLOC_ALGO;
     return status;
 }
 

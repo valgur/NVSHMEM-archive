@@ -13,13 +13,23 @@
 #ifndef _NVSHMEMX_DEFINES_H_
 #define _NVSHMEMX_DEFINES_H_
 
-#include "common/nvshmem_common.cuh"
-#include "device/nvshmemi_common_device.cuh"
+#include <cuda_runtime.h>
+#include "device_host/nvshmem_common.cuh"
+#include "non_abi/device/common/nvshmemi_common_device.cuh"
+#include "non_abi/device/threadgroup/nvshmemi_common_device_defines.cuh"
+#include "device/nvshmemx_collective_launch_apis.h"
 
 #ifdef __CUDA_ARCH__
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+__device__ inline void nvshmemx_vendor_get_version_info(int *major, int *minor, int *patch) {
+    *major = NVSHMEM_VENDOR_MAJOR_VERSION;
+    *minor = NVSHMEM_VENDOR_MINOR_VERSION;
+    *patch = NVSHMEM_VENDOR_PATCH_VERSION;
+}
+
 __device__ inline void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
     nvshmemi_signal_op(sig_addr, signal, sig_op, pe);
 }
@@ -43,7 +53,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_PUT_THREADGROUP)
 template <typename T>
 __device__ inline void nvshmemi_signal(T *dest, const T value, int pe) {
     const void *peer_base_addr =
-        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
+        (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
     if (peer_base_addr != NULL) {
         volatile T *dest_actual =
             (volatile T *)((char *)(peer_base_addr) +
@@ -60,7 +70,7 @@ __device__ inline void nvshmemi_signal(T *dest, const T value, int pe) {
         int sig_op, int pe, bool is_nbi) {                                                     \
         NVSHMEMI_DECL_THREAD_IDX##SC_SUFFIX();                                                 \
         void *peer_base_addr = (void *)__ldg(                                                  \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);          \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);      \
         if (peer_base_addr) {                                                                  \
             nvshmemx_##TYPENAME##_put##SC_SUFFIX(dest, source, nelems, pe);                    \
             if (myIdx == 0) {                                                                  \
@@ -310,7 +320,7 @@ DEFINE_NVSHMEM_GETMEM_NBI_THREADGROUP(block)
         Type *dest, const Type *source, ptrdiff_t dst, ptrdiff_t sst, size_t nelems, int pe) {    \
         NVSHMEMI_SYNC_##Group();                                                                  \
         void *peer_base_addr = (void *)__ldg(                                                     \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);             \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);         \
         if (peer_base_addr) {                                                                     \
             NVSHMEMI_DECL_THREAD_IDX_##Group();                                                   \
             NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                             \
@@ -341,7 +351,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_IPUT_THREADGROUP)
         void *dest, const void *source, ptrdiff_t dst, ptrdiff_t sst, size_t nelems, int pe) {    \
         NVSHMEMI_SYNC_##Group();                                                                  \
         void *peer_base_addr = (void *)__ldg(                                                     \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);             \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);         \
         if (peer_base_addr) {                                                                     \
             NVSHMEMI_DECL_THREAD_IDX_##Group();                                                   \
             NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                             \
@@ -372,7 +382,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_IPUTSIZE_THREADGROUP)
         Type *dest, const Type *source, ptrdiff_t dst, ptrdiff_t sst, size_t nelems, int pe) { \
         NVSHMEMI_SYNC_##Group();                                                               \
         void *peer_base_addr = (void *)__ldg(                                                  \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);          \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);      \
         if (peer_base_addr) {                                                                  \
             NVSHMEMI_DECL_THREAD_IDX_##Group();                                                \
             NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                          \
@@ -404,7 +414,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_IGET_THREADGROUP)
         void *dest, const void *source, ptrdiff_t dst, ptrdiff_t sst, size_t nelems, int pe) { \
         NVSHMEMI_SYNC_##Group();                                                               \
         void *peer_base_addr = (void *)__ldg(                                                  \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);          \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);      \
         if (peer_base_addr) {                                                                  \
             NVSHMEMI_DECL_THREAD_IDX_##Group();                                                \
             NVSHMEMI_DECL_THREADGROUP_SIZE_##Group();                                          \
@@ -430,20 +440,11 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DEFINE_NVSHMEM_TYPE_IGET_THREADGROUP)
 NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(DEFINE_NVSHMEM_IGETSIZE_THREADGROUP)
 #undef DEFINE_NVSHMEM_IGETSIZE_THREADGROUP
 
-/* __device__ nvshmem_signal */
-#define DEFINE_NVSHMEMX_TYPE_SIGNAL(TYPENAME, TYPE)                                             \
-    __device__ inline void nvshmemx_##TYPENAME##_signal(TYPE *dest, const TYPE value, int pe) { \
-        nvshmemi_signal<TYPE>(dest, value, pe);                                                 \
-    }
-
-NVSHMEMX_REPT_FOR_SIGNAL_TYPES(DEFINE_NVSHMEMX_TYPE_SIGNAL)
-#undef DEFINE_NVSHMEMX_TYPE_SIGNAL
-
 #endif /* __CUDA_ARCH__ */
 
 #ifdef __cplusplus
 }
 #endif
-#include "device/coll/defines.cuh"
+#include "non_abi/device/coll/defines.cuh"
 
 #endif

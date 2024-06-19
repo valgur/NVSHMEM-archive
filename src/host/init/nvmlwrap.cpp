@@ -1,12 +1,11 @@
 #include "internal/host/nvmlwrap.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <dlfcn.h>
-#include <string.h>
-
-#include "modules/transport/env_defs_internal.h"
-#include "internal/common/debug.h"
-#include "internal/util.h"
+#include <dlfcn.h>                                       // for dlsym, dlclose, dlopen
+#include <stdio.h>                                       // for NULL, snprintf
+#include <string.h>                                      // for memset
+#include "non_abi/nvshmemx_error.h"                      // for NVSHMEMI_ERROR_PRINT
+#include "internal/host/debug.h"                         // for INFO, NVSHMEM_INIT
+#include "internal/host/util.h"                          // for nvshmemi_options
+#include "bootstrap_host_transport/env_defs_internal.h"  // for nvshmemi_options_s
 
 #define LOAD_SYM(handle, symbol, funcptr, optional, ret)        \
     do {                                                        \
@@ -24,9 +23,9 @@ int nvshmemi_nvml_ftable_init(struct nvml_function_table *nvml_ftable, void **nv
     char path[1024];
 
     if (!nvshmemi_options.CUDA_PATH_provided)
-        snprintf(path, 1024, "%s", "libnvidia-ml.so");
+        snprintf(path, 1024, "%s", "libnvidia-ml.so.1");
     else
-        snprintf(path, 1024, "%s/%s", nvshmemi_options.CUDA_PATH, "libnvidia-ml.so");
+        snprintf(path, 1024, "%s/%s", nvshmemi_options.CUDA_PATH, "libnvidia-ml.so.1");
 
     *nvml_handle = dlopen(path, RTLD_NOW);
     if (!(*nvml_handle)) {

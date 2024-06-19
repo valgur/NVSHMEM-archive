@@ -9,11 +9,12 @@
 #include <cuda_runtime.h>
 #include <driver_types.h>
 
-#include "internal/common/nvshmem_internal.h"
+#include "internal/host/nvshmem_internal.h"
+#include "internal/host/nvshmemi_types.h"
 #include "internal/host/nvshmem_nvtx.hpp"
-#include "host/nvshmemx_error.h"
-#include "modules/transport/transport.h"
-#include "internal/util.h"
+#include "non_abi/nvshmemx_error.h"
+#include "internal/host_transport/transport.h"
+#include "internal/host/util.h"
 
 void nvshmemi_call_proxy_quiet_entrypoint(cudaStream_t cstrm);
 #ifdef __cplusplus
@@ -47,8 +48,8 @@ void nvshmem_quiet(void) {
             struct nvshmem_transport *tcurr =
                 ((nvshmem_transport_t *)nvshmemi_state->transports)[j];
             for (int k = 0; k < nvshmemi_state->npes; k++) {
-                if (nvshmemi_state->quiet[j]) {
-                    status = nvshmemi_state->quiet[j](tcurr, k, 0);
+                if (tcurr->host_ops.quiet) {
+                    status = tcurr->host_ops.quiet(tcurr, k, 0);
                 }
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "nvshmem_quiet() failed \n");
@@ -81,11 +82,9 @@ void nvshmemx_quiet_on_stream(cudaStream_t cstrm) {
     NVSHMEMI_CHECK_INIT_STATUS();
 
     int in_cuda_graph = 0;
-#if CUDART_VERSION >= 10000  // cudaStreamIsCapturing
     cudaStreamCaptureStatus status;
     CUDA_RUNTIME_CHECK(cudaStreamIsCapturing(cstrm, &status));
     if (status == cudaStreamCaptureStatusActive) in_cuda_graph = 1;
-#endif
 
     nvshmemi_quiesce_internal_streams(cstrm);
 

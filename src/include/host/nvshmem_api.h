@@ -13,15 +13,17 @@
 #ifndef _NVSHMEM_API_H_
 #define _NVSHMEM_API_H_
 
+#include <cuda_runtime.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "common/nvshmem_common.cuh"
-#include "common/nvshmem_constants.h"
-#include "common/nvshmem_version.h"
+#include "device_host/nvshmem_common.cuh"
+#include "device_host_transport/nvshmem_constants.h"
+#include "host/nvshmem_macros.h"
+#include "non_abi/nvshmem_version.h"
 
 int nvshmemi_init_thread(int requested_thread_support, int *provided_thread_support,
                          unsigned int bootstrap_flags, nvshmemx_init_attr_t *bootstrap_attr,
@@ -88,6 +90,26 @@ void *nvshmem_realloc(void *ptr, size_t size);
 NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmem_ptr(const void *ptr, int pe);
 
 //////////////////// OpenSHMEM 1.3 Atomics ////////////////////
+
+#define NVSHMEMI_REPT_OPGROUP_FOR_BITWISE_AMO(OPGRPNAME, opname)                  \
+    NVSHMEMI_DECL_TYPE_##OPGRPNAME(uint, unsigned int, opname)                    \
+        NVSHMEMI_DECL_TYPE_##OPGRPNAME(ulong, unsigned long, opname)              \
+            NVSHMEMI_DECL_TYPE_##OPGRPNAME(ulonglong, unsigned long long, opname) \
+                NVSHMEMI_DECL_TYPE_##OPGRPNAME(int32, int32_t, opname)            \
+                    NVSHMEMI_DECL_TYPE_##OPGRPNAME(uint32, uint32_t, opname)      \
+                        NVSHMEMI_DECL_TYPE_##OPGRPNAME(int64, int64_t, opname)    \
+                            NVSHMEMI_DECL_TYPE_##OPGRPNAME(uint64, uint64_t, opname)
+
+#define NVSHMEMI_REPT_OPGROUP_FOR_STANDARD_AMO(OPGRPNAME, opname)       \
+    NVSHMEMI_DECL_TYPE_##OPGRPNAME(int, int, opname)                    \
+        NVSHMEMI_DECL_TYPE_##OPGRPNAME(long, long, opname)              \
+            NVSHMEMI_DECL_TYPE_##OPGRPNAME(longlong, long long, opname) \
+                NVSHMEMI_DECL_TYPE_##OPGRPNAME(size, size_t, opname)    \
+                    NVSHMEMI_DECL_TYPE_##OPGRPNAME(ptrdiff, ptrdiff_t, opname)
+
+#define NVSHMEMI_REPT_OPGROUP_FOR_EXTENDED_AMO(OPGRPNAME, opname) \
+    NVSHMEMI_DECL_TYPE_##OPGRPNAME(float, float, opname)          \
+        NVSHMEMI_DECL_TYPE_##OPGRPNAME(double, double, opname)
 
 /* inc */
 #define NVSHMEMI_DECL_TYPE_INC(type, TYPE, opname) \
@@ -455,43 +477,6 @@ int nvshmem_team_split_2d(nvshmem_team_t parent_team, int xrange,
                           nvshmem_team_t *xaxis_team, const nvshmem_team_config_t *yaxis_config,
                           long yaxis_mask, nvshmem_team_t *yaxis_team);
 void nvshmem_team_destroy(nvshmem_team_t team);
-
-//////////////////// Deprecated API ////////////////////
-
-static inline void nvstart_pes(int npes) __attribute__((deprecated));
-static inline int NVSHMEMI_HOSTDEVICE_PREFIX nv_num_pes(void) __attribute__((deprecated));
-static inline int NVSHMEMI_HOSTDEVICE_PREFIX nv_my_pe(void) __attribute__((deprecated));
-static inline void *nvshmalloc(size_t size) __attribute__((deprecated));
-static inline void nvshfree(void *ptr) __attribute__((deprecated));
-static inline void *nvshrealloc(void *ptr, size_t size) __attribute__((deprecated));
-static inline void *nvshmemalign(size_t alignment, size_t size) __attribute__((deprecated));
-
-static inline void nvstart_pes(int npes) {
-    NVSHMEMI_UNUSED_ARG(npes);
-    nvshmem_init();
-}
-static inline int NVSHMEMI_HOSTDEVICE_PREFIX nv_num_pes(void) { return nvshmem_n_pes(); }
-static inline int NVSHMEMI_HOSTDEVICE_PREFIX nv_my_pe(void) { return nvshmem_my_pe(); }
-static inline void *nvshmalloc(size_t size) { return nvshmem_malloc(size); }
-static inline void nvshfree(void *ptr) { nvshmem_free(ptr); }
-static inline void *nvshrealloc(void *ptr, size_t size) { return nvshmem_realloc(ptr, size); }
-static inline void *nvshmemalign(size_t alignment, size_t size) {
-    return nvshmem_align(alignment, size);
-}
-
-static inline void nvshmem_clear_cache_inv(void) __attribute__((deprecated));
-static inline void nvshmem_set_cache_inv(void) __attribute__((deprecated));
-static inline void nvshmem_clear_cache_line_inv(void *dest) __attribute__((deprecated));
-static inline void nvshmem_set_cache_line_inv(void *dest) __attribute__((deprecated));
-static inline void nvshmem_udcflush(void) __attribute__((deprecated));
-static inline void nvshmem_udcflush_line(void *dest) __attribute__((deprecated));
-
-static inline void nvshmem_clear_cache_inv(void) {}
-static inline void nvshmem_set_cache_inv(void) {}
-static inline void nvshmem_clear_cache_line_inv(void *dest) { NVSHMEMI_UNUSED_ARG(dest); }
-static inline void nvshmem_set_cache_line_inv(void *dest) { NVSHMEMI_UNUSED_ARG(dest); }
-static inline void nvshmem_udcflush(void) {}
-static inline void nvshmem_udcflush_line(void *dest) { NVSHMEMI_UNUSED_ARG(dest); }
 
 #ifdef __cplusplus
 }

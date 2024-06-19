@@ -13,14 +13,16 @@
 #ifndef _NVSHMEMX_API_H_
 #define _NVSHMEMX_API_H_
 
+#include <cuda.h>
+#include <cuda_runtime.h>
 #include <stdint.h>
 #include <stddef.h>
-#include "cuda.h"
-#include "common/nvshmem_constants.h"
-#include "common/nvshmem_common.cuh"
-#include "common/nvshmem_version.h"
+#include "device_host_transport/nvshmem_constants.h"
+#include "device_host/nvshmem_common.cuh"
+#include "non_abi/nvshmem_version.h"
 #include "host/nvshmemx_coll_api.h"
-#include "host/nvshmemx_error.h"
+#include "host/nvshmem_macros.h"
+#include "non_abi/nvshmemx_error.h"
 #include "host/nvshmem_api.h"
 
 int nvshmemi_collective_launch(const void *func, dim3 gridDims, dim3 blockDims, void **args,
@@ -46,10 +48,6 @@ int nvshmemx_buffer_register(void *addr, size_t length);
 int nvshmemx_buffer_unregister(void *addr);
 void nvshmemx_buffer_unregister_all();
 
-/* Renamed from nvshmemx_<FUNC> to nvshmem_<FUNC> */
-int nvshmemx_init_thread(int requested, int *provided) __attribute__((deprecated));
-void nvshmemx_query_thread(int *provided) __attribute__((deprecated));
-
 int nvshmemx_hostlib_init_attr(unsigned int flags, nvshmemx_init_attr_t *attr);
 void nvshmemx_hostlib_finalize();
 
@@ -58,6 +56,9 @@ static inline int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *a
     nvshmemi_version_t app_nvshmem_version = {NVSHMEM_INTERLIB_MAJOR_VERSION,
                                               NVSHMEM_INTERLIB_MINOR_VERSION,
                                               NVSHMEM_INTERLIB_PATCH_VERSION};
+    if (attributes != NULL) {
+        nvshmemx_init_init_attr_ver_only((*attributes));
+    }
     status = nvshmemi_init_thread(requested, &provided, flags, attributes, app_nvshmem_version);
     NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
     return status;
@@ -70,20 +71,6 @@ int nvshmemx_get_uniqueid(nvshmemx_uniqueid_t *uniqueid);
 
 int nvshmemx_cumodule_init(CUmodule module);
 int nvshmemx_cumodule_finalize(CUmodule module);
-
-/* Replaced by teams API */
-NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_my_pe(nvshmemx_team_t team) __attribute__((deprecated));
-NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_n_pes(nvshmemx_team_t team) __attribute__((deprecated));
-
-static inline int nvshmemx_collective_launch(const void *func, dim3 gridDims, dim3 blockDims,
-                                             void **args, size_t sharedMem, cudaStream_t stream) {
-    return nvshmemi_collective_launch(func, gridDims, blockDims, args, sharedMem, stream);
-}
-static inline int nvshmemx_collective_launch_query_gridsize(const void *func, dim3 blockDims,
-                                                            void **args, size_t sharedMem,
-                                                            int *gridsize) {
-    return nvshmemi_collective_launch_query_gridsize(func, blockDims, args, sharedMem, gridsize);
-}
 
 //////////////////// Put On Stream ////////////////////
 
@@ -456,13 +443,6 @@ __device__ void nvshmemx_getmem_nbi_warp(void *dest, const void *source, size_t 
 __device__ void nvshmemx_getmem_nbi_block(void *dest, const void *source, size_t bytes, int pe);
 
 //////////////////// Signal ////////////////////
-
-#define NVSHMEMX_DECL_TYPE_SIGNAL(NAME, TYPE)                                      \
-    __device__ void nvshmemx_##NAME##_signal(TYPE *dest, const TYPE value, int pe) \
-        __attribute__((deprecated));
-
-NVSHMEMX_REPT_FOR_SIGNAL_TYPES(NVSHMEMX_DECL_TYPE_SIGNAL)
-#undef NVSHMEMX_DECL_TYPE_SIGNAL
 
 NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op,
                                                    int pe);

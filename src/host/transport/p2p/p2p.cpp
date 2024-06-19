@@ -1,37 +1,30 @@
 /*
- * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
  *
  * See COPYRIGHT for license information
  */
 
 #include "p2p.h"
+#include <cuda_runtime.h>                             // for cudaD...
+#include <driver_types.h>                             // for cudaD...
+#include <nvml.h>                                     // for NVML_...
+#include <stdio.h>                                    // for snprintf
+#include <stdlib.h>                                   // for free
+#include <string.h>                                   // for memset
+#include "internal/host_transport/cudawrap.h"         // for CUPFN
+#include "non_abi/nvshmemx_error.h"                   // for NVSHM...
+#include "internal/host/debug.h"                      // for INFO
+#include "internal/host/nvshmem_internal.h"           // for nvshm...
+#include "internal/host/nvmlwrap.h"                   // for nvml_...
+#include "internal/host/nvshmemi_symmetric_heap.hpp"  // for nvshm...
+#include "internal/host/nvshmemi_mem_transport.hpp"   // for nvshm...
+#include "internal/host/nvshmemi_types.h"             // for nvshm...
+#include "internal/host/util.h"                       // for NVSHM...
+#include "internal/host_transport/transport.h"        // for nvshm...
 
-#include <assert.h>
-#include <cuda_runtime.h>
-#include <driver_types.h>
-#include <nvml.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "cudawrap.h"
-#include "internal/common/debug.h"
-#include "internal/common/nvshmem_internal.h"
-#include "host/nvshmemx_error.h"
-#include "modules/transport/transport.h"
-#include "internal/util.h"
-#include "internal/host/nvmlwrap.h"
-
-void *nvml_handle;
-struct nvml_function_table nvml_ftable;
-
-bool nvshmemi_is_mnnvl_run = 0;
 int nvshmemt_p2p_init(nvshmem_transport_t *transport);
 
-int nvshmemt_p2p_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id, int transport_count,
-                           int npes, int mype) {
+int nvshmemt_p2p_show_info(struct nvshmem_transport *transport, int style) {
     /*XXX : not implemented*/
     return 0;
 }
@@ -45,7 +38,9 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
     int peer_devid;
     transport_p2p_state_t *p2p_state = (transport_p2p_state_t *)transport->state;
     int atomics_supported = 0;
-    char remote_pcie_bus_id[NVSHMEM_PCIE_DBF_BUFFER_LEN];
+    char remote_pcie_bus_id[NVSHMEM_PCIE_BDF_BUFFER_LEN];
+    bool is_heap_vmm = false;
+    struct nvml_function_table *nvml_ftable = nvshmemi_state->p2p_transport->get_nvml_ftable();
 
     nvmlReturn_t nvml_status;
     nvmlDevice_t local_device;
@@ -56,6 +51,14 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
          "[%p] ndev %d pcie_devid %x cudevice %x peer host hash %lx p2p host hash %lx", p2p_state,
          p2p_state->ndev, peer_info->pcie_id.dev_id, p2p_state->cudevice, peer_info->hostHash,
          p2p_state->hostHash);
+
+    /* Check if the peer GPU is connected via the MNNVL fabric */
+    if (nvshmemi_state->p2p_transport->is_nvl_connected_pe(peer_info->pe)) {
+        *access = NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST |
+                  NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ATOMICS;
+        goto out;
+    }
+
     if (peer_info->hostHash != p2p_state->hostHash) {
         *access = 0;
         goto out;
@@ -73,15 +76,21 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
         }
     }
 
+    /** Check if heap is VMM type or not */
+    if (nullptr !=
+        dynamic_cast<nvshmemi_symmetric_heap_vidmem_dynamic_vmm *>(nvshmemi_state->heap_obj)) {
+        is_heap_vmm = true;
+    }
+
     /* In the case where we don't have access to the GPU directly,
      * and we aren't using VMM, look using NVML.
      */
     if (!found) {
-        if (nvshmemi_cuda_driver_version >= 12000 || !nvshmemi_use_cuda_vmm) {
-            status = snprintf(remote_pcie_bus_id, NVSHMEM_PCIE_DBF_BUFFER_LEN, "%x:%x:%x.0",
+        if (nvshmemi_cuda_driver_version >= 12000 || !is_heap_vmm) {
+            status = snprintf(remote_pcie_bus_id, NVSHMEM_PCIE_BDF_BUFFER_LEN, "%x:%x:%x.0",
                               peer_info->pcie_id.domain_id, peer_info->pcie_id.bus_id,
                               peer_info->pcie_id.dev_id);
-            if (status < 0 || status > NVSHMEM_PCIE_DBF_BUFFER_LEN) {
+            if (status < 0 || status > NVSHMEM_PCIE_BDF_BUFFER_LEN) {
                 INFO(NVSHMEM_TRANSPORT, "Unable to prepare buffer for NVML device detection.\n");
                 status = 0;
                 goto out;
@@ -89,19 +98,19 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
 
             status = 0;
             nvml_status =
-                nvml_ftable.nvmlDeviceGetHandleByPciBusId(remote_pcie_bus_id, &remote_device);
+                nvml_ftable->nvmlDeviceGetHandleByPciBusId(remote_pcie_bus_id, &remote_device);
             if (nvml_status != NVML_SUCCESS) {
                 INFO(NVSHMEM_TRANSPORT, "Unable to dereference device by UUID using NVML.\n");
                 goto out;
             }
             nvml_status =
-                nvml_ftable.nvmlDeviceGetHandleByPciBusId(p2p_state->pcie_bdf, &local_device);
+                nvml_ftable->nvmlDeviceGetHandleByPciBusId(p2p_state->pcie_bdf, &local_device);
             if (nvml_status != NVML_SUCCESS) {
                 INFO(NVSHMEM_TRANSPORT, "Unable to dereference device by UUID using NVML.\n");
                 goto out;
             }
-            nvml_status = nvml_ftable.nvmlDeviceGetP2PStatus(local_device, remote_device,
-                                                             NVML_P2P_CAPS_INDEX_READ, &stat);
+            nvml_status = nvml_ftable->nvmlDeviceGetP2PStatus(local_device, remote_device,
+                                                              NVML_P2P_CAPS_INDEX_READ, &stat);
             if (nvml_status != NVML_SUCCESS) {
                 *access = 0;
                 INFO(
@@ -112,8 +121,8 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
             } else if (stat == NVML_P2P_STATUS_OK) {
                 *access |= NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD;
             }
-            nvml_status = nvml_ftable.nvmlDeviceGetP2PStatus(local_device, remote_device,
-                                                             NVML_P2P_CAPS_INDEX_WRITE, &stat);
+            nvml_status = nvml_ftable->nvmlDeviceGetP2PStatus(local_device, remote_device,
+                                                              NVML_P2P_CAPS_INDEX_WRITE, &stat);
             if (nvml_status != NVML_SUCCESS) {
                 *access = 0;
                 INFO(NVSHMEM_TRANSPORT,
@@ -124,8 +133,8 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
             } else if (stat == NVML_P2P_STATUS_OK) {
                 *access |= NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST;
             }
-            nvml_status = nvml_ftable.nvmlDeviceGetP2PStatus(local_device, remote_device,
-                                                             NVML_P2P_CAPS_INDEX_ATOMICS, &stat);
+            nvml_status = nvml_ftable->nvmlDeviceGetP2PStatus(local_device, remote_device,
+                                                              NVML_P2P_CAPS_INDEX_ATOMICS, &stat);
             if (nvml_status != NVML_SUCCESS) {
                 INFO(NVSHMEM_TRANSPORT, "Unable to get atomic status using NVML.\n");
             } else if (stat == NVML_P2P_STATUS_OK) {
@@ -171,130 +180,7 @@ out:
     return status;
 }
 
-int nvshmemt_p2p_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
-                                nvshmem_mem_handle_t *mem_handle_in, void *buf, size_t length,
-                                nvshmem_transport_t transport, bool local_only) {
-    int status = 0;
-
-    if (local_only) {
-        goto out;
-    }
-#if CUDA_VERSION >= 11000
-    if (nvshmemi_use_cuda_vmm) {
-        CUmemGenericAllocationHandle *handle_in =
-            reinterpret_cast<CUmemGenericAllocationHandle *>(mem_handle_in);
-        static_assert(sizeof(CUmemGenericAllocationHandle) <= NVSHMEM_MEM_HANDLE_SIZE,
-                      "sizeof(CUmemGenericAllocationHandle) <= NVSHMEM_MEM_HANDLE_SIZE");
-        INFO(NVSHMEM_TRANSPORT, "calling cuMemExportToShareableHandle on buf: %p size: %d", buf,
-             length);
-        status = CUPFN(nvshmemi_cuda_syms,
-                       cuMemExportToShareableHandle((void *)mem_handle, *handle_in,
-                                                    nvshmemi_cuda_mem_handle_type, 0));
-        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                              "cuMemExportToShareableHandle failed \n");
-    } else
-#endif
-        if (nvshmemi_device_state.symmetric_heap_kind == 0) {
-        cudaIpcMemHandle_t *ipc_handle = (cudaIpcMemHandle_t *)mem_handle;
-
-        assert(sizeof(cudaIpcMemHandle_t) <= NVSHMEM_MEM_HANDLE_SIZE);
-
-        INFO(NVSHMEM_TRANSPORT, "calling cuIpcGetMemHandle on buf: %p size: %zu", buf, length);
-
-        status = cudaIpcGetMemHandle(ipc_handle, buf);
-        NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                              "cudaIpcGetMemHandle failed \n");
-    } else {
-        /* Do nothing when heap kind is sysmem */
-    }
-out:
-    return status;
-}
-
-int nvshmemt_p2p_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_transport_t t) {
-    // it is a noop
-    return 0;
-}
-
-int nvshmemt_p2p_map(void **buf, size_t size, nvshmem_mem_handle_t *mem_handle) {
-    int status = 0;
-#if CUDA_VERSION >= 11000
-    if (nvshmemi_use_cuda_vmm) {
-        CUmemGenericAllocationHandle peer_handle;
-        CUmemAccessDesc access;
-        CUdevice gpu_device_id;
-
-        status = CUPFN(nvshmemi_cuda_syms, cuCtxGetDevice(&gpu_device_id));
-        if (status != CUDA_SUCCESS) {
-            status = NVSHMEMX_ERROR_INTERNAL;
-            goto out;
-        }
-        if (nvshmemi_cuda_mem_handle_type == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
-            int fd = *(int *)mem_handle;
-            status = CUPFN(nvshmemi_cuda_syms,
-                           cuMemImportFromShareableHandle(&peer_handle, (void *)(uintptr_t)fd,
-                                                          nvshmemi_cuda_mem_handle_type));
-        } else {
-            status = CUPFN(nvshmemi_cuda_syms,
-                           cuMemImportFromShareableHandle(&peer_handle, (void *)mem_handle,
-                                                          nvshmemi_cuda_mem_handle_type));
-        }
-        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                              "cuMemImportFromShareableHandle failed state->device_id : %d \n",
-                              gpu_device_id);
-
-        status = CUPFN(nvshmemi_cuda_syms, cuMemMap((CUdeviceptr)*buf, size, 0, peer_handle, 0));
-        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                              "cuMemMap failed to map %ld bytes handle at address: %p\n", size,
-                              *buf);
-        access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-        access.location.id = gpu_device_id;
-        access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-        status = CUPFN(nvshmemi_cuda_syms, cuMemRelease(peer_handle));
-        NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                              "cuMemRelease failed \n");
-        status = CUPFN(nvshmemi_cuda_syms, cuMemSetAccess((CUdeviceptr)*buf, size,
-                                                          (const CUmemAccessDesc *)&access, 1));
-    } else
-#endif
-        if (nvshmemi_device_state.symmetric_heap_kind == 0) {
-        cudaIpcMemHandle_t *ipc_handle = (cudaIpcMemHandle_t *)mem_handle;
-
-        status = cudaIpcOpenMemHandle(buf, *ipc_handle, cudaIpcMemLazyEnablePeerAccess);
-        NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                              "cudaIpcOpenMemHandle failed with error %d \n", status);
-    } else {
-        /* Do nothing if sysmem heap kind */
-    }
-out:
-    return status;
-}
-
-int nvshmemt_p2p_unmap(void *buf, size_t size) {
-    int status = 0;
-
-#if CUDA_VERSION >= 11000
-    if (nvshmemi_use_cuda_vmm) {
-        status = CUPFN(nvshmemi_cuda_syms, cuMemUnmap((CUdeviceptr)buf, size));
-        NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                              "cuMemUnmap failed with error %d \n", status);
-    } else
-#endif
-        if (nvshmemi_device_state.symmetric_heap_kind == 0) {
-        status = cudaIpcCloseMemHandle(buf);
-        NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INVALID_VALUE, out,
-                              "cudaIpcCloseMemHandle failed with error %d \n", status);
-    } else {
-        /* Do nothing when heap kind is sysmem */
-    }
-out:
-    return status;
-}
-
 int nvshmemt_p2p_finalize(nvshmem_transport_t transport) {
-    int status = 0;
-    nvmlReturn_t nvml_status;
-
     if (!transport) return 0;
 
     if (transport->state) {
@@ -307,31 +193,15 @@ int nvshmemt_p2p_finalize(nvshmem_transport_t transport) {
         free(p2p_state);
     }
 
-    if (nvml_handle) {
-        nvml_status = nvml_ftable.nvmlShutdown();
-        if (nvml_status != NVML_SUCCESS) {
-            INFO(NVSHMEM_TRANSPORT, "Unable to stop NVML library in NVSHMEM.");
-        }
-        nvshmemi_nvml_ftable_fini(&nvml_ftable, &nvml_handle);
-    }
-
     free(transport);
-
-    return status;
+    return 0;
 }
 
 int nvshmemt_p2p_init(nvshmem_transport_t *t) {
     int status = 0;
-    int nvml_status;
-    struct nvshmem_transport *transport;
-    transport_p2p_state_t *p2p_state;
-    int flag = false;
-    nvmlDevice_t local_device;
-    cudaDeviceProp prop;
-    nvmlGpuFabricInfoV_t fabricInfo = {}, fabricInfo1 = {}, fabricInfo2 = {};
-    fabricInfo.version = nvmlGpuFabricInfo_v2;
-    fabricInfo1.version = nvmlGpuFabricInfo_v2;
-    fabricInfo2.version = nvmlGpuFabricInfo_v2;
+    int nbytes = 0;
+    struct nvshmem_transport *transport = NULL;
+    transport_p2p_state_t *p2p_state = NULL;
 
     transport = (struct nvshmem_transport *)malloc(sizeof(struct nvshmem_transport));
     NVSHMEMI_NULL_ERROR_JMP(transport, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -375,12 +245,13 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
         if (p2p_state->cudev[i] == p2p_state->cudevice) {
             p2p_state->device_id = i;
             cudaDeviceProp prop;
-            cudaGetDeviceProperties(&prop, i);
+            status = cudaGetDeviceProperties(&prop, i);
             NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                                   "cudaGetDeviceProperties failed \n");
-            status = snprintf(p2p_state->pcie_bdf, NVSHMEM_PCIE_DBF_BUFFER_LEN, "%x:%x:%x.0",
+            nbytes = snprintf(p2p_state->pcie_bdf, NVSHMEM_PCIE_BDF_BUFFER_LEN, "%x:%x:%x.0",
                               prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
-            if (status < 0 || status > NVSHMEM_PCIE_DBF_BUFFER_LEN) {
+            if (nbytes < 0 || nbytes > NVSHMEM_PCIE_BDF_BUFFER_LEN) {
+                status = NVSHMEMX_ERROR_INTERNAL;
                 NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                    "Unable to set device pcie bdf for our local device.\n");
             }
@@ -392,10 +263,6 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
     }
 
     transport->host_ops.can_reach_peer = nvshmemt_p2p_can_reach_peer;
-    transport->host_ops.get_mem_handle = nvshmemt_p2p_get_mem_handle;
-    transport->host_ops.release_mem_handle = nvshmemt_p2p_release_mem_handle;
-    transport->host_ops.map = nvshmemt_p2p_map;
-    transport->host_ops.unmap = nvshmemt_p2p_unmap;
     transport->host_ops.finalize = nvshmemt_p2p_finalize;
     transport->host_ops.show_info = nvshmemt_p2p_show_info;
 
@@ -405,94 +272,25 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
     transport->no_proxy = true;
 
     *t = transport;
-
-    /* start NVML Library */
-    nvml_status = nvshmemi_nvml_ftable_init(&nvml_ftable, &nvml_handle);
-    if (nvml_status != NVML_SUCCESS) {
-        INFO(NVSHMEM_INIT, "Unable to open NVML. Some features will be disabled.");
-        goto out;
-    }
-
-    nvml_status = nvml_ftable.nvmlInit();
-    if (nvml_status != NVML_SUCCESS) {
-        INFO(NVSHMEM_INIT, "Unable to initialize NVML. Some features will be disabled.");
-        goto out;
-    }
-
-    cudaGetDeviceProperties(&prop, p2p_state->device_id);
-    if (nvshmemi_cuda_driver_version >= 12040 && prop.major >= 9) {
-        nvml_status = nvml_ftable.nvmlDeviceGetHandleByPciBusId(p2p_state->pcie_bdf, &local_device);
-        NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                              "nvmlDeviceGetHandleByPciBusId failed \n");
-
-        if (nvml_ftable.nvmlDeviceGetGpuFabricInfoV == NULL) {
-            NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                                  "nvmlDeviceGetGpuFabricInfoV not found \n");
-        }
-        fabricInfo.clusterUuid[0] = '\0';
-        nvml_status = nvml_ftable.nvmlDeviceGetGpuFabricInfoV(local_device, &fabricInfo);
-        NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                              "nvmlDeviceGetGpuFabricInfoV() failed... Detection of MNNVL "
-                              "environment will not be attempted");
-
-        nvshmemi_state->pe_info[nvshmemi_state->mype].fabricInfo = fabricInfo;
-        status = nvshmemi_boot_handle.allgather(
-            (void *)&nvshmemi_state->pe_info[nvshmemi_state->mype], (void *)nvshmemi_state->pe_info,
-            sizeof(nvshmem_transport_pe_info_t), &nvshmemi_boot_handle);
-        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                              "allgather of pe_info failed \n");
-
-        nvshmemi_is_mnnvl_run = 1;
-        fabricInfo1 = nvshmemi_state->pe_info[0].fabricInfo;
-        if (fabricInfo1.state < NVML_GPU_FABRIC_STATE_COMPLETED ||
-            fabricInfo1.clusterUuid[0] == '\0')
-            nvshmemi_is_mnnvl_run = 0;
-        for (int i = 1; i < nvshmemi_state->npes && nvshmemi_is_mnnvl_run; i++) {
-            fabricInfo2 = nvshmemi_state->pe_info[i].fabricInfo;
-            if (!((fabricInfo2.state == NVML_GPU_FABRIC_STATE_COMPLETED) &&
-                  (fabricInfo2.clusterUuid[0] != '\0') &&
-                  (memcmp(fabricInfo1.clusterUuid, fabricInfo2.clusterUuid,
-                          NVML_GPU_FABRIC_UUID_LEN) == 0) &&
-                  (fabricInfo1.cliqueId == fabricInfo2.cliqueId))) {
-                nvshmemi_is_mnnvl_run = 0;
-                break;
-            }
-        }
-        if (nvshmemi_is_mnnvl_run) {
-            INFO(NVSHMEM_INIT, "This is a MNNVL run");
-        }
-        CUPFN(nvshmemi_cuda_syms,
-              cuDeviceGetAttribute(
-                  &flag,
-                  static_cast<CUdevice_attribute>(CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED),
-                  p2p_state->device_id));
-        nvshmemi_cuda_mem_handle_type =
-            (nvshmemi_is_mnnvl_run && flag)
-                ? static_cast<CUmemAllocationHandleType>(CU_MEM_HANDLE_TYPE_FABRIC)
-                : CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-    }
-
 out:
     if (status) {
-        if (transport) {
-            free(transport);
-            if (p2p_state) {
-                if (p2p_state->cudev) {
-                    free(p2p_state->cudev);
-                }
-                if (p2p_state->pcie_ids) {
-                    free(p2p_state->pcie_ids);
-                }
-                free(p2p_state);
-            }
+        NVSHMEMU_HOST_PTR_FREE(transport);
+        if (p2p_state) {
+            NVSHMEMU_HOST_PTR_FREE(p2p_state->cudev);
+            NVSHMEMU_HOST_PTR_FREE(p2p_state->pcie_ids);
+            NVSHMEMU_HOST_PTR_FREE(p2p_state);
         }
     }
-    if ((status || nvml_status) && nvml_ftable.nvmlShutdown != NULL) {
-        nvml_status = nvml_ftable.nvmlShutdown();
-        if (nvml_status != NVML_SUCCESS) {
-            INFO(NVSHMEM_INIT, "Unable to stop NVML library in NVSHMEM.");
+
+    /* If p2p mem transport intiailization failed during discovery for platform reasons, mark p2p as
+     * not ready for nvshmem initialization in the caller */
+    if (nvshmemi_state->p2p_transport != nullptr) {
+        if (nvshmemi_state->p2p_transport->is_initialized()) {
+            return (status);
+        } else {
+            return (status | NVSHMEMX_ERROR_INTERNAL);
         }
-        nvshmemi_nvml_ftable_fini(&nvml_ftable, &nvml_handle);
+    } else {
+        return (status | NVSHMEMX_ERROR_INTERNAL);
     }
-    return status;
 }

@@ -15,8 +15,8 @@
 #include <stdio.h>
 #include <strings.h>
 
-#include "env_defs_internal.h"
-#include "transport.h"
+#include "internal/host_transport/transport.h"
+#include "bootstrap_host_transport/env_defs_internal.h"
 
 #define MAXPATHSIZE 1024
 #define MAX_TRANSPORT_EP_COUNT 1

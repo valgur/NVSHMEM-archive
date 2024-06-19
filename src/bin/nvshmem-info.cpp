@@ -12,9 +12,9 @@
 #include <string.h>
 #include <unistd.h>  // IWYU pragma: keep
 // IWYU pragma: no_include <bits/getopt_core.h>
-#include "common/nvshmem_constants.h"
-#include "common/nvshmem_version.h"
-#include "internal/util.h"
+#include "device_host_transport/nvshmem_constants.h"
+#include "non_abi/nvshmem_version.h"
+#include "internal/host/util.h"
 
 int opt_env = 0;
 int opt_env_hidden = 0;

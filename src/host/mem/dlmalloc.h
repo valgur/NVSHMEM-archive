@@ -8,6 +8,9 @@
  *   mspace is an opaque type representing an independent
  *     region of space that supports mspace_malloc, etc.
  *     */
+
+#include <stddef.h>
+
 #ifndef _DLMALLOC_H
 #define _DLMALLOC_H
 typedef void* mspace;

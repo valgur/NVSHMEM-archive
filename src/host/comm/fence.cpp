@@ -8,11 +8,12 @@
 #include <cuda_runtime.h>
 #include <driver_types.h>
 
-#include "internal/common/nvshmem_internal.h"
+#include "internal/host/nvshmem_internal.h"
+#include "internal/host/nvshmemi_types.h"
 #include "internal/host/nvshmem_nvtx.hpp"
-#include "host/nvshmemx_error.h"
-#include "modules/transport/transport.h"
-#include "internal/util.h"
+#include "non_abi/nvshmemx_error.h"
+#include "internal/host_transport/transport.h"
+#include "internal/host/util.h"
 
 void nvshmem_fence(void) {
     NVTX_FUNC_RANGE_IN_GROUP(MEMORDER);
@@ -29,9 +30,9 @@ void nvshmem_fence(void) {
                     cudaStream_t custrm = nvshmemi_state->custreams[s];
                     CUDA_RUNTIME_CHECK_GOTO(cudaStreamSynchronize(custrm), status, out);
                 }
-            } else if (nvshmemi_state->fence[j]) {
+            } else if (tcurr->host_ops.fence) {
                 for (int k = 0; k < nvshmemi_state->npes; k++) {
-                    status = nvshmemi_state->fence[j](tcurr, k, 0);
+                    status = tcurr->host_ops.fence(tcurr, k, 0);
                     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                           "nvshmem_fence() failed \n");
                 }

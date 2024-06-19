@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include "host/nvshmemx_error.h"
+#include "non_abi/nvshmemx_error.h"
 
 struct transport_mem_handle_info_cache {
     void **cache;

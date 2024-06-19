@@ -91,12 +91,13 @@
 #endif
 /* clang-format on */
 
-#include <nvtx3/nvToolsExt.h>
-
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <utility>
+#include <nvtx3/nvToolsExt.h>  // for nvtxMessageValue_t, nvtxD...
+// IWYU pragma: no_include <nvtx3/nvtxDetail/nvtxImplCore.h>
+#include <cstdint>      // for uint32_t, uint8_t, int32_t
+#include <iosfwd>       // for std
+#include <memory>       // for unique_ptr
+#include <string>       // for string, wstring
+#include <type_traits>  // for decay, is_same, enable_if
 
 /**
  * @file nvtx3.hpp

@@ -68,7 +68,7 @@ int main(int c, char *v[]) {
         MPI_Comm_size(MPI_COMM_WORLD, &nranks);
         MPI_Comm mpi_comm = MPI_COMM_WORLD;
 
-        nvshmemx_init_attr_t attr;
+        nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
         attr.mpi_comm = &mpi_comm;
         nvshmemx_init_attr(NVSHMEMX_INIT_WITH_MPI_COMM, &attr);
     } else

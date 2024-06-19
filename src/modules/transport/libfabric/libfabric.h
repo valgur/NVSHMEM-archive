@@ -11,8 +11,8 @@
 #include <mutex>
 // IWYU pragma: no_include <bits/stdint-uintn.h>
 
-#include "common/nvshmem_build_options.h"
-#include "common/nvshmem_common_transport.h"
+#include "non_abi/nvshmem_build_options.h"
+#include "device_host_transport/nvshmem_common_transport.h"
 
 #ifdef NVSHMEM_USE_GDRCOPY
 #include "gdrapi.h"

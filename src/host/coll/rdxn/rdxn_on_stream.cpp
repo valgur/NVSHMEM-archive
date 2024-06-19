@@ -4,16 +4,15 @@
  * See COPYRIGHT for license information
  */
 
-#include "host/nvshmemx_api.h"  // IWYU pragma: keep
-#include <driver_types.h>
-#include <stddef.h>
-
-#include "common/nvshmem_common.cuh"
-#include "internal/common/nvshmem_internal.h"
-#include "internal/host/nvshmem_nvtx.hpp"
-#include "common/nvshmem_types.h"
-#include "rdxn.h"
-#include "internal/util.h"
+#include <driver_types.h>                    // for cudaStream_t
+#include <stddef.h>                          // for size_t
+#include "device_host/nvshmem_common.cuh"    // for RDXN_OPS_max, RDXN_OPS...
+#include "device_host/nvshmem_types.h"       // for nvshmem_team_t
+#include "host/nvshmemx_coll_api.h"          // for nvshmemx_char_max_redu...
+#include "internal/host/nvshmem_internal.h"  // for NVSHMEMI_CHECK_INIT_ST...
+#include "internal/host/nvshmem_nvtx.hpp"    // for nvtx_cond_range, NVTX_...
+#include "internal/host/util.h"              // for NVSHMEM_API_NOT_SUPPOR...
+#include "rdxn.h"                            // for nvshmemi_reduce_on_stream
 
 #define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_ON_STREAM(TYPENAME, TYPE, OP)                     \
     int nvshmemx_##TYPENAME##_##OP##_reduce_on_stream(nvshmem_team_t team, TYPE *dest,     \

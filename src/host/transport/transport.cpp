@@ -4,26 +4,34 @@
  * See COPYRIGHT for license information
  */
 
-#include <assert.h>
-#include <dlfcn.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <strings.h>
-#include <memory>
-#include <vector>
+#include <assert.h>                                                        // for assert
+#include <dlfcn.h>                                                         // for dlclose, dlerror
+#include <stdint.h>                                                        // for SIZE_MAX
+#include <stdio.h>                                                         // for snprintf, NULL
+#include <stdlib.h>                                                        // for calloc
+#include <strings.h>                                                       // for strncasecmp
+#include "device_host/nvshmem_types.h"                                     // for nvshmemi_devi...
+#include "device_host/nvshmem_common.cuh"                                  // for nvshmemi_devi...
+#include "non_abi/nvshmemx_error.h"                                        // for NVSHMEMI_ERRO...
+#include "internal/host/debug.h"                                           // for INFO, NVSHMEM...
+#include "internal/host/nvshmem_internal.h"                                // for nvshmemi_loca...
+#include "internal/host/error_codes_internal.h"                            // for NVSHMEMI_INTE...
+#include "internal/host/nvshmemi_symmetric_heap.hpp"                       // for nvshmemi_symm...
+#include "internal/host/nvshmemi_types.h"                                  // for nvshmemi_state_t
+#include "internal/host/util.h"                                            // for nvshmemi_options
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for nvshmemi_boot...
+#include "bootstrap_host_transport/env_defs_internal.h"                    // for nvshmemi_opti...
+#include "internal/host_transport/transport.h"                             // for nvshmem_trans...
+#include "non_abi/nvshmem_build_options.h"                                 // for NVSHMEM_IBGDA...
+#include "non_abi/nvshmem_version.h"                                       // for NVSHMEM_TRANS...
+#include "topo.h"                                                          // for nvshmemi_get_...
 
-#include "internal/common/debug.h"
-#include "modules/transport/env_defs_internal.h"
-#include "internal/error_codes_internal.h"
-#include "common/nvshmem_build_options.h"
-#include "internal/common/nvshmem_internal.h"
-#include "modules/common/nvshmemi_bootstrap_defines.h"
-#include "host/nvshmemx_error.h"
-#include "topo.h"
-#include "modules/transport/transport.h"
-#include "internal/util.h"
+#define TRANSPORT_STRING_MAX_LENGTH 8
+#define NVSHMEM_TRANSPORT_COUNT 6
+#define IB_TRANSPORT_STRING "ibrc"
+#define UCX_TRANSPORT_STRING "ucx"
+#define DEVX_TRANSPORT_STRING "ibdevx"
+#define LIBFABRIC_TRANSPORT_STRING "libfabric"
 
 static void *transport_lib = NULL;
 #ifdef NVSHMEM_IBGDA_SUPPORT
@@ -34,22 +42,18 @@ int nvshmemi_transport_show_info(nvshmemi_state_t *state) {
     int status = 0;
     nvshmem_transport_t *transports = (nvshmem_transport_t *)state->transports;
     for (int i = 0; i < state->num_initialized_transports; ++i) {
-        for (size_t j = 0; j < state->handles.size(); j++) {
-            status = transports[i]->host_ops.show_info(state->handles[j].data(), i,
-                                                       state->num_initialized_transports,
-                                                       state->npes, state->mype);
-            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                  "transport show info failed \n");
-        }
+        transports[i]->host_ops.show_info(transports[i], TRANSPORT_OPTIONS_STYLE_INFO);
     }
-out:
     return status;
 }
 
 int nvshmemi_transport_init(nvshmemi_state_t *state) {
     int status = 0;
     int index = 0;
+#if defined(NVSHMEM_IBRC_SUPPORT) || defined(NVSHMEM_UCX_SUPPORT) || \
+    defined(NVSHMEM_LIBFABRIC_SUPPORT) || defined(NVSHMEM_IBDEVX_SUPPORT)
     int transport_skipped;
+#endif
     nvshmem_transport_t *transports = NULL;
     nvshmemi_transport_init_fn init_fn;
     const int transport_object_file_len = 100;
@@ -70,10 +74,11 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
         status = nvshmemt_p2p_init(&transports[index]);
         if (!status) {
             transports[index]->boot_handle = &nvshmemi_boot_handle;
-            transports[index]->heap_base = nvshmemi_state->heap_base;
+            transports[index]->heap_base = state->heap_obj->get_base();
             transports[index]->cap = (int *)calloc(state->npes, sizeof(int));
             transports[index]->index = index;
-            transports[index]->log2_cumem_granularity = log2_cumem_granularity;
+            transports[index]->log2_cumem_granularity =
+                nvshmemi_state->heap_obj->get_log2_cumem_granularity();
             transports[index]->cache_handle = tmp_cache_ptr;
             if (transports[index]->max_op_len == 0) transports[index]->max_op_len = SIZE_MAX;
             index++;
@@ -159,7 +164,10 @@ int nvshmemi_transport_init(nvshmemi_state_t *state) {
     }
 #endif
 
+#if defined(NVSHMEM_IBRC_SUPPORT) || defined(NVSHMEM_UCX_SUPPORT) || \
+    defined(NVSHMEM_LIBFABRIC_SUPPORT) || defined(NVSHMEM_IBDEVX_SUPPORT)
 transport_init:
+#endif
 
     if (!transport_selected) {
         goto transport_fail;
@@ -185,21 +193,17 @@ transport_init:
 
     status = init_fn(&transports[index], nvshmemi_cuda_syms, NVSHMEM_TRANSPORT_INTERFACE_VERSION);
     if (!status) {
-        assert(transports[index]->api_version == NVSHMEM_TRANSPORT_INTERFACE_VERSION);
+        assert(NVSHMEM_TRANSPORT_MAJOR_MINOR_VERSION(transports[index]->api_version) <=
+               NVSHMEM_TRANSPORT_MAJOR_MINOR_VERSION(NVSHMEM_TRANSPORT_INTERFACE_VERSION));
         transports[index]->boot_handle = &nvshmemi_boot_handle;
         if (nvshmemi_device_state.enable_rail_opt == 1) {
-            size_t cumem_granularity = nvshmemi_state->heap_size * state->npes_node;
-            while (cumem_granularity) {
-                transports[index]->log2_cumem_granularity += 1;
-                cumem_granularity >>= 1;
-            }
-
-            transports[index]->heap_base = nvshmemi_state->global_heap_base;
+            transports[index]->heap_base = nvshmemi_state->heap_obj->get_global_base();
         } else {
-            transports[index]->heap_base = nvshmemi_state->heap_base;
-            transports[index]->log2_cumem_granularity = log2_cumem_granularity;
+            transports[index]->heap_base = state->heap_obj->get_base();
         }
 
+        transports[index]->log2_cumem_granularity =
+            nvshmemi_state->heap_obj->get_log2_cumem_granularity();
         transports[index]->cap = (int *)calloc(state->npes, sizeof(int));
         transports[index]->index = index;
         transports[index]->my_pe = nvshmemi_state->mype;
@@ -247,14 +251,16 @@ transport_fail:
         status =
             init_fn(&transports[index], nvshmemi_cuda_syms, NVSHMEM_TRANSPORT_INTERFACE_VERSION);
         if (!status) {
-            assert(transports[index]->api_version == NVSHMEM_TRANSPORT_INTERFACE_VERSION);
+            assert(NVSHMEM_TRANSPORT_MAJOR_MINOR_VERSION(transports[index]->api_version) <=
+                   NVSHMEM_TRANSPORT_MAJOR_MINOR_VERSION(NVSHMEM_TRANSPORT_INTERFACE_VERSION));
             transports[index]->boot_handle = &nvshmemi_boot_handle;
             if (nvshmemi_device_state.enable_rail_opt == 1) {
-                transports[index]->heap_base = nvshmemi_state->global_heap_base;
+                transports[index]->heap_base = nvshmemi_state->heap_obj->get_global_base();
             } else {
-                transports[index]->heap_base = nvshmemi_state->heap_base;
+                transports[index]->heap_base = state->heap_obj->get_base();
             }
-            transports[index]->log2_cumem_granularity = log2_cumem_granularity;
+            transports[index]->log2_cumem_granularity =
+                nvshmemi_state->heap_obj->get_log2_cumem_granularity();
             transports[index]->cap = (int *)calloc(state->npes, sizeof(int));
             transports[index]->index = index;
             transports[index]->my_pe = nvshmemi_state->mype;
@@ -284,7 +290,7 @@ transport_fail:
 out:
     state->num_initialized_transports = index;
     if (status > 0) {
-        for (int idx = 0; idx <= index; idx++) {
+        for (int idx = 0; idx < index; idx++) {
             nvshmemi_local_mem_cache_fini(
                 (nvshmem_local_buf_cache_t *)transports[idx]->cache_handle);
         }

@@ -12,6 +12,8 @@
 
 #ifndef _NVSHMEMX_COLL_API_H_
 #define _NVSHMEMX_COLL_API_H_
+#include <cuda_runtime.h>
+#include "host/nvshmem_macros.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,12 +48,18 @@ void nvshmemx_sync_all_on_stream(cudaStream_t);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEMX_TYPENAME_BROADCAST_ON_STREAM)
 #undef DECL_NVSHMEMX_TYPENAME_BROADCAST_ON_STREAM
 
+int nvshmemx_broadcastmem_on_stream(nvshmem_team_t team, void *dest, const void *src, size_t nelem,
+                                    int PE_root, cudaStream_t stream);
+
 // fcollect collectives
 #define DECL_NVSHMEMX_TYPENAME_FCOLLECT_ON_STREAM(TYPENAME, TYPE)                                  \
     int nvshmemx_##TYPENAME##_fcollect_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE *src, \
                                                  size_t nelem, cudaStream_t stream);
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(DECL_NVSHMEMX_TYPENAME_FCOLLECT_ON_STREAM)
 #undef DECL_NVSHMEMX_TYPENAME_FCOLLECT_ON_STREAM
+
+int nvshmemx_fcollectmem_on_stream(nvshmem_team_t team, void *dest, const void *src, size_t nelem,
+                                   cudaStream_t stream);
 
 // reduction collectives
 #define NVSHMEMI_DECL_REDUCE_ONSTREAM(NAME, TYPE, OP)                         \

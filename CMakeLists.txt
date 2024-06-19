@@ -235,7 +235,7 @@ endif()
 project(
   NVSHMEM
   LANGUAGES CUDA CXX C
-  VERSION 2.11.0.5
+  VERSION 3.0.6.4
 )
 
 find_package(CUDAToolkit)

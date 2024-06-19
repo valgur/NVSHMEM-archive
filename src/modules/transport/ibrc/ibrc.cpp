@@ -22,18 +22,18 @@
 #include <utility>
 #include <vector>
 
-#include "cudawrap.h"
-#include "env_defs_internal.h"
+#include "internal/host_transport/cudawrap.h"
+#include "bootstrap_host_transport/env_defs_internal.h"
 #ifdef NVSHMEM_USE_GDRCOPY
 #include "gdrapi.h"
 #endif
 #include "infiniband/verbs.h"
-#include "common/nvshmem_build_options.h"
-#include "common/nvshmem_common_transport.h"
-#include "nvshmemi_bootstrap_defines.h"
-#include "nvshmemi_transport_defines.h"
-#include "host/nvshmemx_error.h"
-#include "transport.h"
+#include "non_abi/nvshmem_build_options.h"
+#include "device_host_transport/nvshmem_common_transport.h"
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"
+#include "internal/host_transport/nvshmemi_transport_defines.h"
+#include "non_abi/nvshmemx_error.h"
+#include "internal/host_transport/transport.h"
 #include "transport_common.h"
 #ifdef NVSHMEM_USE_GDRCOPY
 #include "transport_gdr_common.h"
@@ -246,18 +246,8 @@ out:
     return status;
 }
 
-int nvshmemt_ibrc_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
-                            int transport_count, int npes, int mype) {
-    for (int i = 0; i < npes; ++i) {
-        /* TODO: change these prints as needed. This function is currently not called. */
-        printf("[%d] mem_handle %d : %p", mype, transport_id,
-               &mem_handles[i * transport_count + transport_id]);
-        struct nvshmemt_ib_common_mem_handle *mem_handle =
-            (struct nvshmemt_ib_common_mem_handle
-                 *)&mem_handles[i * transport_count + transport_id];
-        printf("[%d] lkey %x rkey %x mr %p", mype, mem_handle->lkey, mem_handle->rkey,
-               mem_handle->mr);
-    }
+int nvshmemt_ibrc_show_info(struct nvshmem_transport *transport, int style) {
+    NVSHMEMI_ERROR_PRINT("ibrc show info not implemented");
     return 0;
 }
 
@@ -568,7 +558,7 @@ int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     }
 out:
     if (status) {
-        if (!local_only) {
+        if (!local_only && ibrc_state->cache != NULL) {
             nvshmemt_mem_handle_cache_remove(t, ibrc_state->cache, buf);
             if (handle_info) {
                 free(handle_info);
@@ -610,7 +600,7 @@ int nvshmemt_ibrc_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_t
         }
 #endif
 
-        nvshmemt_mem_handle_cache_remove(t, state->cache, addr);
+        if (state->cache != NULL) nvshmemt_mem_handle_cache_remove(t, state->cache, addr);
         free(handle_info);
     }
 out:
@@ -897,7 +887,7 @@ int perform_gdrcopy_amo(struct ibrc_ep *ep, gdr_mh_t mh, struct ibrc_atomic_op *
         }
 
         status = ibv_post_send(ep->qp, sr, bad_sr);
-        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_poll_cq failed \n");
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_post_send failed \n");
     }
 
 out:
@@ -1166,7 +1156,7 @@ int nvshmemt_ibrc_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
     TRACE(ibrc_state->log_level, "[%d] ibrc post_send dest handle %p rkey %x src handle %p lkey %x",
           getpid(), remote->handle, sr->wr.rdma.rkey, local->handle, sge->lkey);
     status = ibv_post_send(ep->qp, sr, bad_sr);
-    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_poll_cq failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_post_send failed \n");
 
     ep->head_op_id++;
 
@@ -1302,7 +1292,7 @@ int nvshmemt_ibrc_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, a
 
 post_op:
     status = ibv_post_send(ep->qp, sr, bad_sr);
-    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_exp_post_send failed \n");
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "ibv_post_send failed \n");
 
     ep->head_op_id++;
 
@@ -1531,13 +1521,15 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     struct nvshmemt_hca_info pe_hca_mapping[MAX_NUM_PES_PER_NODE];
     int hca_list_count = 0, pe_hca_map_count = 0, user_selection = 0;
     int offset = 0;
+    int flag;
     connected_qp_count = 0;
+    CUdevice gpu_device_id;
 
-    if (api_version != NVSHMEM_TRANSPORT_INTERFACE_VERSION) {
+    if (NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version) != NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION) {
         NVSHMEMI_ERROR_PRINT(
             "NVSHMEM provided an incompatible version of the transport interface. "
-            "This transport supports a maximum API version of %d",
-            NVSHMEM_TRANSPORT_INTERFACE_VERSION);
+            "This transport supports transport API major version %d. Host has %d",
+            NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION, NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version));
         return NVSHMEMX_ERROR_INVALID_VALUE;
     }
 
@@ -1815,14 +1807,13 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     transport->attr = NVSHMEM_TRANSPORT_ATTR_CONNECTED;
     transport->is_successfully_initialized = true;
     transport->max_op_len = 1ULL << 30;
-    transport->api_version = NVSHMEM_TRANSPORT_INTERFACE_VERSION;
+    transport->api_version = api_version < NVSHMEM_TRANSPORT_INTERFACE_VERSION
+                                 ? api_version
+                                 : NVSHMEM_TRANSPORT_INTERFACE_VERSION;
 
     *t = transport;
 
     ibrc_state->dmabuf_support = false;
-#if CUDA_VERSION >= 11070
-    int flag;
-    CUdevice gpu_device_id;
 
     if (ibrc_state->options->IB_DISABLE_DMABUF) {
         ibrc_state->dmabuf_support = false;
@@ -1834,8 +1825,9 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         status = NVSHMEMX_ERROR_INTERNAL;
         goto out;
     }
-    status = CUPFN(
-        table, cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, gpu_device_id));
+    status = CUPFN(table, cuDeviceGetAttribute(
+                              &flag, (CUdevice_attribute)CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED,
+                              gpu_device_id));
     if (status != CUDA_SUCCESS) {
         status = 0;
         cudaGetLastError();
@@ -1843,7 +1835,6 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         ibrc_state->dmabuf_support = true;
     }
 check_nv_peer_mem:
-#endif
 
     if (ibrc_state->dmabuf_support == false) {
         if (nvshmemt_ib_common_nv_peer_mem_available() != NVSHMEMX_SUCCESS) {

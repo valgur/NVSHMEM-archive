@@ -44,7 +44,7 @@ int main(int c, char *v[]) {
     int *target;
     int rank, nranks;
     MPI_Comm mpi_comm;
-    nvshmemx_init_attr_t attr;
+    nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
     int mype, npes, mype_node;
 
     MPI_CHECK(MPI_Init(&c, &v));

@@ -5,24 +5,26 @@
  */
 
 #include "ucx.h"
-#include <assert.h>
-#include <dlfcn.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ucp/api/ucp.h>
-#include <ucs/memory/memory_type.h>
-#include <ucs/type/status.h>
-#include <ucs/type/thread_mode.h>
-#include <deque>
-
-#include "env_defs_internal.h"
-#include "nvshmemi_bootstrap_defines.h"
-#include "nvshmemi_transport_defines.h"
-#include "host/nvshmemx_error.h"
-#include "transport.h"
-#include "transport_common.h"
+#include <assert.h>                                      // for assert
+#include <dlfcn.h>                                       // for dlopen
+#include <stdlib.h>                                      // for free
+#include <string.h>                                      // for memcpy
+#include <ucp/api/ucp.h>                                 // for ucp_...
+#include <ucs/memory/memory_type.h>                      // for UCS_...
+#include <ucs/type/status.h>                             // for UCS_OK
+#include <ucs/type/thread_mode.h>                        // for UCS_...
+#include <deque>                                         // for deque
+#include "bootstrap_host_transport/env_defs_internal.h"  // for nvsh...
+#include "non_abi/nvshmem_version.h"
+#include "non_abi/nvshmemx_error.h"                                        // for NVSH...
+#include "non_abi/nvshmem_build_options.h"                                 // IWYU pragma: keep
+#include "internal/host_transport/nvshmemi_transport_defines.h"            // for nvsh...
+#include "device_host_transport/nvshmem_common_transport.h"                // for g_el...
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for boot...
+#include "internal/host_transport/transport.h"                             // for nvsh...
+#include "transport_common.h"                                              // for nvsh...
 #ifdef NVSHMEM_USE_GDRCOPY
-#include "transport_gdr_common.h"
+#include "transport_gdr_common.h"  // for gdrc...
 #endif
 
 static void *ibv_handle;
@@ -269,7 +271,8 @@ int nvshmemt_ucx_release_mem_handle(nvshmem_mem_handle_t *mem_handle, nvshmem_tr
         ucp_rkey_destroy(handle->ep_rkey_proxy);
     }
 
-    nvshmemt_mem_handle_cache_remove(t, ucx_state->cache, handle->ptr);
+    if (ucx_state->cache != NULL)
+        nvshmemt_mem_handle_cache_remove(t, ucx_state->cache, handle->ptr);
 out:
     return status;
 }
@@ -1192,8 +1195,7 @@ int nvshmemt_ucx_enforce_cst_at_target(struct nvshmem_transport *tcurr) {
     return 0;
 }
 
-int nvshmemt_ucx_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id, int transport_count,
-                           int npes, int mype) {
+int nvshmemt_ucx_show_info(struct nvshmem_transport *transport, int style) {
     NVSHMEMI_ERROR_PRINT("UCX show info not implemented");
     return 0;
 }
@@ -1220,11 +1222,11 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
 
     struct nvshmemi_options_s options;
 
-    if (api_version != NVSHMEM_TRANSPORT_INTERFACE_VERSION) {
+    if (NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version) != NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION) {
         NVSHMEMI_ERROR_PRINT(
             "NVSHMEM provided an incompatible version of the transport interface. "
-            "This transport supports a maximum API version of %d",
-            NVSHMEM_TRANSPORT_INTERFACE_VERSION);
+            "This transport supports transport API major version %d. Host has %d",
+            NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION, NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version));
         return NVSHMEMX_ERROR_INVALID_VALUE;
     }
 
@@ -1403,7 +1405,9 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     transport->attr = NVSHMEM_TRANSPORT_ATTR_CONNECTED;
     transport->state = (void *)ucx_state;
     transport->is_successfully_initialized = true;
-    transport->api_version = NVSHMEM_TRANSPORT_INTERFACE_VERSION;
+    transport->api_version = api_version < NVSHMEM_TRANSPORT_INTERFACE_VERSION
+                                 ? api_version
+                                 : NVSHMEM_TRANSPORT_INTERFACE_VERSION;
     transport->device_pci_paths = NULL;
     transport->n_devices = 0;
 

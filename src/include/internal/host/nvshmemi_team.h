@@ -2,8 +2,8 @@
 #define NVSHMEMI_TEAM_H
 
 #define N_PSYNCS_PER_TEAM 1
-#include "common/nvshmem_constants.h"
-#include "common/nvshmem_common.cuh"
+#include "device_host_transport/nvshmem_constants.h"
+#include "device_host/nvshmem_common.cuh"
 
 #define N_PSYNC_BYTES 16
 
@@ -15,6 +15,8 @@ extern nvshmemi_team_t nvshmemi_team_same_gpu;
 extern nvshmemi_team_t nvshmemi_team_gpu_leaders;
 
 /* Team Management Routines */
+
+int nvshmemi_set_max_teams(void);
 
 int nvshmemi_team_init(void);
 

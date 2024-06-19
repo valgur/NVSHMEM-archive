@@ -13,30 +13,30 @@ add_library(
   nvshmem_bootstrap_pmi SHARED
 )
 set(ACTIVE_BOOTSTRAPS nvshmem_bootstrap_pmi)
-target_sources(nvshmem_bootstrap_pmi PRIVATE modules/bootstrap/pmi/bootstrap_pmi.cpp
+target_sources(nvshmem_bootstrap_pmi PRIVATE modules/bootstrap/common/bootstrap_util.cpp
+                                             modules/bootstrap/pmi/bootstrap_pmi.cpp
                                              modules/bootstrap/pmi/simple-pmi/simple_pmi.cpp
                                              modules/bootstrap/pmi/simple-pmi/simple_pmiutil.cpp)
 target_include_directories(nvshmem_bootstrap_pmi
                            PRIVATE include
-			           include/modules/bootstrap
-                                   include/modules/common
-                                   modules/bootstrap/pmi/simple-pmi
+                           modules/bootstrap/common
+                           modules/bootstrap/pmi/simple-pmi
 )
 
 add_library(
   nvshmem_bootstrap_pmi2 SHARED
 )
 set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_pmi2)
-target_sources(nvshmem_bootstrap_pmi2 PRIVATE modules/bootstrap/pmi/bootstrap_pmi.cpp
+target_sources(nvshmem_bootstrap_pmi2 PRIVATE modules/bootstrap/common/bootstrap_util.cpp
+                                              modules/bootstrap/pmi/bootstrap_pmi.cpp
                                               modules/bootstrap/pmi/pmi-2/pmi2_api.c
                                               modules/bootstrap/pmi/pmi-2/pmi2_util.c)
 target_compile_definitions(nvshmem_bootstrap_pmi2 PRIVATE NVSHMEM_BUILD_PMI2)
 target_link_options(nvshmem_bootstrap_pmi2 PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_bootstrap.sym")
 target_include_directories(nvshmem_bootstrap_pmi2
                            PRIVATE include
-			           include/modules/bootstrap
-                                   include/modules/common
-                                   modules/bootstrap/pmi/pmi-2
+                           modules/bootstrap/common
+                           modules/bootstrap/pmi/pmi-2
 )
 
 if(NVSHMEM_PMIX_SUPPORT)
@@ -44,14 +44,15 @@ if(NVSHMEM_PMIX_SUPPORT)
     nvshmem_bootstrap_pmix SHARED
   )
   set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_pmix)
-  target_sources(nvshmem_bootstrap_pmix PRIVATE modules/bootstrap/pmix/bootstrap_pmix.c)
+  target_sources(nvshmem_bootstrap_pmix PRIVATE modules/bootstrap/common/bootstrap_util.cpp
+                                                modules/bootstrap/pmix/bootstrap_pmix.c)
   find_library(PMIX_lib NAMES pmix HINTS "${PMIX_HOME}/lib")
   target_link_libraries(nvshmem_bootstrap_pmix PRIVATE ${PMIX_lib})
   target_include_directories(nvshmem_bootstrap_pmix
                              PRIVATE include
-			             ${PMIX_HOME}/include
-                                     include/modules/bootstrap
-                                     include/modules/common
+                             modules/bootstrap/common
+                             ${PMIX_HOME}/include
+ 
   )
 else()
 set(NVSHMEM_DEFAULT_PMIX OFF)
@@ -63,12 +64,13 @@ if(NVSHMEM_MPI_SUPPORT)
   )
   set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_mpi)
   set_target_properties(nvshmem_bootstrap_mpi PROPERTIES C_STANDARD 11)
-  target_sources(nvshmem_bootstrap_mpi PRIVATE modules/bootstrap/mpi/bootstrap_mpi.c)
+  target_sources(nvshmem_bootstrap_mpi PRIVATE modules/bootstrap/common/bootstrap_util.cpp
+                                               modules/bootstrap/mpi/bootstrap_mpi.c)
   target_link_libraries(nvshmem_bootstrap_mpi PRIVATE MPI::MPI_C)
   target_include_directories(nvshmem_bootstrap_mpi
                              PRIVATE include
-			             include/modules/bootstrap
-                                     include/modules/common
+                             modules/bootstrap/common
+                             include/modules/common
   )
 endif()
 
@@ -78,12 +80,13 @@ if(NVSHMEM_SHMEM_SUPPORT)
   )
   set(ACTIVE_BOOTSTRAPS ${ACTIVE_BOOTSTRAPS} nvshmem_bootstrap_shmem)
   set_target_properties(nvshmem_bootstrap_shmem PROPERTIES C_STANDARD 11)
-  target_sources(nvshmem_bootstrap_shmem PRIVATE modules/bootstrap/shmem/bootstrap_shmem.c)
+  target_sources(nvshmem_bootstrap_shmem PRIVATE modules/bootstrap/common/bootstrap_util.cpp
+                                                 modules/bootstrap/shmem/bootstrap_shmem.c)
   target_link_libraries(nvshmem_bootstrap_shmem PRIVATE shmem)
   target_include_directories(nvshmem_bootstrap_shmem
                              PRIVATE include
-			             include/modules/bootstrap
-                                     include/modules/common
+                             modules/bootstrap/common
+                             include/modules/common
   )
 endif()
 
@@ -94,15 +97,16 @@ set_target_properties(nvshmem_bootstrap_uid
                       PROPERTIES C_STANDARD 11
                       CXX_STANDARD_REQUIRED ON
                       CXX_STANDARD 11)
-target_sources(nvshmem_bootstrap_uid PRIVATE modules/bootstrap/uid/ncclSocket/ncclsocket_socket.cpp
-					     modules/bootstrap/uid/bootstrap_uid.cpp)
+target_sources(nvshmem_bootstrap_uid PRIVATE modules/bootstrap/common/bootstrap_util.cpp
+                                             modules/bootstrap/uid/ncclSocket/ncclsocket_socket.cpp
+					                                   modules/bootstrap/uid/bootstrap_uid.cpp)
 target_include_directories(nvshmem_bootstrap_uid
-		     PRIVATE include
-			     include/modules/bootstrap
-			     include/modules/common
-			     modules/bootstrap/uid
-			     modules/bootstrap/uid/ncclSocket
-           include/common
+		                       PRIVATE include
+                           include/bootstrap_device_host
+                           include/internal/bootstrap_host
+                           include/internal/bootstrap_host_transport
+                           modules/bootstrap/common
+			                     modules/bootstrap/uid/ncclSocket
 )
 
 set_target_properties(${ACTIVE_BOOTSTRAPS}
@@ -122,7 +126,7 @@ add_library(
   nvshmem_device STATIC
 )
 
-set(INTERLIB_VERSION_MAJOR 2)
+set(INTERLIB_VERSION_MAJOR 3)
 set(INTERLIB_VERSION_MINOR 0)
 set(INTERLIB_VERSION_PATCH 0)
 
@@ -146,7 +150,7 @@ set_target_properties(nvshmem nvshmem_host nvshmem_device
 
 macro(nvshmem_library_set_base_config LIBNAME)
   target_compile_definitions(${LIBNAME}
-    PRIVATE $<$<CONFIG:Debug>:_NVSHMEM_DEBUG;NVSHMEM_TRACE;NVSHMEM_IBGDA_DEBUG>
+    PRIVATE $<$<CONFIG:Debug>:_NVSHMEM_DEBUG;NVSHMEM_IBGDA_DEBUG>
     $<IF:$<STREQUAL:"${CMAKE_HOST_SYSTEM_PROCESSOR}","x86_64">,NVSHMEM_X86_64,>
     $<IF:$<STREQUAL:"${CMAKE_HOST_SYSTEM_PROCESSOR}","ppc64le">,__STDC_LIMIT_MACROS;__STDC_CONSTANT_MACROS;NVSHMEM_PPC64LE,>
     $<IF:$<STREQUAL:"${CMAKE_HOST_SYSTEM_PROCESSOR}","aarch64">,NVSHMEM_AARCH64,>
@@ -177,28 +181,26 @@ macro(nvshmem_library_set_base_config LIBNAME)
 endmacro()
 
 set(NVSHMEM_DEVICE_SOURCES
-    device/coll/gpu_coll.cu
-    device/proxy/proxy_device.cu
     device/init/init_device.cu
-    device/launch/collective_launch_device.cu
+    device/launch/collective_launch.cpp
 )
 
-set(NVSHMEM_DEVICE_SOURCES_NOMAXREGCOUNT
-    device/coll/alltoall/alltoall.cu
-    device/coll/barrier/barrier.cu
-    device/coll/broadcast/broadcast.cu
-    device/coll/fcollect/fcollect.cu
-    device/coll/rdxn/reduce_and.cu
-    device/coll/rdxn/reduce_or.cu
-    device/coll/rdxn/reduce_xor.cu
-    device/coll/rdxn/reduce_min.cu
-    device/coll/rdxn/reduce_max.cu
-    device/coll/rdxn/reduce_prod.cu
-    device/coll/rdxn/reduce_sum.cu
-    device/coll/rdxn/reduce_team.cu
-    device/comm/cuda_interface_sync.cu
-    device/comm/quiet_on_stream.cu
-    device/comm/rma.cu
+set(NVSHMEM_HOST_SOURCES_NOMAXREGCOUNT
+    host/comm/rma.cu
+    host/stream/comm/quiet_on_stream.cu
+    host/stream/comm/cuda_interface_sync.cu
+    host/stream/coll/alltoall/alltoall.cu
+    host/stream/coll/barrier/barrier.cu
+    host/stream/coll/broadcast/broadcast.cu
+    host/stream/coll/fcollect/fcollect.cu
+    host/stream/coll/rdxn/reduce_and.cu
+    host/stream/coll/rdxn/reduce_or.cu
+    host/stream/coll/rdxn/reduce_xor.cu
+    host/stream/coll/rdxn/reduce_min.cu
+    host/stream/coll/rdxn/reduce_max.cu
+    host/stream/coll/rdxn/reduce_prod.cu
+    host/stream/coll/rdxn/reduce_sum.cu
+    host/stream/coll/rdxn/reduce_team.cu
 )
 
 set(NVSHMEM_HOST_SOURCES
@@ -228,27 +230,26 @@ set(NVSHMEM_HOST_SOURCES
     host/init/init_nvtx.cpp
     host/init/nvmlwrap.cpp
     host/init/query_host.cpp
-    host/launch/collective_launch.cpp
     host/mem/mem.cpp
+    host/mem/mem_heap.cpp
+    host/mem/mem_transport.cpp
     host/team/team.cu
     host/team/team_internal.cpp
     host/team/team_internal_cuda.cu
     host/topo/topo.cpp
-    util/cs.cpp
-    util/debug.cpp
-    util/env_vars.cpp
-    util/util.cpp
-    util/sockets.cpp
-    util/shared_memory.cpp
+    host/util/cs.cpp
+    host/util/debug.cpp
+    host/util/env_vars.cpp
+    host/util/util.cpp
+    host/util/sockets.cpp
+    host/util/shared_memory.cpp
 )
 
 target_include_directories(
   nvshmem
   PRIVATE include
-          include/modules/bootstrap
-	  include/modules/common
-	  include/modules/transport
-          device/coll
+          include/host/env
+          host/stream/coll
           host/coll
           host/topo
   INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
@@ -258,11 +259,8 @@ target_include_directories(
 target_include_directories(
   nvshmem_device
   PRIVATE include
-          include/modules/bootstrap
-	  include/modules/common
-	  include/modules/transport
-          device/coll
           host/coll
+          host/stream/coll
   INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
             $<INSTALL_INTERFACE:include>
 )
@@ -270,11 +268,10 @@ target_include_directories(
 target_include_directories(
   nvshmem_host
   PRIVATE include
-          include/modules/bootstrap
-	  include/modules/common
-	  include/modules/transport
+          include/host/env
           device/coll
           host/coll
+          host/stream/coll
           host/topo
   INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
             $<INSTALL_INTERFACE:include>
@@ -289,7 +286,7 @@ nvshmem_library_set_base_config(nvshmem_device)
 ## End generic variable configuration
 
 ## Start transports
-set(TRANSPORT_VERSION_MAJOR 2)
+set(TRANSPORT_VERSION_MAJOR 3)
 set(TRANSPORT_VERSION_MINOR 0)
 set(TRANSPORT_VERSION_PATCH 0)
 
@@ -311,7 +308,10 @@ if(NVSHMEM_UCX_SUPPORT)
                  modules/transport/common/transport_common.cpp
   )
   target_link_options(nvshmem_transport_ucx PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_ucx PRIVATE include include/modules/common include/modules/transport modules/transport/common)
+  target_include_directories(nvshmem_transport_ucx
+                             PRIVATE include
+                             modules/transport/common
+  )
   target_link_libraries(nvshmem_transport_ucx PRIVATE ucx::ucs ucx::ucp CUDA::cudart_static)
   if(NVSHMEM_USE_GDRCOPY)
     target_include_directories(nvshmem_transport_ucx PRIVATE ${GDRCOPY_INCLUDE})
@@ -333,7 +333,10 @@ if(NVSHMEM_IBRC_SUPPORT)
                  modules/transport/common/transport_ib_common.cpp
   )
   target_link_options(nvshmem_transport_ibrc PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_ibrc PRIVATE include include/modules/common include/modules/transport modules/transport/common)
+  target_include_directories(nvshmem_transport_ibrc
+                             PRIVATE include
+                             modules/transport/common
+  )
   target_link_libraries(nvshmem_transport_ibrc PRIVATE CUDA::cudart_static)
   if(NVSHMEM_USE_GDRCOPY)
     target_include_directories(nvshmem_transport_ibrc PRIVATE ${GDRCOPY_INCLUDE})
@@ -363,7 +366,10 @@ if(NVSHMEM_IBDEVX_SUPPORT)
                  modules/transport/common/transport_mlx5_common.cpp
   )
   target_link_options(nvshmem_transport_ibdevx PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_ibdevx PRIVATE include include/modules/common include/modules/transport modules/transport/common)
+  target_include_directories(nvshmem_transport_ibdevx
+                             PRIVATE include
+                             modules/transport/common
+  )
   target_link_libraries(nvshmem_transport_ibdevx PRIVATE ${MLX5_lib} CUDA::cudart_static)
   if(HAVE_IBV_ACCESS_RELAXED_ORDERING)
     target_compile_definitions(nvshmem_transport_ibdevx PRIVATE HAVE_IBV_ACCESS_RELAXED_ORDERING=${HAVE_IBV_ACCESS_RELAXED_ORDERING})
@@ -388,8 +394,18 @@ if(NVSHMEM_IBGDA_SUPPORT)
                  modules/transport/common/transport_mlx5_common.cpp
   )
   target_link_options(nvshmem_transport_ibgda PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_ibgda PRIVATE include include/modules/common include/modules/transport modules/transport/common)
+  target_include_directories(nvshmem_transport_ibgda
+                             PRIVATE include
+                             modules/transport/common
+
+  )
   target_link_libraries(nvshmem_transport_ibgda PRIVATE ${MLX5_lib} CUDA::cudart_static)
+  if(NVSHMEM_USE_GDRCOPY)
+    target_include_directories(nvshmem_transport_ibgda PRIVATE ${GDRCOPY_INCLUDE})
+    target_sources(nvshmem_transport_ibgda PRIVATE
+                   modules/transport/common/transport_gdr_common.cpp
+    )
+  endif()
   if(HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED)
     target_compile_definitions(nvshmem_transport_ibgda PRIVATE HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED=${HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED})
   endif()
@@ -410,7 +426,11 @@ if(NVSHMEM_LIBFABRIC_SUPPORT)
                  modules/transport/common/transport_common.cpp
   )
   target_link_options(nvshmem_transport_libfabric PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_transport.sym")
-  target_include_directories(nvshmem_transport_libfabric PRIVATE include include/modules/common include/modules/transport modules/transport/common "${LIBFABRIC_HOME}/include/")
+  target_include_directories(nvshmem_transport_libfabric
+                             PRIVATE include
+                             modules/transport/common
+                             "${LIBFABRIC_HOME}/include/"
+  )
   target_link_libraries(nvshmem_transport_libfabric PRIVATE ${FABRIC_lib} CUDA::cudart_static)
   if(NVSHMEM_USE_GDRCOPY)
     target_include_directories(nvshmem_transport_libfabric PRIVATE ${GDRCOPY_INCLUDE})
@@ -454,19 +474,19 @@ endif()
 if(NVSHMEM_ENABLE_ALL_DEVICE_INLINING)
 set(INCEXPORTS
     ${INCEXPORTS}
-    device/pt-to-pt/transfer_device.cuh
+    non_abi/device/pt-to-pt/transfer_device.cuh
 )
-configure_file(include/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/include/device/pt-to-pt/transfer_device.cuh COPYONLY)
+configure_file(include/non_abi/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/include/non_abi/device/pt-to-pt/transfer_device.cuh COPYONLY)
 else()
 set(INCEXPORTS
     ${INCEXPORTS}
-    device/pt-to-pt/nvshmemi_transfer_api.cuh
+    non_abi/device/pt-to-pt/nvshmemi_transfer_api.cuh
 )
 set(NVSHMEM_DEVICE_SOURCES
     ${NVSHMEM_DEVICE_SOURCES}
     device/comm/transfer_device.cu
 )
-configure_file(include/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/device/comm/transfer_device.cu COPYONLY)
+configure_file(include/non_abi/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/device/comm/transfer_device.cu COPYONLY)
 endif()
 ## End inlining requirements
 
@@ -474,8 +494,8 @@ endif()
 target_link_libraries(nvshmem_host PRIVATE nvshmem_device)
 target_link_options(nvshmem_host PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../nvshmem_host.sym")
 set_source_files_properties(${NVSHMEM_HOST_SOURCES} ${NVSHMEM_DEVICE_SOURCES} PROPERTIES COMPILE_OPTIONS $<$<COMPILE_LANGUAGE:CUDA>:--maxrregcount=32>)
-target_sources(nvshmem PRIVATE ${NVSHMEM_HOST_SOURCES} ${NVSHMEM_DEVICE_SOURCES} ${NVSHMEM_DEVICE_SOURCES_NOMAXREGCOUNT})
-target_sources(nvshmem_host PRIVATE ${NVSHMEM_HOST_SOURCES})
+target_sources(nvshmem PRIVATE ${NVSHMEM_HOST_SOURCES} ${NVSHMEM_HOST_SOURCES_NOMAXREGCOUNT} ${NVSHMEM_DEVICE_SOURCES} ${NVSHMEM_DEVICE_SOURCES_NOMAXREGCOUNT})
+target_sources(nvshmem_host PRIVATE ${NVSHMEM_HOST_SOURCES} ${NVSHMEM_HOST_SOURCES_NOMAXREGCOUNT})
 target_sources(nvshmem_device PRIVATE ${NVSHMEM_DEVICE_SOURCES} ${NVSHMEM_DEVICE_SOURCES_NOMAXREGCOUNT})
 
 add_library(NVSHMEM::nvshmem ALIAS nvshmem)
@@ -488,45 +508,50 @@ add_executable(nvshmem-info)
 target_sources(nvshmem-info PRIVATE bin/nvshmem-info.cpp)
 set_target_properties(nvshmem-info PROPERTIES CXX_STANDARD_REQUIRED ON CXX_STANDARD 11 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
 target_link_libraries(nvshmem-info CUDA::cudart_static CUDA::cuda_driver nvshmem)
-target_include_directories(nvshmem-info PRIVATE include)
+target_include_directories(nvshmem-info PRIVATE include include/host/env)
 # End nvshmem-info definitions.
 
 # Start header configuration and export
-configure_file(include/common/nvshmem_version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/common/nvshmem_version.h @ONLY)
-configure_file(include/common/nvshmem_build_options.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/common/nvshmem_build_options.h)
+configure_file(include/non_abi/nvshmem_version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/non_abi/nvshmem_version.h @ONLY)
+configure_file(include/non_abi/nvshmem_build_options.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/non_abi/nvshmem_build_options.h)
 
 set(INCEXPORTS
     ${INCEXPORTS}
-    device/nvshmemi_common_device.cuh
-    device/nvshmemi_common_device_defines.cuh
-    device/nvshmemi_wait_until_apis.cuh
+    bootstrap_device_host/nvshmem_uniqueid.h
+    device_host/nvshmem_proxy_channel.h
+    device_host/nvshmem_types.h
+    device_host_transport/nvshmem_common_transport.h
+    non_abi/device/common/nvshmemi_common_device.cuh
+    non_abi/device/threadgroup/nvshmemi_common_device_defines.cuh
+    device/nvshmem_coll_defines.cuh
     device/nvshmem_defines.h
+    device/nvshmem_device_macros.h
+    device/nvshmemx_collective_launch_apis.h
+    device/nvshmemx_coll_defines.cuh
     device/nvshmemx_defines.h
-    device/coll/alltoall.cuh
-    device/coll/barrier.cuh
-    device/coll/broadcast.cuh
-    device/coll/defines.cuh
-    device/coll/fcollect.cuh
-    device/coll/reduce.cuh
-    device/coll/utils.cuh
-    device/init/query_device.cuh
-    device/pt-to-pt/ibgda_device.cuh
-    device/pt-to-pt/proxy_device.cuh
-    device/pt-to-pt/utils_device.h
-    device/team/team_device.cuh
-    common/nvshmem_build_options.h
-    common/nvshmem_common.cuh
-    common/nvshmem_common_ibgda.h
-    common/nvshmem_common_proxy.h
-    common/nvshmem_common_transport.h
-    common/nvshmem_constants.h
-    common/nvshmem_types.h
-    common/nvshmem_version.h
+    non_abi/device/coll/alltoall.cuh
+    non_abi/device/coll/barrier.cuh
+    non_abi/device/coll/broadcast.cuh
+    non_abi/device/coll/defines.cuh
+    non_abi/device/coll/fcollect.cuh
+    non_abi/device/coll/reduce.cuh
+    non_abi/device/coll/utils.cuh
+    non_abi/device/wait/nvshmemi_wait_until_apis.cuh
+    non_abi/device/pt-to-pt/ibgda_device.cuh
+    non_abi/device/pt-to-pt/proxy_device.cuh
+    non_abi/device/pt-to-pt/utils_device.h
+    device_host/nvshmem_common.cuh
+    device_host_transport/nvshmem_common_ibgda.h
+    device_host_transport/nvshmem_constants.h
+    non_abi/device/team/nvshmemi_team_defines.cuh
     host/nvshmem_api.h
     host/nvshmem_coll_api.h
+    host/nvshmem_macros.h
     host/nvshmemx_api.h
     host/nvshmemx_coll_api.h
-    host/nvshmemx_error.h
+    non_abi/nvshmemx_error.h
+    non_abi/nvshmem_build_options.h
+    non_abi/nvshmem_version.h
     nvshmem.h
     nvshmemx.h
 )
@@ -539,6 +564,7 @@ endforeach(INC ${INCEXPORTS})
 # start share configuration
 set(SHAREEXPORTS
     host/bootstrap/bootstrap_loader.cpp
+    modules/bootstrap/common/bootstrap_util.h
     modules/bootstrap/mpi/bootstrap_mpi.c
     modules/bootstrap/pmi/bootstrap_pmi.cpp
     modules/bootstrap/pmix/bootstrap_pmix.c
@@ -562,28 +588,22 @@ foreach(SHARE ${SHAREEXPORTS})
 endforeach(SHARE ${SHAREEXPORTS})
 
 set(SHAREINCEXPORTS
-    modules/common/nvshmemi_bootstrap_defines.h
-    modules/bootstrap/bootstrap_util.h
-    modules/bootstrap/nvshmemi_bootstrap.h
+    internal/bootstrap_host/nvshmemi_bootstrap.h
+    internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h
 )
 
 foreach(SHARE ${SHAREINCEXPORTS})
   configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/bootstrap-plugins/${SHARE} COPYONLY)
-  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/include/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREINCEXPORTS})
 
 set(TRANSPORTINCEXPORTS
-    modules/transport/transport.h
-    modules/transport/env_defs_internal.h
-    modules/transport/env_defs.h
-    modules/transport/cudawrap.h
-    modules/common/nvshmemi_bootstrap_defines.h
-    modules/transport/nvshmemi_transport_defines.h
+    internal/host_transport/cudawrap.h
+    internal/host_transport/nvshmemi_transport_defines.h
+    internal/host_transport/transport.h
 )
 
 foreach(SHARE ${TRANSPORTINCEXPORTS})
   configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/transport-plugins/common/${SHARE} COPYONLY)
-  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/include/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREEXPORTS})
 
 set(TRANSPORTEXPORTS
@@ -614,8 +634,15 @@ endforeach(SHARE ${SHAREEXPORTS})
 # end share configuration
 
 # start custom builds for nvshmem packages
-add_custom_target(git_commit ALL COMMAND test -f ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt || git rev-parse HEAD > ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt || echo "not built from a git repo" > ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt
-                  BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt)
+add_custom_target(git_commit ALL COMMAND test -f git_commit.txt || git rev-parse HEAD > git_commit.txt || echo "not built from a git repo" > git_commit.txt
+                  COMMAND grep -q NVSHMEM_MAJOR git_commit.txt || echo "NVSHMEM_MAJOR := ${PROJECT_VERSION_MAJOR}" >> git_commit.txt
+                  COMMAND grep -q NVSHMEM_MINOR git_commit.txt || echo "NVSHMEM_MINOR := ${PROJECT_VERSION_MINOR}" >> git_commit.txt
+                  COMMAND grep -q NVSHMEM_PATCH git_commit.txt || echo "NVSHMEM_PATCH := ${PROJECT_VERSION_PATCH}" >> git_commit.txt
+                  COMMAND grep -q NVSHMEM_PACKAGE git_commit.txt || echo "NVSHMEM_PACKAGE := ${PROJECT_VERSION_TWEAK}" >> git_commit.txt
+                  COMMAND cp git_commit.txt version.txt
+                  BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt
+                             ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt
+                  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 if(NVSHMEM_BUILD_PACKAGES)
   add_custom_target(hydra
@@ -644,6 +671,8 @@ install(
 install(
   DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin/
   DESTINATION bin
+  FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                   GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 install(
   DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/
@@ -667,17 +696,11 @@ install(
 install(
   FILES ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/install_hydra.sh
   DESTINATION scripts
-)
-install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_cxx11.sh
-  DESTINATION scripts
+  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+              GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 install(
   FILES ${CMAKE_CURRENT_SOURCE_DIR}/../changelog
-  DESTINATION ./
-)
-install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/../common.mk
   DESTINATION ./
 )
 install(
@@ -689,6 +712,7 @@ install(
   DESTINATION ./
 )
 install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/../version.txt
   FILES ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt
   DESTINATION ./
 )
@@ -729,8 +753,8 @@ set(CPACK_SOURCE_IGNORE_FILES
 /README;\
 /testcommon.py;\
 /examples/examples_install/;\
-/include/common/nvshmem_build_options.h$;\
-/include/common/nvshmem_version.h$;\
+/include/non_abi/nvshmem_build_options.h$;\
+/include/non_abi/nvshmem_version.h$;\
 /perftest/perftest_install/;\
 /scripts/cronjob_peak.sh;\
 /scripts/cronjob_prom.sh;\

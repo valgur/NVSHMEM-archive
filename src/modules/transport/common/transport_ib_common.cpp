@@ -5,17 +5,18 @@
  */
 
 #include "transport_ib_common.h"
-#include <assert.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <driver_types.h>
-#include <infiniband/verbs.h>
-#include <stdint.h>
-#include <unistd.h>
-
-#include "cudawrap.h"
-#include "host/nvshmemx_error.h"
-#include "transport_common.h"
+#include <assert.h>                            // for assert
+#include <cuda.h>                              // for CUdeviceptr, CU_MEM_RANGE_HANDLE_TY...
+#include <cuda_runtime.h>                      // for cudaGetLastError, cudaPointerGetAtt...
+#include <driver_types.h>                      // for cudaPointerAttributes, cudaMemoryTy...
+#include <errno.h>                             // for errno
+#include <infiniband/verbs.h>                  // for IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_...
+#include <stdint.h>                            // for uintptr_t, uint64_t
+#include <string.h>                            // for strerror
+#include <unistd.h>                            // for access, close, sysconf, F_OK, _SC_P...
+#include "internal/host_transport/cudawrap.h"  // for nvshmemi_cuda_fn_table, CUCHECKGOTO
+#include "non_abi/nvshmemx_error.h"            // for NVSHMEMX_ERROR_INTERNAL, NVSHMEMX_S...
+#include "transport_common.h"                  // for nvshmemt_ibv_function_table, INFO
 
 int nvshmemt_ib_common_nv_peer_mem_available() {
     if (access("/sys/kernel/mm/memory_peers/nv_mem/version", F_OK) == 0) {
@@ -38,10 +39,10 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
     struct ibv_mr *mr = NULL;
     int status = 0;
     int ro_flag = 0;
+    bool host_memory = false;
 
     assert(sizeof(struct nvshmemt_ib_common_mem_handle) <= NVSHMEM_MEM_HANDLE_SIZE);
-#if CUDA_VERSION >= 11070
-    bool host_memory = false;
+
     cudaPointerAttributes attr;
     status = cudaPointerGetAttributes(&attr, buf);
     if (status != cudaSuccess) {
@@ -53,7 +54,7 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
     }
 
 #if defined(HAVE_IBV_ACCESS_RELAXED_ORDERING)
-#if HAVE_IBV_ACCESS_RELAXED_ORDERING
+#if HAVE_IBV_ACCESS_RELAXED_ORDERING == 1
     // IBV_ACCESS_RELAXED_ORDERING has been introduced to rdma-core since v28.0.
     if (relaxed_ordering) {
         ro_flag = IBV_ACCESS_RELAXED_ORDERING;
@@ -86,17 +87,16 @@ int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable
         INFO(log_level, "ibv_reg_dmabuf_mr handle %p handle->mr %p", handle, handle->mr);
     } else {
     reg_dmabuf_failure:
-#endif
+
         handle->fd = 0;
         mr = ftable->reg_mr(pd, buf, length,
                             IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                                 IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC | ro_flag);
         NVSHMEMI_NULL_ERROR_JMP(mr, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
-                                "mem registration failed \n");
+                                "mem registration failed. Reason: %s\n", strerror(errno));
         INFO(log_level, "ibv_reg_mr handle %p handle->mr %p", handle, handle->mr);
-#if CUDA_VERSION >= 11070
     }
-#endif
+
     handle->buf = buf;
     handle->lkey = mr->lkey;
     handle->rkey = mr->rkey;

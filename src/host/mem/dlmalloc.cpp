@@ -611,8 +611,9 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 #include <stdio.h>
 #include "dlmalloc.h"
 #include "cuda.h"
-#include "internal/util.h"
-#include "internal/common/nvshmem_internal.h"
+#include "internal/host/util.h"
+#include "internal/host/nvshmem_internal.h"
+#include "internal/host/nvshmemi_types.h"  // for nvshmemi_state
 #endif
 
 /* The maximum possible size_t value has all bits set */

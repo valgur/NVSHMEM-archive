@@ -7,10 +7,10 @@
 #ifndef _TRANSPORT_IB_COMMON_H
 #define _TRANSPORT_IB_COMMON_H
 
-#include <stdint.h>  // IWYU pragma: keep
-// IWYU pragma: no_include <bits/stdint-uintn.h>
-#include <stddef.h>
-#include "nvshmemi_transport_defines.h"
+#include <stdint.h>                                              // for uint32_t
+#include <string.h>                                              // for size_t
+#include "internal/host_transport/nvshmemi_transport_defines.h"  // for nvshmem_mem_handle_t
+#include "transport_ib_common.h"                                 // lines 10-10
 
 #define DIVUP(x, y) (((x) + (y)-1) / (y))
 

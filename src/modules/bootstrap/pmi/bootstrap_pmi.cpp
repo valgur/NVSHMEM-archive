@@ -9,10 +9,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "host/nvshmemx_error.h"
-#include "modules/common/nvshmemi_bootstrap_defines.h"
-#include "nvshmemi_bootstrap.h"
+#include "bootstrap_host_transport/env_defs_internal.h"
+#include "non_abi/nvshmemx_error.h"
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"
+#include "internal/bootstrap_host/nvshmemi_bootstrap.h"
 #include "bootstrap_util.h"
+#include <assert.h>
 
 #ifdef NVSHMEM_BUILD_PMI2
 
@@ -118,6 +120,7 @@ typedef struct {
 
 static pmi_info_t pmi_info;
 int bootstrap_debug_enable = 0;
+struct nvshmemi_options_s env_attr;
 
 static char encoding_table[] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
                                 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
@@ -180,6 +183,49 @@ static size_t base64_decode(char *out, const char *in, size_t in_len) {
     }
 
     return len;
+}
+
+/* Define common types */
+#define BOOTPRI_string "\"%s\""
+
+#define BOOTSTRAP_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, DESIRED_CAT, STYLE) \
+    if (CATEGORY == DESIRED_CAT) {                                                                 \
+        switch (STYLE) {                                                                           \
+            char *desc_wrapped;                                                                    \
+            case BOOTSTRAP_OPTIONS_STYLE_INFO:                                                     \
+                desc_wrapped = bootstrap_util_wrap_string(SHORT_DESC, 80, "\t", 1);                \
+                printf("  NVSHMEM_%-20s " BOOTPRI_##KIND " (type: %s, default: " BOOTPRI_##KIND    \
+                       ")\n\t%s\n",                                                                \
+                       #NAME, NVSHFMT_##KIND(env_attr.NAME), #KIND, NVSHFMT_##KIND(DEFAULT),       \
+                       desc_wrapped);                                                              \
+                free(desc_wrapped);                                                                \
+                break;                                                                             \
+            case BOOTSTRAP_OPTIONS_STYLE_RST:                                                      \
+                desc_wrapped = bootstrap_util_wrap_string(SHORT_DESC, 80, NULL, 0);                \
+                printf(".. c:var:: NVSHMEM_%s\n", #NAME);                                          \
+                printf("\n");                                                                      \
+                printf("| *Type: %s*\n", #KIND);                                                   \
+                printf("| *Default: " BOOTPRI_##KIND "*\n", NVSHFMT_##KIND(DEFAULT));              \
+                printf("\n");                                                                      \
+                printf("%s\n", desc_wrapped);                                                      \
+                printf("\n");                                                                      \
+                free(desc_wrapped);                                                                \
+                break;                                                                             \
+            default:                                                                               \
+                assert(0);                                                                         \
+        }                                                                                          \
+    }
+
+static int bootstrap_pmi_showinfo(struct bootstrap_handle *handle, int style) {
+    bootstrap_util_print_header(style, "Bootstrap Options");
+#define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)        \
+    BOOTSTRAP_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, \
+                                NVSHMEMI_ENV_CAT_BOOTSTRAP, style)
+#include "env_defs.h"
+#undef NVSHMEMI_ENV_DEF
+
+    printf("\n");
+    return 0;
 }
 
 static int bootstrap_pmi_barrier(bootstrap_handle_t *handle) {
@@ -359,7 +405,7 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
     int spawned = 0;
     int rank, size, key_length, value_length, name_length;
     int bootstrap_version = NVSHMEMI_BOOTSTRAP_ABI_VERSION;
-    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version)) {
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version, true)) {
         BOOTSTRAP_ERROR_PRINT(
             "PMI bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
             bootstrap_version, abi_version);
@@ -369,6 +415,10 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
     status = WRAP_PMI_Init(&spawned);
     BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "WRAP_PMI_Init_failed failed \n");
 
+    handle->version = NVSHMEM_BOOTSTRAP_MAJOR_MINOR_VERSION(abi_version) <
+                              NVSHMEM_BOOTSTRAP_MAJOR_MINOR_VERSION(bootstrap_version)
+                          ? abi_version
+                          : bootstrap_version;
 #ifndef NVSHMEM_BUILD_PMI2
     if (!spawned) {
         // INFO(NVSHMEM_BOOTSTRAP, "taking singleton path");
@@ -383,6 +433,7 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
         handle->barrier = bootstrap_pmi_barrier;
         handle->pre_init_ops = NULL;
         handle->comm_state = (void *)&pmi_info;
+        handle->show_info = bootstrap_pmi_showinfo;
     } else {
 #endif
         status = WRAP_PMI_Get_rank(&rank);
@@ -401,6 +452,7 @@ int nvshmemi_bootstrap_plugin_init(void *attr, bootstrap_handle_t *handle, const
         handle->barrier = bootstrap_pmi_barrier;
         handle->pre_init_ops = NULL;
         handle->comm_state = (void *)&pmi_info;
+        handle->show_info = bootstrap_pmi_showinfo;
 
         status = WRAP_PMI_KVS_Get_name_length_max(&name_length);
         BOOTSTRAP_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,

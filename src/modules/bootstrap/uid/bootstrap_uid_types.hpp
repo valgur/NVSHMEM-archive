@@ -7,11 +7,14 @@
 #ifndef BOOTSTRAP_UID_HPP
 #define BOOTSTRAP_UID_HPP
 
-#include "ncclSocket/ncclsocket_socket.hpp"
-#include "bootstrap_uid_remap.h"
-#include "modules/bootstrap/bootstrap_util.h"
-#include <pthread.h>
-#include <cstring>
+#include <pthread.h>                         // for PTHREAD_MUTEX_INITIALIZER
+#include <stdint.h>                          // for uint64_t, uint32_t
+#include <stdio.h>                           // for fclose, fopen, fread
+#include <stdlib.h>                          // for malloc
+#include <cstring>                           // for NULL, memset, size_t
+#include "bootstrap_uid_remap.h"             // for bootstrap_uid_socket_a...
+#include "bootstrap_util.h"                  // for BOOTSTRAP_ERROR_PRINT
+#include "ncclSocket/ncclsocket_socket.hpp"  // for MAX_IF_NAME_SIZE
 
 template <typename T>
 inline bootstrap_result_t bootstrap_calloc_debug(T** ptr, size_t nelem, const char* filefunc,
@@ -34,6 +37,7 @@ inline bootstrap_result_t bootstrap_calloc_debug(T** ptr, size_t nelem, const ch
 struct bootstrap_root_args {
     bootstrap_uid_socket_t* listen_sock;
     uint64_t magic;
+    int version;
 };
 
 /* Socket External PEs address connection info */
@@ -46,7 +50,7 @@ struct bootstrap_ext_info {
 
 /* Internal UID implementation */
 struct bootstrap_uid_handle {
-    bootstrap_uid_handle() : magic(0) {}
+    int version;
     bootstrap_uid_socket_address_t addr;
     uint64_t magic;
 };

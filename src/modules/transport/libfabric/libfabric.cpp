@@ -24,12 +24,14 @@
 #endif
 // IWYU pragma: no_include <xmmintrin.h>
 
-#include "cudawrap.h"
-#include "env_defs_internal.h"
-#include "common/nvshmem_common_transport.h"
-#include "nvshmemi_bootstrap_defines.h"
-#include "nvshmemi_transport_defines.h"
-#include "host/nvshmemx_error.h"
+#include "internal/host_transport/cudawrap.h"
+#include "bootstrap_host_transport/env_defs_internal.h"
+#include "device_host_transport/nvshmem_common_transport.h"
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"
+#include "internal/host_transport/nvshmemi_transport_defines.h"
+#include "non_abi/nvshmemx_error.h"
+#include "non_abi/nvshmem_build_options.h"  // IWYU pragma: keep
+#include "non_abi/nvshmem_version.h"
 #include "rdma/fabric.h"
 #include "rdma/fi_atomic.h"
 #include "rdma/fi_cm.h"
@@ -38,7 +40,7 @@
 #include "rdma/fi_eq.h"
 #include "rdma/fi_errno.h"
 #include "rdma/fi_rma.h"
-#include "transport.h"
+#include "internal/host_transport/transport.h"
 #include "transport_common.h"
 
 #ifdef NVSHMEM_USE_GDRCOPY
@@ -408,8 +410,7 @@ static int nvshmemt_libfabric_quiet(struct nvshmem_transport *tcurr, int pe, int
     return status;
 }
 
-static int nvshmemt_libfabric_show_info(nvshmem_mem_handle_t *mem_handles, int transport_id,
-                                        int transport_count, int npes, int mype) {
+static int nvshmemt_libfabric_show_info(struct nvshmem_transport *transport, int style) {
     NVSHMEMI_ERROR_PRINT("libfabric show info not implemented");
     return 0;
 }
@@ -548,6 +549,11 @@ static int nvshmemt_libfabric_gdr_amo(struct nvshmem_transport *transport, int p
         status = amo == NULL ? -EAGAIN : 0;
     } while (try_again(transport, &status, &num_retries));
 
+    if (status) {
+        NVSHMEMI_ERROR_PRINT("Unable to retrieve AMO operation.");
+        goto out;
+    }
+
     amo->type = NVSHMEMT_LIBFABRIC_SEND;
     amo->send_amo.op = verb.desc;
     amo->send_amo.target_addr = remote->remote_memdesc.ptr;
@@ -572,6 +578,7 @@ static int nvshmemt_libfabric_gdr_amo(struct nvshmem_transport *transport, int p
         ep->submitted_ops++;
     }
 
+out:
     return status;
 }
 
@@ -818,7 +825,8 @@ static int nvshmemt_libfabric_release_mem_handle(nvshmem_mem_handle_t *mem_handl
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
             }
 #endif
-            nvshmemt_mem_handle_cache_remove(t, libfabric_state->cache, handle_info->ptr);
+            if (libfabric_state->cache != NULL)
+                nvshmemt_mem_handle_cache_remove(t, libfabric_state->cache, handle_info->ptr);
         }
     }
 
@@ -868,21 +876,11 @@ static int nvshmemt_libfabric_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     assert(mem_handle != NULL);
     fabric_handle = (nvshmemt_libfabric_mem_handle_t *)mem_handle;
     status = cudaPointerGetAttributes(&attr, buf);
-#if CUDART_VERSION >= 11000
     if (status != cudaSuccess) {
         NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                            "Unable to query pointer attributes.\n");
     }
-#else
-    if (status != cudaSuccess) {
-        if (status == cudaErrorInvalidValue) {
-            is_host = true;
-        } else {
-            NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                               "Unable to query pointer attributes.\n");
-        }
-    }
-#endif
+
     if (attr.type == cudaMemoryTypeDevice || attr.type == cudaMemoryTypeManaged) {
         is_host = false;
     }
@@ -1411,68 +1409,64 @@ static int nvshmemt_libfabric_finalize(nvshmem_transport_t transport) {
 #endif
     }
 
-    if (libfabric_state) {
-        free(libfabric_state->send_buf);
-        free(libfabric_state->recv_buf);
-        if (libfabric_state->prov_info) {
-            fi_freeinfo(libfabric_state->prov_info);
-        }
+    if (libfabric_state->send_buf) free(libfabric_state->send_buf);
+    if (libfabric_state->recv_buf) free(libfabric_state->recv_buf);
+    if (libfabric_state->prov_info) {
+        fi_freeinfo(libfabric_state->prov_info);
+    }
 
-        if (libfabric_state->eps) {
-            for (int i = 0; i < NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS; i++) {
-                if (libfabric_state->eps[i].endpoint) {
-                    status = fi_close(&libfabric_state->eps[i].endpoint->fid);
-                    if (status) {
-                        NVSHMEMI_WARN_PRINT("Unable to close fabric endpoint.: %d: %s\n", status,
-                                            fi_strerror(status * -1));
-                    }
-                }
-                if (libfabric_state->eps[i].cq) {
-                    status = fi_close(&libfabric_state->eps[i].cq->fid);
-                    if (status) {
-                        NVSHMEMI_WARN_PRINT("Unable to close fabric cq: %d: %s\n", status,
-                                            fi_strerror(status * -1));
-                    }
-                }
-                if (libfabric_state->eps[i].counter) {
-                    status = fi_close(&libfabric_state->eps[i].counter->fid);
-                    if (status) {
-                        NVSHMEMI_WARN_PRINT("Unable to close fabric counter: %d: %s\n", status,
-                                            fi_strerror(status * -1));
-                    }
+    if (libfabric_state->eps) {
+        for (int i = 0; i < NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS; i++) {
+            if (libfabric_state->eps[i].endpoint) {
+                status = fi_close(&libfabric_state->eps[i].endpoint->fid);
+                if (status) {
+                    NVSHMEMI_WARN_PRINT("Unable to close fabric endpoint.: %d: %s\n", status,
+                                        fi_strerror(status * -1));
                 }
             }
-            free(libfabric_state->eps);
-        }
-
-        if (libfabric_state->addresses) {
-            for (int i = 0; i < NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS; i++) {
-                status = fi_close(&libfabric_state->addresses[i]->fid);
+            if (libfabric_state->eps[i].cq) {
+                status = fi_close(&libfabric_state->eps[i].cq->fid);
                 if (status) {
-                    NVSHMEMI_WARN_PRINT("Unable to close fabric address vector: %d: %s\n", status,
+                    NVSHMEMI_WARN_PRINT("Unable to close fabric cq: %d: %s\n", status,
+                                        fi_strerror(status * -1));
+                }
+            }
+            if (libfabric_state->eps[i].counter) {
+                status = fi_close(&libfabric_state->eps[i].counter->fid);
+                if (status) {
+                    NVSHMEMI_WARN_PRINT("Unable to close fabric counter: %d: %s\n", status,
                                         fi_strerror(status * -1));
                 }
             }
         }
-
-        if (libfabric_state->domain) {
-            status = fi_close(&libfabric_state->domain->fid);
-            if (status) {
-                NVSHMEMI_WARN_PRINT("Unable to close fabric domain: %d: %s\n", status,
-                                    fi_strerror(status * -1));
-            }
-        }
-
-        if (libfabric_state->fabric) {
-            status = fi_close(&libfabric_state->fabric->fid);
-            if (status) {
-                NVSHMEMI_WARN_PRINT("Unable to close fabric: %d: %s\n", status,
-                                    fi_strerror(status * -1));
-            }
-        }
-
-        free(libfabric_state);
+        free(libfabric_state->eps);
     }
+
+    for (int i = 0; i < NVSHMEMT_LIBFABRIC_DEFAULT_NUM_EPS; i++) {
+        status = fi_close(&libfabric_state->addresses[i]->fid);
+        if (status) {
+            NVSHMEMI_WARN_PRINT("Unable to close fabric address vector: %d: %s\n", status,
+                                fi_strerror(status * -1));
+        }
+    }
+
+    if (libfabric_state->domain) {
+        status = fi_close(&libfabric_state->domain->fid);
+        if (status) {
+            NVSHMEMI_WARN_PRINT("Unable to close fabric domain: %d: %s\n", status,
+                                fi_strerror(status * -1));
+        }
+    }
+
+    if (libfabric_state->fabric) {
+        status = fi_close(&libfabric_state->fabric->fid);
+        if (status) {
+            NVSHMEMI_WARN_PRINT("Unable to close fabric: %d: %s\n", status,
+                                fi_strerror(status * -1));
+        }
+    }
+
+    free(libfabric_state);
 
     free(transport);
 
@@ -1628,11 +1622,11 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     struct nvshmemi_options_s options;
     int status = 0;
 
-    if (api_version != NVSHMEM_TRANSPORT_INTERFACE_VERSION) {
+    if (NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version) != NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION) {
         NVSHMEMI_ERROR_PRINT(
             "NVSHMEM provided an incompatible version of the transport interface. "
-            "This transport supports a maximum API version of %d",
-            NVSHMEM_TRANSPORT_INTERFACE_VERSION);
+            "This transport supports transport API major version %d. Host has %d",
+            NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION, NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version));
         return NVSHMEMX_ERROR_INVALID_VALUE;
     }
 
@@ -1661,7 +1655,9 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     transport->attr = NVSHMEM_TRANSPORT_ATTR_CONNECTED;
     transport->is_successfully_initialized = true;
 
-    transport->api_version = NVSHMEM_TRANSPORT_INTERFACE_VERSION;
+    transport->api_version = api_version < NVSHMEM_TRANSPORT_INTERFACE_VERSION
+                                 ? api_version
+                                 : NVSHMEM_TRANSPORT_INTERFACE_VERSION;
 
     status = nvshmemi_env_options_init(&options);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,

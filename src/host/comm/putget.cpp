@@ -4,24 +4,24 @@
  * See COPYRIGHT for license information
  */
 
-#include "host/nvshmem_api.h"   // IWYU pragma: keep
-#include "host/nvshmemx_api.h"  // IWYU pragma: keep
-#include <stdint.h>             // IWYU pragma: keep
-// IWYU pragma: no_include <bits/stdint-uintn.h>
-#include <cuda_runtime.h>
-#include <driver_types.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdlib.h>
-
-#include "internal/common/debug.h"
-#include "common/nvshmem_common.cuh"
-#include "common/nvshmem_common_transport.h"
-#include "internal/common/nvshmem_internal.h"
-#include "internal/host/nvshmem_nvtx.hpp"
-#include "host/nvshmemx_error.h"
-#include "modules/transport/transport.h"
-#include "internal/util.h"
+#include <cuda_runtime.h>                                    // for cudaMemcpyAsync
+#include <driver_types.h>                                    // for cudaStream_t
+#include <stddef.h>                                          // for NULL, size_t
+#include <stdint.h>                                          // for uint64_t
+#include <stdlib.h>                                          // for exit
+#include "device_host/nvshmem_types.h"                       // for nvshmemi_device...
+#include "device_host/nvshmem_common.cuh"                    // for NVSHMEMI_REPT_F...
+#include "host/nvshmem_api.h"                                // for nvshmem_char_put
+#include "host/nvshmemx_api.h"                               // for nvshmemx_char_g...
+#include "non_abi/nvshmemx_error.h"                          // for NVSHMEMI_ERROR_...
+#include "device_host_transport/nvshmem_common_transport.h"  // for NVSHMEMI_OP_PUT
+#include "internal/host/debug.h"                             // for INFO, NVSHMEM_P2P
+#include "internal/host/nvshmem_internal.h"                  // for NVSHMEMI_CHECK_...
+#include "internal/host/nvshmem_nvtx.hpp"                    // for nvtx_cond_range
+#include "internal/host/nvshmemi_symmetric_heap.hpp"         // for nvshmemi_symmet...
+#include "internal/host/nvshmemi_types.h"                    // for nvshmemi_state
+#include "internal/host/util.h"                              // for CUDA_RUNTIME_CH...
+#include "internal/host_transport/transport.h"               // for rma_bytesdesc_t
 
 #define NOT_A_CUDA_STREAM ((cudaStream_t)0)
 
@@ -204,12 +204,12 @@ static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, size_t n
         (verb.desc == NVSHMEMI_OP_PUT_SIGNAL)) {
         NVSHMEMU_MAPPED_PTR_TRANSLATE(destptr_actual, remote, pe)
         dest.ptr = (void *)destptr_actual;
-        dest.offset = (char *)remote - (char *)(nvshmemi_state->heap_base);
+        dest.offset = (char *)remote - (char *)(nvshmemi_device_state.heap_base);
         src.ptr = local;
     } else {
         NVSHMEMU_MAPPED_PTR_TRANSLATE(srcptr_actual, remote, pe)
         src.ptr = (void *)srcptr_actual;
-        src.offset = (char *)remote - (char *)(nvshmemi_state->heap_base);
+        src.offset = (char *)remote - (char *)(nvshmemi_device_state.heap_base);
         dest.ptr = local;
         bytesdesc.srcstride = rstride;
         bytesdesc.deststride = lstride;
@@ -217,8 +217,9 @@ static inline int nvshmemi_prepare_and_post_mapped_rma(rma_verb_t verb, size_t n
 
     /* when memory is in the heap, we can make some assumptions about memory locations that reduce
      * op latency by ~100ns. */
-    if (local >= nvshmemi_state->heap_base &&
-        (local < (void *)((char *)nvshmemi_state->heap_base + nvshmemi_state->heap_size))) {
+    if (local >= nvshmemi_device_state.heap_base &&
+        (local <
+         (void *)((char *)nvshmemi_device_state.heap_base + nvshmemi_device_state.heap_size))) {
         return nvshmemi_p2p_rma_optimized(custrm, cuev, verb, &dest, &src, bytesdesc, sig_addr,
                                           signal, sig_op, pe);
     }
@@ -238,7 +239,7 @@ static void nvshmemi_prepare_and_post_rma(const char *apiname, nvshmemi_op_t des
     int status = 0;
 
     /* Mapper Peer */
-    if (nvshmemi_state->peer_heap_base[pe]) {
+    if (nvshmemi_state->heap_obj->get_local_pe_base()[pe]) {
         status = nvshmemi_prepare_and_post_mapped_rma(verb, nelems, elembytes, sig_addr, signal,
                                                       lptr, rptr, lstride, rstride, sig_op, pe);
         goto out;

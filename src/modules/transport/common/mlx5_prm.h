@@ -6,7 +6,9 @@
 #ifndef RTE_PMD_MLX5_PRM_H_
 #define RTE_PMD_MLX5_PRM_H_
 
-#include <unistd.h>
+#include <stdint.h>
+
+#define u8 uint8_t
 
 #define MLX5_ADAPTER_PAGE_SHIFT 12
 

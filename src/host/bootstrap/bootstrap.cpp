@@ -5,28 +5,114 @@
  */
 
 #include <assert.h>
-#include <stdio.h>   // IWYU pragma: keep
-#include <stdint.h>  // IWYU pragma: keep
-
-#include "internal/common/debug.h"
-#include "modules/transport/env_defs_internal.h"
-#include "internal/common/nvshmem_internal.h"
-#include "modules/common/nvshmemi_bootstrap_defines.h"
-#include "internal/host/nvshmemi_bootstrap_library.h"
-#include "host/nvshmemx_error.h"
-#include "internal/util.h"
+#include <cstddef>
+#include <stdlib.h>
+#include <string>
 #include <unordered_map>
+#include "bootstrap_host_transport/env_defs_internal.h"
+#include "device_host/nvshmem_types.h"
+#include "host/nvshmemx_api.h"
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"
+#include "internal/host/debug.h"
+#include "internal/host/nvshmem_internal.h"
+#include "internal/host/nvshmemi_bootstrap_library.h"
+#include "internal/host/nvshmemi_types.h"
+#include "internal/host/util.h"
+#include "non_abi/nvshmemx_error.h"
 
-static std::unordered_map<int, string> bootstrap_modes = {{BOOTSTRAP_MPI, "MPI"},
-                                                          {BOOTSTRAP_SHMEM, "SHMEM"},
-                                                          {BOOTSTRAP_PMI, "PMI"},
-                                                          {BOOTSTRAP_PLUGIN, "PLUGIN"},
-                                                          {BOOTSTRAP_UID, "UID"}};
+static std::unordered_map<int, std::string> bootstrap_modes = {{BOOTSTRAP_MPI, "MPI"},
+                                                               {BOOTSTRAP_SHMEM, "SHMEM"},
+                                                               {BOOTSTRAP_PMI, "PMI"},
+                                                               {BOOTSTRAP_PLUGIN, "PLUGIN"},
+                                                               {BOOTSTRAP_UID, "UID"}};
 
-int bootstrap_preinit(int mode, bootstrap_handle_t *handle) {
+static int bootstrap_flag2mode(int flags) {
+    if (flags & NVSHMEMX_INIT_WITH_MPI_COMM) {
+        return BOOTSTRAP_MPI;
+    } else if (flags & NVSHMEMX_INIT_WITH_SHMEM) {
+        return BOOTSTRAP_SHMEM;
+    } else if (flags & NVSHMEMX_INIT_WITH_UNIQUEID) {
+        return BOOTSTRAP_UID;
+    } else {
+        if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "PMI") == 0) {
+            return BOOTSTRAP_PMI;
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "MPI") == 0) {
+            return BOOTSTRAP_MPI;
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "SHMEM") == 0) {
+            return BOOTSTRAP_SHMEM;
+        } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP, "plugin") == 0) {
+            return BOOTSTRAP_PLUGIN;
+        } else {
+            if (!flags) {
+                /* UID bootstrap only enabled via init flags. So retry with correct API and flags */
+                NVSHMEMI_ERROR_PRINT(
+                    "Missing init flags for bootstrap %s. Retry with nvshmemx_init_attr and "
+                    "non-zero flags\n",
+                    nvshmemi_options.BOOTSTRAP);
+            } else {
+                NVSHMEMI_ERROR_PRINT("Invalid bootstrap '%s'\n", nvshmemi_options.BOOTSTRAP);
+            }
+            return -1;
+        }
+    }
+
+    return -1; /* Shouldn't reach here */
+}
+
+int bootstrap_set_bootattr(int flags, void *nvattr, bootstrap_attr_t *boot_attr) {
+    int mode = bootstrap_flag2mode(flags);
+    nvshmemx_init_attr_t *nvshmem_attr = (nvshmemx_init_attr_t *)(nvattr);
+    nvshmemx_init_args_t *init_args = NULL;
+    switch (mode) {
+        case BOOTSTRAP_MPI:
+            if (nvshmem_attr) {
+                assert(boot_attr != NULL);
+                (*boot_attr).mpi_comm = nvshmem_attr->mpi_comm;
+            }
+
+            break;
+        case BOOTSTRAP_SHMEM:
+            if (nvshmem_attr) {
+                assert(boot_attr != NULL);
+                (*boot_attr).initialize_shmem = 0;
+            }
+
+            break;
+        case BOOTSTRAP_UID:
+            if (!nvshmem_attr) {
+                NVSHMEMI_ERROR_PRINT(
+                    "Missing nvshmem_init_attr_t args for UID bootstrap. Please retry by "
+                    "populating uid_args member\n");
+                assert(0);
+            }
+
+            assert(boot_attr != NULL);
+            init_args = (nvshmemx_init_args_t *)(&(nvshmem_attr->args));
+            (*boot_attr).uid_args = &(init_args->uid_args);
+            break;
+        case BOOTSTRAP_PMI:
+            /* NOOP for attribute */
+            break;
+        case BOOTSTRAP_PLUGIN:
+            if (NULL != nvshmem_attr) {
+                NVSHMEMI_ERROR_PRINT(
+                    "Expected a NULL nvshmem_init_attr_t, found a non-NULL structure\n");
+                assert(0);
+            }
+
+            break;
+        default:
+            NVSHMEMI_ERROR_PRINT("Invalid bootstrap mode selected\n");
+            return (NVSHMEMX_ERROR_INTERNAL);
+    }
+
+    return (0);
+}
+
+int bootstrap_preinit(int flags, bootstrap_handle_t *handle) {
     int status = NVSHMEMX_SUCCESS;
-    bootstrap_env_attr_t attr = {};
     const char *plugin_name = NULL;
+    int mode = bootstrap_flag2mode(flags);
     switch (mode) {
         case BOOTSTRAP_MPI:
         case BOOTSTRAP_SHMEM:
@@ -36,35 +122,25 @@ int bootstrap_preinit(int mode, bootstrap_handle_t *handle) {
             return (status);
         case BOOTSTRAP_UID:
             plugin_name = nvshmemi_options.BOOTSTRAP_UID_PLUGIN;
-            attr.uid_session_id =
-                strlen(nvshmemi_options.BOOTSTRAP_UID_SESSION_ID) > 0
-                    ? const_cast<char *>(nvshmemi_options.BOOTSTRAP_UID_SESSION_ID)
-                    : nullptr;
-            attr.uid_socket_ifname =
-                strlen(nvshmemi_options.BOOTSTRAP_UID_SOCK_IFNAME) > 0
-                    ? const_cast<char *>(nvshmemi_options.BOOTSTRAP_UID_SOCK_IFNAME)
-                    : nullptr;
-            attr.uid_socket_family =
-                strlen(nvshmemi_options.BOOTSTRAP_UID_SOCK_FAMILY) > 0
-                    ? const_cast<char *>(nvshmemi_options.BOOTSTRAP_UID_SOCK_FAMILY)
-                    : nullptr;
-            status = bootstrap_loader_preinit(plugin_name, (void *)(&attr), handle);
+            status = bootstrap_loader_preinit(plugin_name, handle);
             NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                   "bootstrap_loader_preinit returned error for mode %s\n",
                                   bootstrap_modes[mode].c_str());
             break;
         default:
             NVSHMEMI_ERROR_PRINT("Invalid bootstrap mode selected\n");
+            status = 1;
     }
 
 out:
     return status;
 }
 
-int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle) {
+int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle) {
     int status = NVSHMEMX_SUCCESS;
     const char *plugin_name = NULL;
 
+    int mode = bootstrap_flag2mode(flags);
     switch (mode) {
         case BOOTSTRAP_MPI:
             plugin_name = nvshmemi_options.BOOTSTRAP_MPI_PLUGIN;
@@ -111,8 +187,6 @@ int bootstrap_init(int mode, bootstrap_attr_t *attr, bootstrap_handle_t *handle)
             }
             break;
         case BOOTSTRAP_PLUGIN:
-            assert(attr == NULL);
-
             if (!nvshmemi_options.BOOTSTRAP_PLUGIN_provided) {
                 NVSHMEMI_ERROR_PRINT(
                     "Plugin bootstrap requires NVSHMEM_BOOTSTRAP_PLUGIN to be set\n");
@@ -148,7 +222,7 @@ out:
 void bootstrap_finalize() {
     int status = NVSHMEMX_SUCCESS;
 
-    if (nvshmemi_is_nvshmem_bootstrapped) {
+    if (nvshmemi_device_state.nvshmemi_is_nvshmem_bootstrapped) {
         status = bootstrap_loader_finalize(&nvshmemi_boot_handle);
         NVSHMEMI_NZ_EXIT(status, "bootstrap finalization returned error\n");
         // Finalize the nvshmemi_session

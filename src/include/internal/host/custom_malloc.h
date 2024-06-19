@@ -11,17 +11,18 @@
 #ifndef NVSHMEMI_CUSTOM_MALLOC_H
 #define NVSHMEMI_CUSTOM_MALLOC_H
 
-#include <map>
-using namespace std;
+#include <stddef.h>  // for size_t
+#include <map>       // for map
+
 #define NVSHMEMI_MALLOC_ALIGNMENT ((size_t)512U)
 
 class mspace {
    private:
     /* free_chunks_start is mapping of start address of each free chunk to size of that chunk */
     /* free_chunks_end is mapping of end address of each free chunk to size of that chunk */
-    map<void *, size_t> free_chunks_start, free_chunks_end;
+    std::map<void *, size_t> free_chunks_start, free_chunks_end;
     /* in_use_cunks is a mapping of each in use chunks start address to size of the chunk */
-    map<void *, size_t> inuse_chunks;
+    std::map<void *, size_t> inuse_chunks;
     size_t total_size = 0; /* size of total space managed by mspace */
 
    public:

@@ -4,14 +4,13 @@
  * See COPYRIGHT for license information
  */
 
-#include <stddef.h>
-
-#include "host/nvshmem_api.h"
-#include "common/nvshmem_constants.h"
-#include "common/nvshmem_version.h"
-#include "internal/common/nvshmem_internal.h"
-#include "common/nvshmem_types.h"
-#include "modules/common/nvshmemi_bootstrap_defines.h"
+#include <stddef.h>                                                        // for size_t
+#include "device_host/nvshmem_types.h"                                     // for nvshmem_team_t
+#include "device_host_transport/nvshmem_constants.h"                       // for NVSHMEM_MAJOR...
+#include "host/nvshmem_api.h"                                              // for nvshmem_team_...
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for bootstrap_han...
+#include "non_abi/nvshmem_version.h"                                       // for NVSHMEM_VENDO...
+#include "internal/host/nvshmemi_types.h"
 
 int nvshmem_my_pe(void) { return nvshmemi_boot_handle.pg_rank; }
 

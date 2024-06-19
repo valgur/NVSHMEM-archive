@@ -2,17 +2,5 @@ NVSHMEM {
   global: nvshmem_*;
           nvshmemid_*;
           nvshmemx_*;
-          nvshmem_debug_log;
-          nvshmemi_malloc;
-          nvshmemi_options;
-          nvshmemi_state;
-          nvshmemi_device_state;
-          nvshmemi_team_pool;
-          nvshmemi_job_connectivity;
-          nvshmemi_boot_handle;
-          nvshmemi_is_nvshmem_bootstrapped;
-          nvshmemi_is_nvshmem_initialized;
-          pfn_*;
-          p_err_str;
   local: *;
 };

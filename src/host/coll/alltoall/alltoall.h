@@ -6,15 +6,17 @@
 
 #ifndef NVSHMEMI_ALLTOALL_COMMON_CPU_H
 #define NVSHMEMI_ALLTOALL_COMMON_CPU_H
-#include <driver_types.h>
-#include <stddef.h>
-
-#include "common/nvshmem_types.h"
-#include "internal/common/nvshmem_internal.h"
-#include "internal/util.h"
-#include "cpu_coll.h"
+#include <driver_types.h>                    // for cudaStream_t, CUstream_st
+#include <stddef.h>                          // for size_t
+#include "cpu_coll.h"                        // for nccl_ftable, nccl_func...
+#include "device_host/nvshmem_common.cuh"    // for nvshmemi_team_pool
+#include "device_host/nvshmem_types.h"       // for nvshmemi_team_t, nvshm...
+#include "host/nvshmem_api.h"                // for nvshmem_team_n_pes
+#include "internal/host/nvshmem_internal.h"  // for nccl_version, nvshmemi...
+#include "internal/host/util.h"              // for NCCL_CHECK
+#include "non_abi/nvshmem_build_options.h"   // for NVSHMEM_USE_NCCL
 #ifdef NVSHMEM_USE_NCCL
-#include "nccl.h"
+#include "nccl.h"  // for ncclComm, ncclComm_t
 #endif
 
 template <typename TYPE>

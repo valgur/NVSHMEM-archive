@@ -4,20 +4,18 @@
  * See COPYRIGHT for license information
  */
 
-#include "internal/host/nvshmem_nvtx.hpp"
+#include "internal/host/nvshmem_nvtx.hpp"  // for nvtxOpt_t, ALLOC_OPT
 // IWYU pragma: no_include <nvtx3/nvtxDetail/nvtxImplCore.h>
 
 #ifndef NVTX_DISABLE
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <syscall.h>
-#include <unistd.h>
-
-#include "internal/common/debug.h"
-#include "modules/transport/env_defs_internal.h"
-#include "internal/util.h"
+#include <stdio.h>                                       // for snprintf, NULL, printf
+#include <stdlib.h>                                      // for free
+#include <string.h>                                      // for strtok, strdup
+#include <syscall.h>                                     // for SYS_gettid
+#include <unistd.h>                                      // for syscall
+#include "internal/host/debug.h"                         // for strcmp_case_insensi...
+#include "internal/host/util.h"                          // for nvshmemi_options
+#include "bootstrap_host_transport/env_defs_internal.h"  // for nvshmemi_options_s
 
 int nvshmem_nvtx_options = 0;  // NVTX instrumentation is disabled by default
 
@@ -101,7 +99,7 @@ void nvshmem_nvtx_print_options() {
 
 #else /* !NVTX_DISABLE */
 
-#include "internal/util.h"
+#include "internal/host/util.h"
 void nvshmem_nvtx_init() {
     if (nvshmemi_options.NVTX_provided &&
         strcmp_case_insensitive(nvshmemi_options.NVTX, "off") != 0 &&

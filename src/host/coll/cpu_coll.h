@@ -6,9 +6,13 @@
 
 #ifndef NVSHMEMI_COLL_CPU_H
 #define NVSHMEMI_COLL_CPU_H 1
-#include <stdio.h>  // for stderr, fflush, fprintf
-
-#include "internal/common/nvshmem_internal.h"
+#include "cpu_coll.h"
+#include <driver_types.h>                   // for CUstream_st, cudaStream_t
+#include <limits.h>                         // for CHAR_MIN
+#include <stdio.h>                          // for size_t, stderr, fflush
+#include "device_host/nvshmem_common.cuh"   // for RDXN_OPS_AND, RDXN_OPS_MAX
+#include "internal/host/nvshmemi_types.h"   // for nvshmemi_state, nvshmemi_...
+#include "non_abi/nvshmem_build_options.h"  // for NVSHMEM_USE_NCCL
 #ifdef NVSHMEM_USE_NCCL
 #include "nccl.h"
 
@@ -153,8 +157,6 @@ extern struct nccl_function_table nccl_ftable;
 #define NVSHMEMI_COLL_CPU_STATUS_SUCCESS 0
 #define NVSHMEMI_COLL_CPU_STATUS_ERROR 1
 
-/* function declarations */
-int nvshmemi_coll_common_cpu_read_env();
 int nvshmemi_coll_common_cpu_init();
 int nvshmemi_coll_common_cpu_finalize();
 

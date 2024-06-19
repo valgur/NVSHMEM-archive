@@ -1,26 +1,29 @@
 /*
- * Copyright (c) 2016-2023, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
  *
  * See COPYRIGHT for license information
  */
-
+#include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <strings.h>
+#include <sys/resource.h>
+#include <time.h>
+#include <algorithm>
+#include <cstring>
+#include "bootstrap_device_host/nvshmem_uniqueid.h"
+#include "bootstrap_host_transport/env_defs_internal.h"
 #include "bootstrap_uid_remap.h"
 #include "bootstrap_uid_types.hpp"
-#include "ncclSocket/ncclsocket_socket.hpp"
 #include "bootstrap_util.h"
-#include "modules/common/nvshmemi_bootstrap_defines.h"
-#include "nvshmemi_bootstrap.h"
-#include <sys/types.h>
-#include <sys/resource.h>
-#include <pthread.h>
-#include <unistd.h>
-#include <cstring>
-#include <algorithm>
-#include <cassert>
-#include "host/nvshmemx_error.h"
-#include "nvshmem_types.h"
+#include "internal/bootstrap_host/nvshmemi_bootstrap.h"
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"
+#include "ncclSocket/ncclsocket_socket.hpp"
 
 static struct bootstrap_netstate priv_info;
+struct nvshmemi_options_s env_attr;
 int bootstrap_debug_enable = 0;
 
 #define BOOTSTRAP_IN_PLACE (void*)0x1
@@ -29,6 +32,58 @@ static_assert(sizeof(bootstrap_uid_handle) < sizeof(nvshmemx_uniqueid_t),
               "bootstrap_uid_handle implementation is incompatible with nvshmemx_uniqueid_t");
 
 #define AF_NUMERICFORM_DEFAULT 1
+
+#define PARSE_AND_RET_NULL(x) ((x##_provided) ? (const_cast<char*>(x)) : nullptr)
+
+/* Define common types */
+#define BOOTPRI_string "\"%s\""
+
+#define BOOTSTRAP_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, DESIRED_CAT, STYLE) \
+    if (CATEGORY == DESIRED_CAT) {                                                                 \
+        switch (STYLE) {                                                                           \
+            char* desc_wrapped;                                                                    \
+            case BOOTSTRAP_OPTIONS_STYLE_INFO:                                                     \
+                desc_wrapped = bootstrap_util_wrap_string(SHORT_DESC, 80, "\t", 1);                \
+                printf("  NVSHMEM_%-20s " BOOTPRI_##KIND " (type: %s, default: " BOOTPRI_##KIND    \
+                       ")\n\t%s\n",                                                                \
+                       #NAME, NVSHFMT_##KIND(env_attr.NAME), #KIND, NVSHFMT_##KIND(DEFAULT),       \
+                       desc_wrapped);                                                              \
+                free(desc_wrapped);                                                                \
+                break;                                                                             \
+            case BOOTSTRAP_OPTIONS_STYLE_RST:                                                      \
+                desc_wrapped = bootstrap_util_wrap_string(SHORT_DESC, 80, NULL, 0);                \
+                printf(".. c:var:: NVSHMEM_%s\n", #NAME);                                          \
+                printf("\n");                                                                      \
+                printf("| *Type: %s*\n", #KIND);                                                   \
+                printf("| *Default: " BOOTPRI_##KIND "*\n", NVSHFMT_##KIND(DEFAULT));              \
+                printf("\n");                                                                      \
+                printf("%s\n", desc_wrapped);                                                      \
+                printf("\n");                                                                      \
+                free(desc_wrapped);                                                                \
+                break;                                                                             \
+            default:                                                                               \
+                assert(0);                                                                         \
+        }                                                                                          \
+    }
+
+static int bootstrap_uid_showinfo(struct bootstrap_handle* handle, int style) {
+    bootstrap_util_print_header(style, "Bootstrap Options");
+#define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)        \
+    BOOTSTRAP_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, \
+                                NVSHMEMI_ENV_CAT_BOOTSTRAP, style)
+#include "env_defs.h"
+#undef NVSHMEMI_ENV_DEF
+    printf("\n");
+
+    bootstrap_util_print_header(style, "Common Options");
+#define NVSHMEMI_ENV_DEF(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC)        \
+    BOOTSTRAP_OPTIONS_PRINT_ENV(NAME, KIND, DEFAULT, CATEGORY, SHORT_DESC, \
+                                NVSHMEMI_ENV_CAT_OPENSHMEM, style)
+#include "env_defs.h"
+#undef NVSHMEMI_ENV_DEF
+
+    return 0;
+}
 
 // Additional sync functions
 static bootstrap_result_t bootstrap_net_send(bootstrap_uid_socket_t* sock, void* data, int size) {
@@ -58,17 +113,28 @@ static bootstrap_result_t set_files_limit() {
     return BOOTSTRAP_SUCCESS;
 }
 
+static void bootstrap_parse_debug(void) {
+    if (!env_attr.DEBUG_provided && !env_attr.DEBUG_SUBSYS_provided) {
+        /* This is no-operation */
+    } else if (strncasecmp(env_attr.DEBUG, "INFO", 5) == 0 ||
+               strncasecmp(env_attr.DEBUG, "WARN", 5) == 0 ||
+               strncasecmp(env_attr.DEBUG, "TRACE", 6) == 0 ||
+               strncasecmp(env_attr.DEBUG, "ABORT", 6) == 0) {
+        bootstrap_debug_enable = 1;
+    }
+}
+
 /**
  * Bootstrap Network Discovery Functions
  */
-static bootstrap_result_t bootstrap_net_init(bootstrap_env_attr_t* env_attr) {
+static bootstrap_result_t bootstrap_net_init() {
     char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2] = {0};
     pthread_mutex_lock(&priv_info.bootstrap_netlock);
     if (!priv_info.bootstrap_netinitdone) {
-        if (env_attr->uid_session_id) {
+        if (env_attr.BOOTSTRAP_UID_SESSION_ID_provided) {
             bootstrap_uid_socket_address_t remote_addr;
-            if (nccl_fn_table(get_addr_from_string, &remote_addr, env_attr->uid_session_id) !=
-                BOOTSTRAP_SUCCESS) {
+            if (nccl_fn_table(get_addr_from_string, &remote_addr,
+                              env_attr.BOOTSTRAP_UID_SESSION_ID) != BOOTSTRAP_SUCCESS) {
                 BOOTSTRAP_ERROR_PRINT(
                     "Invalid NVSHMEM_BOOTSTRAP_UID_SESSION_ID, please use format: <ipv4>:<port> or "
                     "[<ipv6>]:<port> or <hostname>:<port>\n");
@@ -87,7 +153,9 @@ static bootstrap_result_t bootstrap_net_init(bootstrap_env_attr_t* env_attr) {
             /* No SESSION ID based interface hinted. Use auto-selection */
             int num_ifs = fn_table.find_interfaces(
                 priv_info.bootstrap_netifname, &priv_info.bootstrap_netifaddr, MAX_IF_NAME_SIZE, 1,
-                env_attr->uid_socket_ifname, env_attr->uid_socket_family, env_attr->uid_session_id);
+                PARSE_AND_RET_NULL(env_attr.BOOTSTRAP_UID_SOCK_IFNAME),
+                PARSE_AND_RET_NULL(env_attr.BOOTSTRAP_UID_SOCK_FAMILY),
+                PARSE_AND_RET_NULL(env_attr.BOOTSTRAP_UID_SESSION_ID));
             if (num_ifs <= 0) {
                 BOOTSTRAP_ERROR_PRINT("No socket interface found\n");
                 pthread_mutex_unlock(&priv_info.bootstrap_netlock);
@@ -109,9 +177,7 @@ static bootstrap_result_t bootstrap_net_init(bootstrap_env_attr_t* env_attr) {
 
     sprintf(line, " %s:", priv_info.bootstrap_netifname);
     fn_table.to_string(&priv_info.bootstrap_netifaddr, line + strlen(line), AF_NUMERICFORM_DEFAULT);
-    BOOTSTRAP_INFO_PRINT(
-        "UID bootstrap network %s using: %s\n",
-        (!priv_info.bootstrap_netinitdone) ? "is being initialized" : "already initialized", line);
+    BOOTSTRAP_INFO_PRINT("UID bootstrap network using: %s\n", line);
 
     pthread_mutex_unlock(&priv_info.bootstrap_netlock);
     return BOOTSTRAP_SUCCESS;
@@ -124,7 +190,9 @@ static bootstrap_result_t bootstrap_net_init(bootstrap_env_attr_t* env_attr) {
  */
 static void* bootstrap_root(void* rargs) {
     struct bootstrap_root_args* args = (struct bootstrap_root_args*)rargs;
+    int peer_uid_version = 0, root_uid_version;
     bootstrap_uid_socket_t* listen_sock = args->listen_sock;
+    root_uid_version = args->version;
     uint64_t magic = args->magic;
     bootstrap_result_t res = BOOTSTRAP_SUCCESS;
     int nranks = 0, c = 0;
@@ -143,6 +211,16 @@ static void* bootstrap_root(void* rargs) {
             nccl_fn_table(init, &sock, nullptr, SOCKET_MAGIC, SOCKET_TYPE_UNKNOWN, nullptr, 0), res,
             out);
         BOOTSTRAP_CHECKGOTO(nccl_fn_table(accept, &sock, listen_sock), res, out);
+        // check for wire compatibility for nvshmemx_uniqueid_t
+        BOOTSTRAP_CHECKGOTO(
+            bootstrap_net_recv(&sock, &(peer_uid_version), sizeof(peer_uid_version)), res, out);
+        BOOTSTRAP_CHECKGOTO(
+            bootstrap_net_send(&sock, &(root_uid_version), sizeof(root_uid_version)), res, out);
+        if (peer_uid_version != root_uid_version) {
+            BOOTSTRAP_ERROR_PRINT("UID Bootstrap versions not compatible between PEs\n");
+            goto out;
+        }
+
         BOOTSTRAP_CHECKGOTO(bootstrap_net_recv(&sock, &info, sizeof(info)), res, out);
         BOOTSTRAP_CHECKGOTO(nccl_fn_table(close, &sock), res, out);
 
@@ -192,7 +270,7 @@ static void* bootstrap_root(void* rargs) {
 
 out:
     if (listen_sock != NULL) {
-        nccl_fn_table(close, listen_sock);
+        BOOTSTRAP_INFO(nccl_fn_table(close, listen_sock));
         BOOTSTRAP_PTR_FREE(listen_sock);
     }
 
@@ -222,6 +300,7 @@ static bootstrap_result_t bootstrap_create_root(struct bootstrap_uid_handle* han
     BOOTSTRAP_CHECKGOTO(BOOTSTRAP_CALLOC(&args, 1), res, cleanup_old);
     args->listen_sock = listen_sock;
     args->magic = handle->magic;
+    args->version = handle->version;
 
     BOOTSTRAP_NEQCHECK(pthread_attr_init(&attr), 0);
     BOOTSTRAP_NEQCHECK(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED), 0);
@@ -239,12 +318,12 @@ out:
 /**
  * Bootstrap Unique ID Setup
  */
-int bootstrap_get_unique_id(void* cookie, struct bootstrap_env_attr* env_attr) {
+int bootstrap_get_unique_id(void* cookie) {
     struct bootstrap_uid_handle* handle = (struct bootstrap_uid_handle*)(cookie);
-    memset(handle, 0, sizeof(bootstrap_uid_handle));
+    *handle = NVSHMEMX_UNIQUEID_INITIALIZER;
     BOOTSTRAP_NEQCHECK(bootstrap_get_random_data(&handle->magic, sizeof(handle->magic)), 0);
-    if (env_attr->uid_session_id) {
-        if (nccl_fn_table(get_addr_from_string, &handle->addr, env_attr->uid_session_id) !=
+    if (env_attr.BOOTSTRAP_UID_SESSION_ID_provided) {
+        if (nccl_fn_table(get_addr_from_string, &handle->addr, env_attr.BOOTSTRAP_UID_SESSION_ID) !=
             BOOTSTRAP_SUCCESS) {
             BOOTSTRAP_ERROR_PRINT(
                 "Invalid UID Session ID, please use format: <ipv4>:<port> or "
@@ -431,6 +510,7 @@ int bootstrap_uid_alltoall(const void* send_data, void* recv_data, int size,
     char* send_buf = (char*)send_data;
     int rank = state->rank;
     int nranks = state->nranks;
+    int tag = 0;
     int chunk_size = size;
 
     BOOTSTRAP_DEBUG_PRINT("rank %d nranks %d size %d", rank, nranks, size);
@@ -454,11 +534,12 @@ int bootstrap_uid_alltoall(const void* send_data, void* recv_data, int size,
             continue;
         }
 
+        tag++;
         // Send slice to the right
-        BOOTSTRAP_CHECK(bootstrap_send(handle->comm_state, right, 0,
+        BOOTSTRAP_CHECK(bootstrap_send(handle->comm_state, right, tag,
                                        (send_buf + right * chunk_size), chunk_size));
         // Recv slice from the left
-        BOOTSTRAP_CHECK(bootstrap_recv(handle->comm_state, left, 0,
+        BOOTSTRAP_CHECK(bootstrap_recv(handle->comm_state, left, tag,
                                        ((char*)recv_data + left * chunk_size), chunk_size));
     }
 
@@ -486,6 +567,7 @@ int bootstrap_uid_barrier(struct bootstrap_handle* handle) {
     for (int mask = 1; mask < nranks; mask <<= 1) {
         int src = (rank - mask + nranks) % nranks;
         int dst = (rank + mask) % nranks;
+        tag++;
         BOOTSTRAP_CHECK(bootstrap_send(handle->comm_state, dst, tag, data, sizeof(data)));
         BOOTSTRAP_CHECK(bootstrap_recv(handle->comm_state, src, tag, data, sizeof(data)));
     }
@@ -532,27 +614,25 @@ bootstrap_result_t bootstrap_uid_abort(struct bootstrap_handle* handle) {
 /**
  * Bootstrap Pre & Post Initialization
  */
-int nvshmemi_bootstrap_plugin_pre_init(void* arg, bootstrap_handle_t* handle,
-                                       const int abi_version) {
+int nvshmemi_bootstrap_plugin_pre_init(bootstrap_handle_t* handle, const int abi_version) {
     int bootstrap_version = NVSHMEMI_BOOTSTRAP_ABI_VERSION;
-    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version)) {
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version, true)) {
         BOOTSTRAP_ERROR_PRINT(
             "UID bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
             bootstrap_version, abi_version);
         exit(-1);
     }
 
-    // interpret arg as bootstrap_env_attr_t
-    bootstrap_env_attr_t* env_attr = (bootstrap_env_attr_t*)(arg);
+    // parse all envs and initialize them inside of bootstrap library
+    nvshmemi_env_options_init(&env_attr);
+    bootstrap_parse_debug();
 
     // Discover the network for bootstrap, if not done previously.
     // This code needs to be stateful to be able to be called multiple times by the caller
-    BOOTSTRAP_CHECK(bootstrap_net_init(env_attr));
+    BOOTSTRAP_CHECK(bootstrap_net_init());
     if (handle->pre_init_ops == nullptr) {
         BOOTSTRAP_CALLOC(&handle->pre_init_ops, 1);
         handle->pre_init_ops->get_unique_id = bootstrap_get_unique_id;
-        BOOTSTRAP_CALLOC(&handle->pre_init_ops->env_attr, 1);
-        memcpy(handle->pre_init_ops->env_attr, env_attr, sizeof(bootstrap_env_attr_t));
         handle->pre_init_ops->cookie = nullptr;
     }
 
@@ -561,6 +641,7 @@ int nvshmemi_bootstrap_plugin_pre_init(void* arg, bootstrap_handle_t* handle,
 
 int nvshmemi_bootstrap_plugin_init(void* arg, bootstrap_handle_t* handle, const int abi_version) {
     struct bootstrap_state* state;
+    int root_uid_version;
     nvshmemx_uniqueid_args_t* uid_args = nullptr;
     bootstrap_uid_socket_address_t next_addr;
     bootstrap_uid_socket_t sock, listen_sock_root;
@@ -568,7 +649,7 @@ int nvshmemi_bootstrap_plugin_init(void* arg, bootstrap_handle_t* handle, const 
     struct bootstrap_ext_info info = {};
 
     int bootstrap_version = NVSHMEMI_BOOTSTRAP_ABI_VERSION;
-    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version)) {
+    if (!nvshmemi_is_bootstrap_compatible(bootstrap_version, abi_version, true)) {
         BOOTSTRAP_ERROR_PRINT(
             "UID bootstrap version (%d) is not compatible with NVSHMEM version (%d)",
             bootstrap_version, abi_version);
@@ -592,7 +673,7 @@ int nvshmemi_bootstrap_plugin_init(void* arg, bootstrap_handle_t* handle, const 
         ops->cookie = uid_handle;
         // if session ID was set and rank is 0, create a root thread to exchange peer addresses
         // using phoning home protocol
-        if (handle->pg_rank == 0 && ops->env_attr->uid_session_id) {
+        if (handle->pg_rank == 0 && env_attr.BOOTSTRAP_UID_SESSION_ID_provided) {
             BOOTSTRAP_CHECK(bootstrap_create_root(uid_handle));
         }
     } else {
@@ -638,6 +719,14 @@ int nvshmemi_bootstrap_plugin_init(void* arg, bootstrap_handle_t* handle, const 
     BOOTSTRAP_CHECK(nccl_fn_table(init, &sock, &uid_handle->addr, state->magic,
                                   SOCKET_TYPE_BOOTSTRAP, state->abort_flag, 0));
     BOOTSTRAP_CHECK(nccl_fn_table(connect, &sock));
+    // check for wire compatibility for nvshmemx_uniqueid_t
+    BOOTSTRAP_CHECK(bootstrap_net_send(&sock, &(uid_handle->version), sizeof(uid_handle->version)));
+    BOOTSTRAP_CHECK(bootstrap_net_recv(&sock, &(root_uid_version), sizeof(root_uid_version)));
+    if (uid_handle->version != root_uid_version) {
+        BOOTSTRAP_ERROR_PRINT("UID Bootstrap versions not compatible between PEs\n");
+        exit(-1);
+    }
+
     BOOTSTRAP_CHECK(bootstrap_net_send(&sock, &info, sizeof(info)));
     BOOTSTRAP_CHECK(nccl_fn_table(close, &sock));
 
@@ -665,11 +754,16 @@ int nvshmemi_bootstrap_plugin_init(void* arg, bootstrap_handle_t* handle, const 
                                                sizeof(bootstrap_uid_socket_address_t), handle),
                        BOOTSTRAP_SUCCESS);
 
+    handle->version = NVSHMEM_BOOTSTRAP_MAJOR_MINOR_VERSION(abi_version) <
+                              NVSHMEM_BOOTSTRAP_MAJOR_MINOR_VERSION(bootstrap_version)
+                          ? abi_version
+                          : bootstrap_version;
     handle->allgather = bootstrap_uid_allgather;
     handle->alltoall = bootstrap_uid_alltoall;
     handle->barrier = bootstrap_uid_barrier;
     handle->finalize = bootstrap_uid_close;
     handle->global_exit = nullptr;
+    handle->show_info = bootstrap_uid_showinfo;
     // TODO: Add future support for how to enable proxy thread for abort & progress tracking
     BOOTSTRAP_DEBUG_PRINT("rank %d nranks %d - DONE", handle->pg_rank, handle->pg_size);
     return BOOTSTRAP_SUCCESS;

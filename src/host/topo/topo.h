@@ -6,7 +6,7 @@
 
 #ifndef __TOPO_H
 #define __TOPO_H
-#include "internal/common/nvshmem_internal.h"
+#include "internal/host/nvshmemi_types.h"  // for nvshmemi_state_t
 
 int nvshmemi_get_devices_by_distance(int *device_arr, int max_dev_per_pe,
                                      struct nvshmem_transport *tcurr);

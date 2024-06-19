@@ -4,20 +4,22 @@
  * See COPYRIGHT for license information
  */
 
-#include "host/nvshmemx_api.h"  // IWYU pragma: keep
-#include <stdint.h>             // IWYU pragma: keep
-// IWYU pragma: no_include <bits/stdint-uintn.h>
-#include <cuda_runtime.h>
-#include <driver_types.h>
-#include <stddef.h>
-
-#include "common/nvshmem_common.cuh"
-#include "common/nvshmem_constants.h"
-#include "internal/common/comm/cuda_interface_sync.h"
-#include "internal/common/nvshmem_internal.h"
-#include "internal/host/nvshmem_nvtx.hpp"
-#include "host/nvshmemx_error.h"
-#include "internal/util.h"
+#include <cuda_runtime.h>                  // for cudaMemcpy, cud...
+#include <driver_types.h>                  // for CUstream_st
+#include <stddef.h>                        // for size_t, NULL
+#include <stdint.h>                        // for uint64_t
+#include "device_host/nvshmem_common.cuh"  // for NVSHMEMI_REPT_F...
+#include "device_host_transport/nvshmem_common_transport.h"
+#include "device_host_transport/nvshmem_constants.h"  // for NVSHMEM_SIGNAL_SET
+#include "host/nvshmem_api.h"                         // for nvshmem_signal_...
+#include "host/nvshmemx_api.h"                        // for nvshmemx_int32_...
+#include "non_abi/nvshmemx_error.h"                   // for NVSHMEMI_NZ_EXIT
+#include "internal/host/nvshmem_internal.h"           // for nvshmemi_signal...
+#include "internal/host/cuda_interface_sync.h"        // for call_nvshmemi_i...
+#include "internal/host/nvshmem_nvtx.hpp"             // for nvtx_cond_range
+#include "internal/host/nvshmemi_symmetric_heap.hpp"  // for nvshmemi_symmet...
+#include "internal/host/nvshmemi_types.h"             // for nvshmemi_state
+#include "internal/host/util.h"                       // for NVSHMEM_API_NOT...
 
 #define NVSHMEMX_TYPE_WAIT_UNTIL_ON_STREAM(type, TYPE)                                     \
     void nvshmemx_##type##_wait_until_on_stream(TYPE *ivar, int cmp, TYPE cmp_value,       \
@@ -65,7 +67,8 @@ void nvshmemx_signal_wait_until_on_stream(uint64_t *sig_addr, int cmp, uint64_t 
 void nvshmemi_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
                                   cudaStream_t cstrm) {
     int status = 0;
-    if (sig_op == NVSHMEM_SIGNAL_SET && nvshmemi_state->peer_heap_base[pe] != NULL) {
+    if (sig_op == NVSHMEMI_AMO_SIGNAL_SET &&
+        nvshmemi_state->heap_obj->get_local_pe_base()[pe] != NULL) {
         void *peer_addr;
         NVSHMEMU_MAPPED_PTR_TRANSLATE(peer_addr, sig_addr, pe)
         status = cudaMemcpyAsync(peer_addr, (const void *)&signal, sizeof(uint64_t),

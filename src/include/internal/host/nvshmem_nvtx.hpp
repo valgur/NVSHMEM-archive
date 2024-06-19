@@ -5,7 +5,8 @@
  */
 
 /* needed for definition of NULL. */
-#include <cstddef>
+// IWYU pragma: no_include <nvtx3/nvtxDetail/nvtxImplCore.h>
+#include <cstddef>  // for NULL
 
 #ifndef _NVSHMEM_NVTX_HPP_
 #define _NVSHMEM_NVTX_HPP_
@@ -37,7 +38,7 @@ typedef enum nvtxOpt {
               RMA_NONBLOCKING_OPT
 } nvtxOpt_t;
 
-#include "internal/host/nvtx3.hpp"
+#include "internal/host/nvtx3.hpp"  // for domain, domain::global
 
 template <class D = nvtx3::domain::global>
 class nvtx_cond_range {

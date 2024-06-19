@@ -12,6 +12,9 @@
 
 #ifndef NVSHMEMI_COLL_H
 #define NVSHMEMI_COLL_H
+#include <cuda_runtime.h>
+
+#include "host/nvshmem_macros.h"
 
 #define DECL_NVSHMEMI_TYPENAME_OP_REDUCE(TYPENAME, TYPE, OP)             \
     NVSHMEMI_HOSTDEVICE_PREFIX void nvshmemi_##TYPENAME##_##OP##_reduce( \

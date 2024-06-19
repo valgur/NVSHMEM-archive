@@ -208,12 +208,14 @@ void atomic_usage(void) {
                                                                                                    \
         nvshmem_barrier_all();                                                                     \
         CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
+        cudaEventRecord(start, stream);                                                            \
         status = nvshmemx_collective_launch((const void *)ping_pong_##TYPE_NAME##_##AMO, 1, 1,     \
                                             args_2, 0, stream);                                    \
         if (status != NVSHMEMX_SUCCESS) {                                                          \
             fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                     \
             exit(-1);                                                                              \
         }                                                                                          \
+        cudaEventRecord(stop, stream);                                                             \
         CUDA_CHECK(cudaStreamSynchronize(stream));                                                 \
         /* give latency in us */                                                                   \
         cudaEventElapsedTime(&milliseconds, start, stop);                                          \

@@ -5,14 +5,20 @@
  ************************************************************************/
 
 #include "ncclsocket_socket.hpp"
-#include "ncclsocket_utils.h"
-#include <stdlib.h>
-#include "ncclsocket_checks.h"
-#include <unistd.h>
-#include <ifaddrs.h>
-#include <cstring>
-#include <net/if.h>
-#include "ncclsocket_param.h"
+#include <arpa/inet.h>          // for inet_pton
+#include <errno.h>              // for errno, EAGAIN, ECONNREFUSED, EINPROGRESS
+#include <fcntl.h>              // for fcntl, F_GETFL, F_SETFL, O_NONBLOCK
+#include <ifaddrs.h>            // for ifaddrs, freeifaddrs, getifaddrs
+#include <net/if.h>             // for if_nametoindex, IFNAMSIZ
+#include <netinet/tcp.h>        // for TCP_NODELAY
+#include <poll.h>               // for pollfd, poll, POLLOUT
+#include <stdio.h>              // for sprintf
+#include <stdlib.h>             // for free, atoi
+#include <unistd.h>             // for usleep, close
+#include <cstring>              // for NULL, memcpy, strerror, memset, strncpy
+#include "ncclsocket_checks.h"  // for NCCLCHECK, SYSCHECK, EQCHECK, EQCHECK...
+#include "ncclsocket_debug.h"   // for WARN, INFO, TRACE
+#include "ncclsocket_utils.h"   // for parseStringList, netIf, matchIfList
 
 thread_local int ncclDebugNoWarn = 0;
 

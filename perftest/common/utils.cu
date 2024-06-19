@@ -11,6 +11,7 @@
  */
 
 #include "utils.h"
+#include <stdlib.h>
 
 double *d_latency = NULL;
 double *d_avg_time = NULL;
@@ -119,7 +120,8 @@ void init_wrapper(int *c, char ***v) {
         DEBUG_PRINT("MPI: [%d of %d] hello MPI world! \n", rank, nranks);
         MPI_Comm mpi_comm = MPI_COMM_WORLD;
 
-        nvshmemx_init_attr_t attr;
+        nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
+
         attr.mpi_comm = &mpi_comm;
         nvshmemx_init_attr(NVSHMEMX_INIT_WITH_MPI_COMM, &attr);
 
@@ -133,8 +135,8 @@ void init_wrapper(int *c, char ***v) {
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &nranks);
         DEBUG_PRINT("MPI: [%d of %d] hello MPI world! \n", rank, nranks);
-        nvshmemx_init_attr_t attr = {};
-        nvshmemx_uniqueid_t id;
+        nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
+        nvshmemx_uniqueid_t id = NVSHMEMX_UNIQUEID_INITIALIZER;
         if (rank == 0) {
             nvshmemx_get_uniqueid(&id);
         }
@@ -163,7 +165,7 @@ void init_wrapper(int *c, char ***v) {
 
         select_device_shmem();
 
-        nvshmemx_init_attr_t attr;
+        nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
         nvshmemx_init_attr(NVSHMEMX_INIT_WITH_SHMEM, &attr);
 
         nvshmem_barrier_all();
@@ -250,30 +252,32 @@ void free_tables(void **tables, int num_tables) {
 void print_table(const char *job_name, const char *subjob_name, const char *var_name,
                  const char *output_var, const char *units, const char plus_minus, uint64_t *size,
                  double *value, int num_entries) {
+    bool machine_readable = false;
+    char *env_value = getenv("NVSHMEM_MACHINE_READABLE_OUTPUT");
+    if (env_value) machine_readable = atoi(env_value);
     int i;
 
-/* Used for automated test output. It outputs the data in a non human-friendly format. */
-#ifdef NVSHMEM_MACHINE_READABLE_OUTPUT
-
-    printf("%s\n", job_name);
-    for (i = 0; i < num_entries; i++) {
-        if (size[i] != 0 && value[i] != 0.00) {
-            printf("&&&& PERF %s___%s___size__%lu___%s %lf %c%s\n", job_name, subjob_name, size[i],
-                   output_var, value[i], plus_minus, units);
+    /* Used for automated test output. It outputs the data in a non human-friendly format. */
+    if (machine_readable) {
+        printf("%s\n", job_name);
+        for (i = 0; i < num_entries; i++) {
+            if (size[i] != 0 && value[i] != 0.00) {
+                printf("&&&& PERF %s___%s___size__%lu___%s %lf %c%s\n", job_name, subjob_name,
+                       size[i], output_var, value[i], plus_minus, units);
+            }
+        }
+    } else {
+        printf("+------------------------+----------------------+\n");
+        printf("| %-22s | %-20s |\n", job_name, subjob_name);
+        printf("+------------------------+----------------------+\n");
+        printf("| %-22s | %10s %-9s |\n", var_name, output_var, units);
+        printf("+------------------------+----------------------+\n");
+        for (i = 0; i < num_entries; i++) {
+            if (size[i] != 0 && value[i] != 0.00) {
+                printf("| %-22.1lu | %-20.6lf |\n", size[i], value[i]);
+                printf("+------------------------+----------------------+\n");
+            }
         }
     }
-#else
-    printf("+------------------------+----------------------+\n");
-    printf("| %-22s | %-20s |\n", job_name, subjob_name);
-    printf("+------------------------+----------------------+\n");
-    printf("| %-22s | %10s %-9s |\n", var_name, output_var, units);
-    printf("+------------------------+----------------------+\n");
-    for (i = 0; i < num_entries; i++) {
-        if (size[i] != 0 && value[i] != 0.00) {
-            printf("| %-22.1lu | %-20.6lf |\n", size[i], value[i]);
-            printf("+------------------------+----------------------+\n");
-        }
-    }
-#endif
     printf("\n\n");
 }

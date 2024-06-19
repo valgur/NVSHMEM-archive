@@ -7,9 +7,8 @@
 #ifndef NCCL_SOCKET_CHECKS_H_
 #define NCCL_SOCKET_CHECKS_H_
 
-#include "ncclsocket_nccl.h"
-#include "ncclsocket_debug.h"
-#include <errno.h>
+#include <errno.h>             // for errno, EAGAIN, EINTR, EWOULDBLOCK
+#include "ncclsocket_debug.h"  // for INFO, WARN
 
 // Check system calls
 #define SYSCHECK(call, name) do { \

@@ -7,11 +7,8 @@
 #ifndef NCCL_SOCKET_UTILS_H_
 #define NCCL_SOCKET_UTILS_H_
 
-#include "ncclsocket_nccl.h"
-#include <stdint.h>
-#include <stdlib.h>
-#include <time.h>
-#include <string.h>
+#include <stdlib.h>  // for atoi
+#include <string.h>  // for strlen, strncmp
 
 struct netIf {
   char prefix[64];

@@ -7,9 +7,9 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#include "common/nvshmem_common.cuh"
+#include "device_host/nvshmem_common.cuh"
 #include "team_internal.h"
-#include "internal/util.h"
+#include "internal/host/util.h"
 
 template <typename TYPE, rdxn_ops_t OP>
 extern __global__ void nvshmemi_reduce_kernel(int start, int stride, int size, TYPE *dst,
@@ -24,6 +24,7 @@ __global__ void nvshmemi_init_array_kernel(T *array, int len, T val) {
 template <typename T>
 void nvshmemi_call_init_array_kernel(T *array, int len, T val) {
     nvshmemi_init_array_kernel<T><<<1, 1>>>(array, len, val);
+    CUDA_RUNTIME_CHECK(cudaGetLastError());
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 }
 
@@ -38,6 +39,7 @@ void nvshmemi_call_reduce_kernel(int start, int stride, int size, TYPE *dst, con
                                  volatile long *sync_counter) {
     nvshmemi_reduce_kernel<TYPE, OP>
         <<<1, 1>>>(start, stride, size, dst, source, nreduce, pWrk, pSync, sync_counter);
+    CUDA_RUNTIME_CHECK(cudaGetLastError());
     CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 }
 

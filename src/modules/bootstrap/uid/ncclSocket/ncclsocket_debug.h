@@ -7,15 +7,7 @@
 #ifndef NCCL_SOCKET_DEBUG_H_
 #define NCCL_SOCKET_DEBUG_H_
 
-#include "ncclsocket_nccl.h"
-#include "bootstrap_util.h"
-#include <stdio.h>
-#include <chrono>
-#include <type_traits>
-
-#include <limits.h>
-#include <string.h>
-#include <pthread.h>
+#include "bootstrap_util.h"  // for BOOTSTRAP_DEBUG_PRINT, BOOTSTRAP_ERROR_P...
 
 extern thread_local int ncclDebugNoWarn;
 typedef enum {NCCL_LOG_NONE=0, NCCL_LOG_VERSION=1, NCCL_LOG_WARN=2, NCCL_LOG_INFO=3, NCCL_LOG_ABORT=4, NCCL_LOG_TRACE=5} ncclDebugLogLevel;

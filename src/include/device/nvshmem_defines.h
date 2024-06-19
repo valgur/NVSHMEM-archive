@@ -13,23 +13,58 @@
 #ifndef _NVSHMEM_DEFINES_H_
 #define _NVSHMEM_DEFINES_H_
 
-#include "common/nvshmem_common.cuh"
-#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
-#include "device/pt-to-pt/transfer_device.cuh"
+#include <cuda_runtime.h>
+#if not defined __CUDACC_RTC__
+#include <stdint.h>
 #else
-#include "device/pt-to-pt/nvshmemi_transfer_api.cuh"
+#include <cuda/std/cstdint>
 #endif
-#include "device/nvshmemi_wait_until_apis.cuh"
-#include "device/nvshmemi_common_device_defines.cuh"
-#include "device/nvshmemi_common_device.cuh"
-#include "device/team/team_device.cuh"
-#include "device/init/query_device.cuh"
+
+#include "device_host/nvshmem_common.cuh"
+#include "non_abi/nvshmem_build_options.h"
+#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#include "non_abi/device/pt-to-pt/transfer_device.cuh"
+#else
+#include "non_abi/device/pt-to-pt/nvshmemi_transfer_api.cuh"
+#endif
+#include "non_abi/device/wait/nvshmemi_wait_until_apis.cuh"
+#include "non_abi/device/threadgroup/nvshmemi_common_device_defines.cuh"
+#include "non_abi/device/common/nvshmemi_common_device.cuh"
+#include "non_abi/device/team/nvshmemi_team_defines.cuh"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #ifdef __CUDA_ARCH__
+
+__device__ inline int nvshmem_team_my_pe(nvshmem_team_t team) { return nvshmemi_team_my_pe(team); }
+
+__device__ inline int nvshmem_team_n_pes(nvshmem_team_t team) { return nvshmemi_team_n_pes(team); }
+
+__device__ inline int nvshmem_team_translate_pe(nvshmem_team_t src_team, int src_pe,
+                                                nvshmem_team_t dest_team) {
+    return nvshmemi_team_translate_pe(src_team, src_pe, dest_team);
+}
+
+__device__ inline int nvshmem_my_pe(void) { return nvshmemi_device_state_d.mype; }
+
+__device__ inline int nvshmem_n_pes(void) { return nvshmemi_device_state_d.npes; }
+
+__device__ inline void nvshmem_info_get_name(char *name) {
+    size_t i;
+    const char *str = NVSHMEM_VENDOR_STRING;
+
+    /* Copy up to NVSHMEM_MAX_NAME_LEN-1 chars, then add NULL terminator */
+    for (i = 0; i < NVSHMEM_MAX_NAME_LEN - 1 && str[i] != '\0'; i++) name[i] = str[i];
+
+    name[i] = '\0';
+}
+
+__device__ inline void nvshmem_info_get_version(int *major, int *minor) {
+    *major = NVSHMEM_MAJOR_VERSION;
+    *minor = NVSHMEM_MINOR_VERSION;
+}
 
 /*__device__ nvshmem_p*/
 #define NVSHMEMI_TYPENAME_P_IMPL(TYPENAME, TYPE)                                          \
@@ -253,7 +288,7 @@ __device__ inline void nvshmem_getmem_nbi(void *dest, const void *source, size_t
     __device__ inline void nvshmem_##NAME##_iput(TYPE *dest, const TYPE *source, ptrdiff_t dst,   \
                                                  ptrdiff_t sst, size_t nelems, int pe) {          \
         void *peer_base_addr = (void *)__ldg(                                                     \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);             \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);         \
         if (peer_base_addr) {                                                                     \
             TYPE *dest_actual;                                                                    \
             dest_actual = (TYPE *)((char *)(peer_base_addr) +                                     \
@@ -275,7 +310,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IPUT)
     __device__ inline void nvshmem_iput##NAME(void *dest, const void *source, ptrdiff_t dst,  \
                                               ptrdiff_t sst, size_t nelems, int pe) {         \
         void *peer_base_addr = (void *)__ldg(                                                 \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);         \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);     \
         if (peer_base_addr) {                                                                 \
             char *dest_actual;                                                                \
             dest_actual = ((char *)(peer_base_addr) +                                         \
@@ -297,7 +332,7 @@ NVSHMEMI_REPT_FOR_SIZES_WITH_TYPE(NVSHMEM_IPUTSIZE)
     __device__ inline void nvshmem_##Name##_iget(TYPE *dest, const TYPE *source, ptrdiff_t dst, \
                                                  ptrdiff_t sst, size_t nelems, int pe) {        \
         void *peer_base_addr = (void *)__ldg(                                                   \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);           \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);       \
         if (peer_base_addr) {                                                                   \
             TYPE *source_actual;                                                                \
             source_actual =                                                                     \
@@ -320,7 +355,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEM_TYPE_IGET)
     __device__ inline void nvshmem_iget##Name(void *dest, const void *source, ptrdiff_t dst,  \
                                               ptrdiff_t sst, size_t nelems, int pe) {         \
         void *peer_base_addr = (void *)__ldg(                                                 \
-            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);         \
+            (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);     \
         if (peer_base_addr) {                                                                 \
             char *source_actual;                                                              \
             source_actual = ((char *)(peer_base_addr) +                                       \
@@ -633,24 +668,18 @@ NVSHMEMI_REPT_FOR_WAIT_TYPES(NVSHMEM_WAIT_UNTIL_SOME_VECTOR)
 /* nvshmem_quiet and nvshmem_fence API */
 __device__ inline void nvshmem_quiet() { nvshmemi_quiet<NVSHMEMI_THREADGROUP_THREAD>(); }
 
-__device__ inline void nvshmem_fence() {
-    if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST) {
-        nvshmemi_transfer_fence<NVSHMEMI_THREADGROUP_THREAD>();
-    }
-    __threadfence_system(); /* Use __threadfence_system instead of __threadfence
-                               for data visibility in case of intra-node GPU transfers */
-}
+__device__ inline void nvshmem_fence() { nvshmemi_fence(); }
 
 #define NVSHMEM_TYPE_ATOMIC_FETCH_ADD(Name, Type)                                                \
     __device__ inline Type nvshmem_##Name##_atomic_fetch_add(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                                    \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);        \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {         \
             Type *target_actual =                                                                \
                 (Type *)((char *)peer_base_addr +                                                \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));          \
                                                                                                  \
-            return ((Type)atomicAdd(target_actual, value));                                      \
+            return ((Type)atomicAdd_system(target_actual, value));                               \
         } else {                                                                                 \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, value, 0, pe,               \
                                                      NVSHMEMI_AMO_FETCH_ADD);                    \
@@ -660,13 +689,13 @@ __device__ inline void nvshmem_fence() {
 #define NVSHMEM_TYPE_ATOMIC_FETCH_ADD_CAST(Name, Type, subType)                                  \
     __device__ inline Type nvshmem_##Name##_atomic_fetch_add(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                                    \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);        \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {         \
             Type *target_actual =                                                                \
                 (Type *)((char *)peer_base_addr +                                                \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));          \
                                                                                                  \
-            return (Type)atomicAdd((subType *)target_actual, *((subType *)&value));              \
+            return (Type)atomicAdd_system((subType *)target_actual, *((subType *)&value));       \
         } else {                                                                                 \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, value, 0, pe,               \
                                                      NVSHMEMI_AMO_FETCH_ADD);                    \
@@ -717,36 +746,36 @@ NVSHMEM_TYPE_ATOMIC_ADD_EMULATE(size, size_t)
 
 #undef NVSHMEM_TYPE_ATOMIC_ADD_EMULATE
 
-#define NVSHMEM_TYPE_ATOMIC_FETCH_INC(Name, Type)                                        \
-    __device__ inline Type nvshmem_##Name##_atomic_fetch_inc(Type *target, int pe) {     \
-        void *peer_base_addr = (void *)__ldg(                                            \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);    \
-        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) { \
-            Type *target_actual =                                                        \
-                (Type *)((char *)peer_base_addr +                                        \
-                         ((char *)target - (char *)nvshmemi_device_state_d.heap_base));  \
-                                                                                         \
-            return atomicInc(target_actual, UINT_MAX);                                   \
-        } else {                                                                         \
-            return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)1, 0, pe,     \
-                                                     NVSHMEMI_AMO_FETCH_INC);            \
-        }                                                                                \
+#define NVSHMEM_TYPE_ATOMIC_FETCH_INC(Name, Type)                                         \
+    __device__ inline Type nvshmem_##Name##_atomic_fetch_inc(Type *target, int pe) {      \
+        void *peer_base_addr = (void *)__ldg(                                             \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe); \
+        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {  \
+            Type *target_actual =                                                         \
+                (Type *)((char *)peer_base_addr +                                         \
+                         ((char *)target - (char *)nvshmemi_device_state_d.heap_base));   \
+                                                                                          \
+            return atomicInc_system(target_actual, UINT_MAX);                             \
+        } else {                                                                          \
+            return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)1, 0, pe,      \
+                                                     NVSHMEMI_AMO_FETCH_INC);             \
+        }                                                                                 \
     }
 
-#define NVSHMEM_TYPE_ATOMIC_FETCH_INC_CAST(Name, Type, subType)                          \
-    __device__ inline Type nvshmem_##Name##_atomic_fetch_inc(Type *target, int pe) {     \
-        void *peer_base_addr = (void *)__ldg(                                            \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);    \
-        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) { \
-            Type *target_actual =                                                        \
-                (Type *)((char *)peer_base_addr +                                        \
-                         ((char *)target - (char *)nvshmemi_device_state_d.heap_base));  \
-                                                                                         \
-            return (Type)atomicInc((subType *)target_actual, UINT_MAX);                  \
-        } else {                                                                         \
-            return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)1, 0, pe,     \
-                                                     NVSHMEMI_AMO_FETCH_INC);            \
-        }                                                                                \
+#define NVSHMEM_TYPE_ATOMIC_FETCH_INC_CAST(Name, Type, subType)                           \
+    __device__ inline Type nvshmem_##Name##_atomic_fetch_inc(Type *target, int pe) {      \
+        void *peer_base_addr = (void *)__ldg(                                             \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe); \
+        if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {  \
+            Type *target_actual =                                                         \
+                (Type *)((char *)peer_base_addr +                                         \
+                         ((char *)target - (char *)nvshmemi_device_state_d.heap_base));   \
+                                                                                          \
+            return (Type)atomicInc_system((subType *)target_actual, UINT_MAX);            \
+        } else {                                                                          \
+            return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)1, 0, pe,      \
+                                                     NVSHMEMI_AMO_FETCH_INC);             \
+        }                                                                                 \
     }
 
 #define NVSHMEM_TYPE_ATOMIC_FETCH_INC_EMULATE(Name, Type)                            \
@@ -803,13 +832,13 @@ NVSHMEM_TYPE_ATOMIC_INC_EMULATE(size, size_t)
     __device__ inline Type nvshmem_##Name##_atomic_compare_swap(Type *target, Type compare,    \
                                                                 Type value, int pe) {          \
         void *peer_base_addr = (void *)__ldg(                                                  \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);          \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);      \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {       \
             Type *target_actual =                                                              \
                 (Type *)((char *)peer_base_addr +                                              \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));        \
                                                                                                \
-            return (Type)atomicCAS(target_actual, compare, value);                             \
+            return (Type)atomicCAS_system(target_actual, compare, value);                      \
         } else {                                                                               \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, compare, pe, \
                                                      NVSHMEMI_AMO_COMPARE_SWAP);               \
@@ -820,14 +849,14 @@ NVSHMEM_TYPE_ATOMIC_INC_EMULATE(size, size_t)
     __device__ inline Type nvshmem_##Name##_atomic_compare_swap(Type *target, Type compare,    \
                                                                 Type value, int pe) {          \
         void *peer_base_addr = (void *)__ldg(                                                  \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);          \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);      \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {       \
             Type *target_actual =                                                              \
                 (Type *)((char *)peer_base_addr +                                              \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));        \
                                                                                                \
-            return (Type)atomicCAS((subType *)target_actual, *((subType *)&compare),           \
-                                   *((subType *)&value));                                      \
+            return (Type)atomicCAS_system((subType *)target_actual, *((subType *)&compare),    \
+                                          *((subType *)&value));                               \
         } else {                                                                               \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, compare, pe, \
                                                      NVSHMEMI_AMO_COMPARE_SWAP);               \
@@ -850,13 +879,13 @@ NVSHMEM_TYPE_COMPARE_SWAP_CAST(ptrdiff, ptrdiff_t, unsigned long long int)
 #define NVSHMEM_TYPE_FETCH_AND(Name, Type)                                                       \
     __device__ inline Type nvshmem_##Name##_atomic_fetch_and(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                                    \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);        \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {         \
             Type *target_actual =                                                                \
                 (Type *)((char *)peer_base_addr +                                                \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));          \
                                                                                                  \
-            return atomicAnd(target_actual, value);                                              \
+            return atomicAnd_system(target_actual, value);                                       \
         } else {                                                                                 \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, 0, pe,         \
                                                      NVSHMEMI_AMO_FETCH_AND);                    \
@@ -866,13 +895,13 @@ NVSHMEM_TYPE_COMPARE_SWAP_CAST(ptrdiff, ptrdiff_t, unsigned long long int)
 #define NVSHMEM_TYPE_FETCH_AND_CAST(Name, Type, subType)                                         \
     __device__ inline Type nvshmem_##Name##_atomic_fetch_and(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                                    \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);        \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {         \
             Type *target_actual =                                                                \
                 (Type *)((char *)peer_base_addr +                                                \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));          \
                                                                                                  \
-            return atomicAnd((subType *)target_actual, *((subType *)&value));                    \
+            return atomicAnd_system((subType *)target_actual, *((subType *)&value));             \
         } else {                                                                                 \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, 0, pe,         \
                                                      NVSHMEMI_AMO_FETCH_AND);                    \
@@ -907,13 +936,13 @@ NVSHMEM_TYPE_AND_EMULATE(uint64, uint64_t)
 #define NVSHMEM_TYPE_FETCH_OR(Name, Type)                                                       \
     __device__ inline Type nvshmem_##Name##_atomic_fetch_or(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                                   \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);           \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);       \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {        \
             Type *target_actual =                                                               \
                 (Type *)((char *)peer_base_addr +                                               \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));         \
                                                                                                 \
-            return atomicOr(target_actual, value);                                              \
+            return atomicOr_system(target_actual, value);                                       \
         } else {                                                                                \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, 0, pe,        \
                                                      NVSHMEMI_AMO_FETCH_OR);                    \
@@ -923,13 +952,13 @@ NVSHMEM_TYPE_AND_EMULATE(uint64, uint64_t)
 #define NVSHMEM_TYPE_FETCH_OR_CAST(Name, Type, subType)                                         \
     __device__ inline Type nvshmem_##Name##_atomic_fetch_or(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                                   \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);           \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);       \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {        \
             Type *target_actual =                                                               \
                 (Type *)((char *)peer_base_addr +                                               \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));         \
                                                                                                 \
-            return atomicOr((subType *)target_actual, *((subType *)&value));                    \
+            return atomicOr_system((subType *)target_actual, *((subType *)&value));             \
         } else {                                                                                \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, 0, pe,        \
                                                      NVSHMEMI_AMO_FETCH_OR);                    \
@@ -964,13 +993,13 @@ NVSHMEM_TYPE_OR_EMULATE(uint64, uint64_t)
 #define NVSHMEM_TYPE_FETCH_XOR(Name, Type)                                                       \
     __device__ inline Type nvshmem_##Name##_atomic_fetch_xor(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                                    \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);        \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {         \
             Type *target_actual =                                                                \
                 (Type *)((char *)peer_base_addr +                                                \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));          \
                                                                                                  \
-            return atomicXor(target_actual, value);                                              \
+            return atomicXor_system(target_actual, value);                                       \
         } else {                                                                                 \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, 0, pe,         \
                                                      NVSHMEMI_AMO_FETCH_XOR);                    \
@@ -980,13 +1009,13 @@ NVSHMEM_TYPE_OR_EMULATE(uint64, uint64_t)
 #define NVSHMEM_TYPE_FETCH_XOR_CAST(Name, Type, subType)                                         \
     __device__ inline Type nvshmem_##Name##_atomic_fetch_xor(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                                    \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);            \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);        \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {         \
             Type *target_actual =                                                                \
                 (Type *)((char *)peer_base_addr +                                                \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));          \
                                                                                                  \
-            return atomicXor((subType *)target_actual, *((subType *)&value));                    \
+            return atomicXor_system((subType *)target_actual, *((subType *)&value));             \
         } else {                                                                                 \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, 0, pe,         \
                                                      NVSHMEMI_AMO_FETCH_XOR);                    \
@@ -1021,13 +1050,13 @@ NVSHMEM_TYPE_XOR_EMULATE(uint64, uint64_t)
 #define NVSHMEM_TYPE_SWAP(Name, Type)                                                       \
     __device__ inline Type nvshmem_##Name##_atomic_swap(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                               \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);       \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);   \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {    \
             Type *target_actual =                                                           \
                 (Type *)((char *)peer_base_addr +                                           \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));     \
                                                                                             \
-            return (Type)atomicExch(target_actual, value);                                  \
+            return (Type)atomicExch_system(target_actual, value);                           \
         } else {                                                                            \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, 0, pe,    \
                                                      NVSHMEMI_AMO_SWAP);                    \
@@ -1037,13 +1066,13 @@ NVSHMEM_TYPE_XOR_EMULATE(uint64, uint64_t)
 #define NVSHMEM_TYPE_SWAP_CAST(Name, Type, subType)                                         \
     __device__ inline Type nvshmem_##Name##_atomic_swap(Type *target, Type value, int pe) { \
         void *peer_base_addr = (void *)__ldg(                                               \
-            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base + pe);       \
+            (const unsigned long long *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);   \
         if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_ATOMICS) {    \
             Type *target_actual =                                                           \
                 (Type *)((char *)peer_base_addr +                                           \
                          ((char *)target - (char *)nvshmemi_device_state_d.heap_base));     \
                                                                                             \
-            return (Type)atomicExch((subType *)target_actual, *((subType *)&value));        \
+            return (Type)atomicExch_system((subType *)target_actual, *((subType *)&value)); \
         } else {                                                                            \
             return nvshmemi_transfer_amo_fetch<Type>((void *)target, (Type)value, 0, pe,    \
                                                      NVSHMEMI_AMO_SWAP);                    \
@@ -1116,17 +1145,7 @@ NVSHMEM_TYPE_SET_EMULATE(double, double)
 NVSHMEM_TYPE_SET_EMULATE(size, size_t)
 NVSHMEM_TYPE_SET_EMULATE(ptrdiff, ptrdiff_t)
 
-__device__ inline void *nvshmem_ptr(const void *ptr, int pe) {
-    ptrdiff_t offset = (char *)ptr - (char *)nvshmemi_device_state_d.heap_base;
-
-    if (ptr >= nvshmemi_device_state_d.heap_base && offset < nvshmemi_device_state_d.heap_size) {
-        void *peer_addr =
-            (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base + pe);
-        if (peer_addr != NULL) peer_addr = (void *)((char *)peer_addr + offset);
-        return peer_addr;
-    } else
-        return NULL;
-}
+__device__ inline void *nvshmem_ptr(const void *ptr, int pe) { return nvshmemi_ptr(ptr, pe); }
 
 #endif /* __CUDA_ARCH__ */
 

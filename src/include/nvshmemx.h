@@ -16,7 +16,9 @@
 /* NVRTC only compiles device code. Leave out host headers */
 #if not defined __CUDACC_RTC__
 #include "host/nvshmemx_api.h"
+#include "device/nvshmemx_collective_launch_apis.h"
 #endif
 #include "device/nvshmemx_defines.h"
+#include "device/nvshmemx_coll_defines.cuh"
 
 #endif

@@ -38,7 +38,7 @@ int main(int argc, char *argv[]) {
     cudaStream_t stream;
     int rank, nranks;
     MPI_Comm mpi_comm = MPI_COMM_WORLD;
-    nvshmemx_init_attr_t attr;
+    nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);

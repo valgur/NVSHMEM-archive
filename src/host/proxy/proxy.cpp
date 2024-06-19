@@ -1,49 +1,148 @@
 /*
- * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
  *
  * See COPYRIGHT for license information
  */
-#include <assert.h>
-#include <stdint.h>  // IWYU pragma: keep
-// IWYU pragma: no_include <bits/stdint-uintn.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <driver_types.h>
-#include <inttypes.h>
-#include <pthread.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>  // IWYU pragma: keep
-
-#include "internal/common/proxy/proxy_common.h"
-#include "modules/transport/cudawrap.h"
-#include "internal/common/debug.h"
-#include "modules/transport/env_defs_internal.h"
-#include "host/nvshmem_api.h"
-#include "common/nvshmem_common.cuh"
-#include "common/nvshmem_common_proxy.h"
-#include "common/nvshmem_common_transport.h"
-#include "common/nvshmem_types.h"
-#include "internal/common/nvshmem_internal.h"
-#include "internal/host/nvtx3.hpp"
-#include "modules/common/nvshmemi_bootstrap_defines.h"
-#include "host/nvshmemx_error.h"
-#include "proxy_host.h"
-#include "modules/transport/transport.h"
-#include "internal/util.h"
+#include <assert.h>                        // for assert
+#include <cuda.h>                          // for CUDA_SUCCESS
+#include <cuda_runtime.h>                  // for cudaFreeHost
+#include <driver_types.h>                  // for cudaStreamNon...
+#include <inttypes.h>                      // for PRIu64
+#include <math.h>                          // for log2
+#include <pthread.h>                       // for pthread_create
+#include <stdint.h>                        // for uint64_t, uin...
+#include <stdio.h>                         // for fprintf, NULL
+#include <stdlib.h>                        // for exit, free
+#include <string.h>                        // for memset, memcpy
+#include <unistd.h>                        // IWYU pragma: keep for getpid in NVSHMEM_TRACE case
+#include "device_host/nvshmem_types.h"     // for nvshmemi_devi...
+#include "device_host/nvshmem_common.cuh"  // for nvshmemi_devi...
+#include "device_host_transport/nvshmem_constants.h"                       // for CHANNEL_BUF_S...
+#include "host/nvshmem_api.h"                                              // for nvshmem_globa...
+#include "non_abi/nvshmemx_error.h"                                        // for NVSHMEMI_ERRO...
+#include "non_abi/nvshmem_build_options.h"                                 // IWYU pragma: keep
+#include "device_host_transport/nvshmem_common_transport.h"                // for g_elem_t, NVS...
+#include "internal/host/debug.h"                                           // for TRACE, INFO
+#include "internal/host/nvshmem_internal.h"                                // for nvshmemi_cuda...
+#include "internal/host/nvshmemi_symmetric_heap.hpp"                       // for nvshmemi_symm...
+#include "internal/host/nvshmemi_types.h"                                  // for nvshmemi_state_t
+#include "internal/host/nvtx3.hpp"                                         // for message
+#include "internal/host/util.h"                                            // for CUDA_RUNTIME_...
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for nvshmemi_boot...
+#include "internal/host_transport/cudawrap.h"                              // for CUPFN, nvshme...
+#include "bootstrap_host_transport/env_defs_internal.h"                    // for nvshmemi_opti...
+#include "internal/host_transport/transport.h"                             // for nvshmem_trans...
+#include "proxy_host.h"                                                    // for proxy_state_t
+#include "device_host/nvshmem_proxy_channel.h"
 
 // use a different NVTX domain ("NVSHMEM_PROXY") for proxy activities
 #define NVSHMEM_NVTX_DOMAIN NVSHMEM_PROXY
-#include "internal/host/nvshmem_nvtx.hpp"  // IWYU pragma: keep
+#include "internal/host/nvshmem_nvtx.hpp"  // for nvshmem_nvtx_...
 // IWYU pragma: no_include "nvtx3.hpp"
+
+uint64_t proxy_channel_g_buf_size;     /* Total size of g_buf in bytes */
+uint64_t proxy_channel_g_buf_log_size; /* Total size of g_buf in bytes */
+
+char *proxy_channel_g_buf;
+char *proxy_channel_g_coalescing_buf;
 
 // progress channels
 static base_request_t **channel_req;
 
 void *nvshmemi_proxy_progress(void *in);
 void *nvshmemi_proxy_progress_minimal(void *in);
+
+int nvshmemi_proxy_prep_minimal_state(proxy_state_t *state) {
+    int *temp_global_exit_request_state;
+    int *temp_global_exit_code;
+    nvshmemi_timeout_t *nvshmemi_timeout_dptr;
+
+    nvshmemi_device_state.global_exit_request_state = state->global_exit_request_state;
+
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_global_exit_request_state,
+                                                state->global_exit_request_state, 0));
+    CUDA_RUNTIME_CHECK(
+        cudaHostGetDevicePointer(&temp_global_exit_code, state->global_exit_code, 0));
+    CUDA_RUNTIME_CHECK(
+        cudaHostGetDevicePointer(&nvshmemi_timeout_dptr, state->nvshmemi_timeout, 0));
+
+    nvshmemi_device_state.global_exit_request_state = temp_global_exit_request_state;
+    nvshmemi_device_state.global_exit_code = temp_global_exit_code;
+    nvshmemi_device_state.timeout = nvshmemi_timeout_dptr;
+
+    return 0;
+}
+
+int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
+    int status = 0;
+
+    nvshmemi_device_state.proxy_channel_buf_size = state->channel_bufsize;
+    nvshmemi_device_state.proxy_channel_buf_logsize = state->channel_bufsize_log;
+    CUDA_RUNTIME_CHECK(
+        cudaMalloc(&state->channels_device, sizeof(proxy_channel_t) * state->channel_count));
+    INFO(NVSHMEM_PROXY, "channel buf: %p complete: %p quiet_issue: %p quiet_ack: %p",
+         state->channels[0].buf, state->channels[0].complete, state->channels[0].quiet_issue,
+         state->channels[0].quiet_ack);
+
+    uint64_t *temp_buf_dptr;
+    uint64_t *temp_complete_dptr;
+    uint64_t *temp_quiet_issue_dptr;
+    uint64_t *temp_quiet_ack_dptr;
+    uint64_t *temp_cst_issue_dptr;
+    uint64_t *temp_cst_ack_dptr;
+
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_buf_dptr, state->channels[0].buf, 0));
+    CUDA_RUNTIME_CHECK(
+        cudaHostGetDevicePointer(&temp_complete_dptr, state->channels[0].complete, 0));
+    CUDA_RUNTIME_CHECK(
+        cudaHostGetDevicePointer(&temp_quiet_issue_dptr, state->channels[0].quiet_issue, 0));
+    CUDA_RUNTIME_CHECK(
+        cudaHostGetDevicePointer(&temp_quiet_ack_dptr, state->channels[0].quiet_ack, 0));
+    CUDA_RUNTIME_CHECK(
+        cudaHostGetDevicePointer(&temp_cst_issue_dptr, state->channels[0].cst_issue, 0));
+    CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&temp_cst_ack_dptr, state->channels[0].cst_ack, 0));
+
+    INFO(NVSHMEM_PROXY,
+         "channel device_ptr buf: %p issue: %p complete: %p quiet_issue: %p quiet_ack: %p \n",
+         temp_buf_dptr, state->channels[0].issue, temp_complete_dptr, temp_quiet_issue_dptr,
+         temp_quiet_ack_dptr);
+
+    nvshmemi_device_state.proxy_channels_buf = temp_buf_dptr;
+    nvshmemi_device_state.proxy_channels_issue = state->channels[0].issue;
+    nvshmemi_device_state.proxy_channels_complete = temp_complete_dptr;
+    nvshmemi_device_state.proxy_channels_quiet_issue = temp_quiet_issue_dptr;
+    nvshmemi_device_state.proxy_channels_quiet_ack = temp_quiet_ack_dptr;
+    nvshmemi_device_state.proxy_channels_cst_issue = temp_cst_issue_dptr;
+    nvshmemi_device_state.proxy_channels_cst_ack = temp_cst_ack_dptr;
+
+    proxy_channel_g_buf_size = NUM_G_BUF_ELEMENTS * sizeof(g_elem_t);
+    proxy_channel_g_buf_log_size = (uint64_t)log2((double)proxy_channel_g_buf_size);
+    uint64_t *proxy_channel_g_buf_head_ptr;
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&proxy_channel_g_buf_head_ptr, sizeof(uint64_t)));
+    CUDA_RUNTIME_CHECK(cudaMemset((void *)proxy_channel_g_buf_head_ptr, 0, sizeof(uint64_t)));
+
+    uint64_t *proxy_channels_complete_local_ptr;
+    CUDA_RUNTIME_CHECK(cudaMalloc((void **)&proxy_channels_complete_local_ptr, sizeof(uint64_t)));
+    CUDA_RUNTIME_CHECK(cudaMemset((void *)proxy_channels_complete_local_ptr, 0, sizeof(uint64_t)));
+
+    proxy_channel_g_buf = (char *)nvshmemi_malloc(proxy_channel_g_buf_size);
+    NVSHMEMI_NULL_ERROR_JMP(proxy_channel_g_buf, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
+                            "failed allocating proxy_channel_g_buf");
+    proxy_channel_g_coalescing_buf = (char *)nvshmemi_malloc(G_COALESCING_BUF_SIZE);
+    NVSHMEMI_NULL_ERROR_JMP(proxy_channel_g_coalescing_buf, status, NVSHMEMX_ERROR_OUT_OF_MEMORY,
+                            out, "failed allocating proxy_channel_g_coalescing_buf");
+
+    nvshmemi_device_state.proxy_channel_g_buf_size = proxy_channel_g_buf_size;
+    nvshmemi_device_state.proxy_channel_g_buf_log_size = proxy_channel_g_buf_log_size;
+    nvshmemi_device_state.proxy_channel_g_buf_head_ptr = proxy_channel_g_buf_head_ptr;
+    nvshmemi_device_state.proxy_channels_complete_local_ptr = proxy_channels_complete_local_ptr;
+    nvshmemi_device_state.proxy_channel_g_buf = proxy_channel_g_buf;
+    nvshmemi_device_state.proxy_channel_g_coalescing_buf = proxy_channel_g_coalescing_buf;
+    assert(proxy_channel_g_buf_size % sizeof(g_elem_t) == 0);
+
+out:
+    return status;
+}
 
 inline void proxy_update_processed(proxy_channel_t *ch, int bytes) {
     ch->processed += bytes;
@@ -152,6 +251,7 @@ out:
 
 int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level) {
     int status = 0;
+    CUdevice device;
 
     if (proxy_level == NVSHMEMI_PROXY_NONE) {
         INFO(NVSHMEM_INIT,
@@ -173,7 +273,7 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level) {
     CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&proxy_state->global_exit_code, sizeof(int), 0));
     CUDA_RUNTIME_CHECK(cudaMallocHost((void **)&proxy_state->nvshmemi_timeout,
                                       sizeof(nvshmemi_timeout_t), 0)); /* GPU writes, CPU reads */
-    memset(proxy_state->nvshmemi_timeout, 0, sizeof(nvshmemi_timeout_t));
+    (*proxy_state->nvshmemi_timeout) = NVSHMEMI_TIMEOUT_INITIALIZER;
     status = nvshmemi_proxy_prep_minimal_state(proxy_state);
     if (status) {
         fprintf(stderr, "global exit context creation failed. \n");
@@ -237,29 +337,30 @@ int nvshmemi_proxy_init(nvshmemi_state_t *state, int proxy_level) {
     proxy_state->cst_in_progress = PROXY_CST_STATUS_CHANNELS_INACTIVE;
     proxy_state->issued_get = 0;
 
-#if CUDART_VERSION >= 11030
-    int device;
-    CUDA_RUNTIME_CHECK(cudaGetDevice(&device));
+    status = CUPFN(nvshmemi_cuda_syms, cuCtxGetDevice)(&device);
+    if (status != CUDA_SUCCESS) {
+        fprintf(stderr, "cuCtxGetDevice failed \n");
+        exit(-1);
+    }
+
     int write_options;
-    status =
-        cudaDeviceGetAttribute(&write_options, cudaDevAttrGPUDirectRDMAFlushWritesOptions, device);
+    status = CUPFN(nvshmemi_cuda_syms, cuDeviceGetAttribute)(
+        &write_options,
+        (CUdevice_attribute)CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_FLUSH_WRITES_OPTIONS, device);
     if (status != CUDA_SUCCESS) {
         proxy_state->is_consistency_api_supported = false;
         cudaGetLastError();
         goto post_cst_api_check;
     }
-    if (write_options & cudaFlushGPUDirectRDMAWritesOptionHost)
+    if (write_options & (CUdevice_attribute)CU_FLUSH_GPU_DIRECT_RDMA_WRITES_OPTION_HOST)
         proxy_state->is_consistency_api_supported = true;
-    status = cudaDeviceGetAttribute(&proxy_state->gdr_device_native_ordering,
-                                    cudaDevAttrGPUDirectRDMAWritesOrdering, device);
+    status = CUPFN(nvshmemi_cuda_syms, cuDeviceGetAttribute)(
+        &proxy_state->gdr_device_native_ordering,
+        (CUdevice_attribute)CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WRITES_ORDERING, device);
     if (status != CUDA_SUCCESS) {
         proxy_state->gdr_device_native_ordering = 0;
         cudaGetLastError();
     }
-#else  /* CUDART_VERSION >= 11030 */
-    proxy_state->is_consistency_api_supported = false;
-    proxy_state->gdr_device_native_ordering = 0;
-#endif /* CUDART_VERSION >= 11030 */
 
 post_cst_api_check:
     INFO(NVSHMEM_PROXY, "[%d] creating proxy thread", state->mype);
@@ -287,7 +388,6 @@ inline int process_channel_dma(proxy_state_t *state, proxy_channel_t *ch, int *i
     size_t size;
     uint8_t flag;
     uint64_t roffset, laddr;
-    nvshmemi_state_t *nvshmemi_state = state->nvshmemi_state;
 
     base_req = (base_request_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed);
     roffset = (uint64_t)(((uint64_t)(base_req->roffset_high) << 8) | (base_req->roffset_low));
@@ -327,7 +427,7 @@ inline int process_channel_dma(proxy_state_t *state, proxy_channel_t *ch, int *i
         rma_verb_t verb;
         verb.desc = (nvshmemi_op_t)base_req->op;
         verb.is_nbi = 1;
-        void *rptr = (void *)((char *)(nvshmemi_state->heap_base) + roffset);
+        void *rptr = (void *)((char *)(nvshmemi_device_state.heap_base) + roffset);
         nvshmemi_process_multisend_rma(state->transport[pe], state->transport_id[pe], pe, verb,
                                        rptr, (void *)laddr, size, 1);
     }
@@ -390,7 +490,7 @@ inline int process_channel_inline(proxy_state_t *state, proxy_channel_t *ch, int
         rma_memdesc_t localdesc, remotedesc;
         rma_bytesdesc_t bytes;
         rma_verb_t verb;
-        void *remote = (void *)((char *)(nvshmemi_state->heap_base) + roffset);
+        void *remote = (void *)((char *)(nvshmemi_device_state.heap_base) + roffset);
         void *remote_actual;
         NVSHMEMU_UNMAPPED_PTR_PE_TRANSLATE(remote_actual, remote, pe);
         void *local = (void *)&lvalue;
@@ -437,7 +537,6 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
     amo_request_2_t *req_2;
     uint8_t flag;
     uint64_t roffset;
-    nvshmemi_state_t *nvshmemi_state = state->nvshmemi_state;
 
     base_req = (base_request_t *)WRAPPED_CHANNEL_BUF(state, ch, ch->processed);
     roffset = (uint64_t)(((uint64_t)(base_req->roffset_high) << 8) | (base_req->roffset_low));
@@ -490,9 +589,9 @@ int process_channel_amo(proxy_state_t *state, proxy_channel_t *ch, int *is_proce
         amo_verb_t verb;
         amo_bytesdesc_t bytes;
         amo_memdesc_t memdesc;
-        void *remote = (void *)((char *)(nvshmemi_state->heap_base) + roffset);
+        void *remote = (void *)((char *)(nvshmemi_device_state.heap_base) + roffset);
         void *remote_actual =
-            (void *)((char *)(nvshmemi_state->peer_heap_base_actual[pe]) + roffset);
+            (void *)((char *)(nvshmemi_state->heap_obj->get_remote_pe_base()[pe]) + roffset);
         int t = state->transport_id[pe];
         struct nvshmem_transport *tcurr = state->transport[pe];
 
@@ -548,25 +647,22 @@ void enforce_cst(proxy_state_t *proxy_state) {
     nvshmemi_state_t *state = proxy_state->nvshmemi_state;
 #endif
 
-#if defined(NVSHMEM_X86_64) || defined(NVSHMEM_PPC64LE)
     int status = 0;
-#endif
-
     if (nvshmemi_options.BYPASS_FLUSH) return;
 
-#if CUDART_VERSION >= 11030
     if (proxy_state->is_consistency_api_supported) {
-        if (cudaFlushGPUDirectRDMAWritesToOwner > proxy_state->gdr_device_native_ordering) {
-            CUDA_RUNTIME_CHECK(
-                cudaDeviceFlushGPUDirectRDMAWrites(cudaFlushGPUDirectRDMAWritesTargetCurrentDevice,
-                                                   cudaFlushGPUDirectRDMAWritesToOwner));
+        if (CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER > proxy_state->gdr_device_native_ordering &&
+            CUPFN(nvshmemi_cuda_syms, cuFlushGPUDirectRDMAWrites)) {
+            status =
+                CUPFN(nvshmemi_cuda_syms,
+                      cuFlushGPUDirectRDMAWrites(CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
+                                                 CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER));
             /** We would want to use cudaFlushGPUDirectRDMAWritesToAllDevices when we enable
                 consistent access of data on any GPU (and not just self GPU) with
                wait_until, quiet, barrier, etc. **/
         }
         return;
     }
-#endif
 #if defined(NVSHMEM_PPC64LE)
     status = cudaEventRecord(proxy_state->cuev, proxy_state->stream);
     if (unlikely(status != CUDA_SUCCESS)) {
@@ -956,9 +1052,11 @@ void progress_transports(proxy_state_t *proxy_state) {
     nvshmemi_state_t *state = proxy_state->nvshmemi_state;
 
     for (int i = 0; i < state->num_initialized_transports; i++) {
-        if (!((proxy_state->transport_bitmap) & (1 << i))) continue;
-
         struct nvshmem_transport *tcurr = state->transports[i];
+
+        if (!((proxy_state->transport_bitmap) & (1 << i)) &&
+            (tcurr->type != NVSHMEM_TRANSPORT_LIB_CODE_IBGDA))
+            continue;
 
         if (tcurr->host_ops.progress == NULL) continue;
 
@@ -1059,7 +1157,9 @@ int nvshmemi_proxy_finalize(nvshmemi_state_t *state) {
      * preventing us from finishing the global exit. In this case, we have to rely
      * on the program being terminated successfully to release remaining resources.
      */
-    if (*proxy_state->global_exit_request_state > PROXY_GLOBAL_EXIT_NOT_REQUESTED) return 0;
+    if (proxy_state->global_exit_request_state &&
+        *proxy_state->global_exit_request_state > PROXY_GLOBAL_EXIT_NOT_REQUESTED)
+        return 0;
     /* setup device channels state */
     if (nvshmemi_device_state.proxy_channel_g_coalescing_buf)
         nvshmemi_free(nvshmemi_device_state.proxy_channel_g_coalescing_buf);

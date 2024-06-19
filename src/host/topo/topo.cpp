@@ -1,31 +1,30 @@
 /*
- * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
  *
  * See COPYRIGHT for license information
  */
 
 #include "topo.h"
-#include <ctype.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <driver_types.h>
-#include <limits.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <list>
-#include <nvml.h>
-
-#include "modules/transport/cudawrap.h"
-#include "internal/common/debug.h"
-#include "modules/transport/env_defs_internal.h"
-#include "internal/common/nvshmem_internal.h"
-#include "modules/common/nvshmemi_bootstrap_defines.h"
-#include "modules/transport/nvshmemi_transport_defines.h"
-#include "host/nvshmemx_error.h"
-#include "modules/transport/transport.h"
-#include "internal/util.h"
+#include <ctype.h>                                                         // for tolower
+#include <cuda.h>                                                          // for CUDA_SUCCESS
+#include <cuda_runtime.h>                                                  // for cudaDevice...
+#include <driver_types.h>                                                  // for cudaDevice...
+#include <limits.h>                                                        // for PATH_MAX
+#include <stdio.h>                                                         // for NULL, fclose
+#include <stdlib.h>                                                        // for free, calloc
+#include <string.h>                                                        // for strlen
+#include <list>                                                            // for _List_iter...
+#include "non_abi/nvshmemx_error.h"                                        // for NVSHMEMX_E...
+#include "internal/host/debug.h"                                           // for INFO, NVSH...
+#include "internal/host/nvshmem_internal.h"                                // for nvshmemi_s...
+#include "internal/host/nvshmemi_mem_transport.hpp"                        // for nvshm...
+#include "internal/host/nvshmemi_types.h"                                  // for nvshmemi_state
+#include "internal/host/util.h"                                            // for getHostHash
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for bootstrap_...
+#include "internal/host_transport/cudawrap.h"                              // for CUPFN, nvs...
+#include "bootstrap_host_transport/env_defs_internal.h"                    // for nvshmemi_o...
+#include "internal/host_transport/nvshmemi_transport_defines.h"            // for pcie_id_t
+#include "internal/host_transport/transport.h"                             // for nvshmem_tr...
 
 #define MAX_BUSID_SIZE 16
 #define MAXPATHSIZE 1024
@@ -170,7 +169,6 @@ int nvshmemi_get_devices_by_distance(int *device_arr, int max_dev_per_pe,
     if (ndev <= 0) {
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "transport devices (setup_connections) failed \n");
-        goto out;
     }
 
     status = CUPFN(nvshmemi_cuda_syms, cuCtxGetDevice(&gpu_device_id));
@@ -369,7 +367,7 @@ int nvshmemi_get_devices_by_distance(int *device_arr, int max_dev_per_pe,
             device_arr[pe_pair_index] = mydev_index;
             mype_device_count++;
             INFO(NVSHMEM_TOPO, "Our PE is sharing its NIC at index %d with %d other PEs.\n",
-                 used_devs[mydev_index]);
+                 used_devs[mydev_index], mype_device_count);
         }
     }
 
@@ -445,17 +443,11 @@ int nvshmemi_build_transport_map(nvshmemi_state_t *state) {
                 continue;
             }
 
-            if (nvshmemi_is_mnnvl_run) {
-                reach = NVSHMEM_TRANSPORT_CAP_MAP | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST |
-                        NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD | NVSHMEM_TRANSPORT_CAP_MAP_GPU_ATOMICS;
-            } else {
-                status = state->transports[j]->host_ops.can_reach_peer(&reach, &state->pe_info[i],
-                                                                       state->transports[j]);
-                NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                                      "can reach peer failed \n");
-                INFO(NVSHMEM_TOPO, "[%d] reach %d to peer %d over transport %d", state->mype, reach,
-                     i, j);
-            }
+            status = state->transports[j]->host_ops.can_reach_peer(&reach, &state->pe_info[i],
+                                                                   state->transports[j]);
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "can reach peer failed \n");
+            INFO(NVSHMEM_TOPO, "[%d] reach %d to peer %d over transport %d", state->mype, reach, i,
+                 j);
 
             state->transports[j]->cap[i] = reach;
             reach_any |= reach;
