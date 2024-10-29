@@ -138,12 +138,12 @@ int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, void
     }
 
     if (!mype) {
-        print_table("sync_device", "thread", "threads per block", "latency", "us", '-', &num_tpb,
-                    h_thread_lat, 1);
-        print_table("sync_device", "warp", "threads per block", "latency", "us", '-', &num_tpb,
-                    h_warp_lat, 1);
-        print_table("sync_device", "block", "threads per block", "latency", "us", '-', &num_tpb,
-                    h_block_lat, 1);
+        print_table_basic("sync_device", "thread", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_thread_lat, 1);
+        print_table_basic("sync_device", "warp", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_warp_lat, 1);
+        print_table_basic("sync_device", "block", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_block_lat, 1);
     }
 
     nvshmem_barrier_all();
@@ -224,12 +224,12 @@ int sync_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, void
     }
 
     if (!mype) {
-        print_table("sync_all_device", "thread", "threads per block", "latency", "us", '-',
-                    &num_tpb, h_thread_lat, 1);
-        print_table("sync_all_device", "warp", "threads per block", "latency", "us", '-', &num_tpb,
-                    h_warp_lat, 1);
-        print_table("sync_all_device", "block", "threads per block", "latency", "us", '-', &num_tpb,
-                    h_block_lat, 1);
+        print_table_basic("sync_all_device", "thread", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_thread_lat, 1);
+        print_table_basic("sync_all_device", "warp", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_warp_lat, 1);
+        print_table_basic("sync_all_device", "block", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_block_lat, 1);
     }
 
     return status;

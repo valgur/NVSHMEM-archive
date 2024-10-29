@@ -54,6 +54,7 @@ static int _nvshmemi_collective_launch_query_gridsize(const void *func, dim3 blo
     int maxBlocksSM;
     int status = 0;
 
+    nvshmemi_check_state_and_init_d();
     multiProcessorCount = nvshmemi_device_only_state.cu_dev_attrib.multi_processor_count;
     // get min blocks per SM, error out if 0 for any GPU
     status =

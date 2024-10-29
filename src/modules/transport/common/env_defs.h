@@ -47,8 +47,18 @@ NVSHMEMI_ENV_DEF(DISABLE_GDRCOPY, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Disable use of GDRCopy in IB RC Transport")
 NVSHMEMI_ENV_DEF(IB_DISABLE_DMABUF, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Disable use of DMABUF in IBRC/IBDEVX/IBGDA Transports")
-NVSHMEMI_ENV_DEF(IB_GID_INDEX, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT, "Source GID Index for ROCE")
+NVSHMEMI_ENV_DEF(IB_GID_INDEX, int, -1, NVSHMEMI_ENV_CAT_TRANSPORT, "Source GID Index for ROCE")
 NVSHMEMI_ENV_DEF(IB_TRAFFIC_CLASS, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT, "Traffic calss for ROCE")
+NVSHMEMI_ENV_DEF(IB_ADDR_FAMILY, string, "AF_INET", NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "IP address family associated to IB GID "
+                 "dynamically selected by NVSHMEM when NVSHMEM_IB_GID_INDEX is left unset")
+NVSHMEMI_ENV_DEF(
+    IB_ADDR_RANGE, string, "::/0", NVSHMEMI_ENV_CAT_TRANSPORT,
+    "Defines the range of "
+    "valid GIDs dynamically selected by NVSHMEM when NVSHMEM_IB_GID_INDEX is left unset")
+NVSHMEMI_ENV_DEF(IB_ROCE_VERSION_NUM, int, 2, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "ROCE version associated to IB GID dynamically selected by NVSHMEM "
+                 "when NVSHMEM_IB_GID_INDEX is left unset")
 NVSHMEMI_ENV_DEF(IB_SL, int, 0, NVSHMEMI_ENV_CAT_TRANSPORT, "Service level to use over IB/ROCE")
 NVSHMEMI_ENV_DEF(
     IB_ENABLE_RELAXED_ORDERING, bool, true, NVSHMEMI_ENV_CAT_TRANSPORT,

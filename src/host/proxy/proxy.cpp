@@ -427,6 +427,8 @@ inline int process_channel_dma(proxy_state_t *state, proxy_channel_t *ch, int *i
         rma_verb_t verb;
         verb.desc = (nvshmemi_op_t)base_req->op;
         verb.is_nbi = 1;
+        verb.is_stream = 0;
+        verb.cstrm = NULL;
         void *rptr = (void *)((char *)(nvshmemi_device_state.heap_base) + roffset);
         nvshmemi_process_multisend_rma(state->transport[pe], state->transport_id[pe], pe, verb,
                                        rptr, (void *)laddr, size, 1);

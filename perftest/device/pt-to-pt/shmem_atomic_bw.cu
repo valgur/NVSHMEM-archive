@@ -402,8 +402,8 @@ int main(int argc, char *argv[]) {
     }
 
     if (mype == 0) {
-        print_table(perf_table_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
-                    i);
+        print_table_v1(perf_table_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr,
+                       h_bw, i);
     }
 
 finalize:

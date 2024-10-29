@@ -145,12 +145,12 @@ int alltoall_calling_kernel(nvshmem_team_t team, void *dest, void *source, int m
     }
 
     if (!mype) {
-        print_table("alltoall_device", "32-bit-thread", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_thread_lat, i);
-        print_table("alltoall_device", "32-bit-warp", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_warp_lat, i);
-        print_table("alltoall_device", "32-bit-block", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_block_lat, i);
+        print_table_v1("alltoall_device", "32-bit-thread", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_thread_lat, i);
+        print_table_v1("alltoall_device", "32-bit-warp", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_warp_lat, i);
+        print_table_v1("alltoall_device", "32-bit-block", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_block_lat, i);
     }
 
     i = 0;
@@ -245,12 +245,12 @@ int alltoall_calling_kernel(nvshmem_team_t team, void *dest, void *source, int m
     }
 
     if (!mype) {
-        print_table("alltoall_device", "64-bit-thread", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_thread_lat, i);
-        print_table("alltoall_device", "64-bit-warp", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_warp_lat, i);
-        print_table("alltoall_device", "64-bit-block", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_block_lat, i);
+        print_table_v1("alltoall_device", "64-bit-thread", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_thread_lat, i);
+        print_table_v1("alltoall_device", "64-bit-warp", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_warp_lat, i);
+        print_table_v1("alltoall_device", "64-bit-block", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_block_lat, i);
     }
 
     return status;
@@ -261,7 +261,7 @@ int main(int argc, char **argv) {
     int mype, npes, array_size, max_elems;
     char *value = NULL;
     // size needs to hold psync array, source array (nelems) and dest array (nelems * npes)
-    size_t size = (MAX_ELEMS * (MAX_NPES)*2) * sizeof(DATATYPE);
+    uint64_t size = (MAX_ELEMS * (MAX_NPES)*2) * sizeof(DATATYPE);
     size_t alloc_size;
     int num_elems;
     DATATYPE *h_buffer = NULL;

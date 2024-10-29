@@ -12,6 +12,8 @@
 
 #include "coll_test.h"
 #define DATATYPE int64_t
+int coll_max_iters = MAX_ITERS;
+
 int main(int argc, char **argv) {
     int status = 0;
     int mype, npes;
@@ -25,11 +27,13 @@ int main(int argc, char **argv) {
     int PE_root = 0;
     char size_string[100];
     uint64_t size_array[MAX_ELEMS_LOG + 1];
-    double latency_array[MAX_ELEMS_LOG + 1];
+    double **latency_array = (double **)malloc((MAX_ELEMS_LOG + 1) * sizeof(double *));
     cudaStream_t stream;
 
     memset(size_array, 0, (MAX_ELEMS_LOG + 1) * sizeof(uint64_t));
-    memset(latency_array, 0, (MAX_ELEMS_LOG + 1) * sizeof(double));
+    for (int i = 0; i < MAX_ELEMS_LOG + 1; i++) {
+        latency_array[i] = (double *)calloc(coll_max_iters, sizeof(double));
+    }
 
     DEBUG_PRINT("symmetric size requested %lu\n", size);
     sprintf(size_string, "%lu", size);
@@ -68,15 +72,15 @@ int main(int argc, char **argv) {
                        (int32_t *)d_dest, (int32_t *)h_dest, npes, PE_root, stream, size_array,
                        latency_array);
     if (!mype) {
-        print_table("broadcast_on_stream", "32-bit", "size (bytes)", "latency", "us", '-',
-                    size_array, latency_array, MAX_ELEMS_LOG + 1);
+        print_table_v2("broadcast_on_stream", "32-bit", "size (bytes)", "latency", "us", '-',
+                       size_array, latency_array, MAX_ELEMS_LOG + 1);
     }
 
     RUN_COLL_ON_STREAM(broadcast, BCAST, int64, int64_t, d_source, h_source, d_dest, h_dest, npes,
                        PE_root, stream, size_array, latency_array);
     if (!mype) {
-        print_table("broadcast_on_stream", "64-bit", "size (bytes)", "latency", "us", '-',
-                    size_array, latency_array, MAX_ELEMS_LOG + 1);
+        print_table_v2("broadcast_on_stream", "64-bit", "size (bytes)", "latency", "us", '-',
+                       size_array, latency_array, MAX_ELEMS_LOG + 1);
     }
 
     CUDA_CHECK(cudaFreeHost(h_buffer));

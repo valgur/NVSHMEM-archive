@@ -88,6 +88,7 @@ void *nvshmem_align(size_t, size_t);
 void nvshmem_free(void *ptr);
 void *nvshmem_realloc(void *ptr, size_t size);
 NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmem_ptr(const void *ptr, int pe);
+NVSHMEMI_HOSTDEVICE_PREFIX void *nvshmemx_mc_ptr(nvshmem_team_t team, const void *ptr);
 
 //////////////////// OpenSHMEM 1.3 Atomics ////////////////////
 

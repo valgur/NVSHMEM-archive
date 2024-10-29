@@ -78,6 +78,13 @@ static int cudaPfnFuncLoader(struct nvshmemi_cuda_fn_table *table) {
     LOAD_SYM(table, cuMemRelease, 10020, , 1);
     LOAD_SYM(table, cuMemSetAccess, 10020, , 1);
     LOAD_SYM(table, cuMemUnmap, 10020, , 1);
+    LOAD_SYM(table, cuMulticastCreate, 12010, , 1);
+    LOAD_SYM(table, cuMulticastAddDevice, 12010, , 1);
+    LOAD_SYM(table, cuMulticastBindMem, 12010, , 1);
+    LOAD_SYM(table, cuMulticastUnbind, 12010, , 1);
+    LOAD_SYM(table, cuMulticastGetGranularity, 12010, , 1);
+    LOAD_SYM(table, cuStreamWriteValue64, 11070, _v2, 1);
+    LOAD_SYM(table, cuStreamWaitValue64, 11070, _v2, 1);
     return NVSHMEMI_SUCCESS;
 }
 

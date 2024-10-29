@@ -78,6 +78,22 @@ NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCE_ONSTREAM, prod)
 
 #undef NVSHMEMI_DECL_REDUCE_ONSTREAM
 
+#define NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM(NAME, TYPE, OP)                         \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_##NAME##_##OP##_reducescatter_on_stream( \
+        nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nreduce, cudaStream_t stream);
+
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM, and)
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM, or)
+NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES(NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM, xor)
+
+NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM, max)
+NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES(NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM, min)
+
+NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM, sum)
+NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES(NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM, prod)
+
+#undef NVSHMEMI_DECL_REDUCESCATTER_ONSTREAM
+
 //==========================================
 // nvshmem collective calls on threadgroup
 //==========================================
@@ -154,6 +170,31 @@ NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_double2_maxloc_reduce_block(nvshmem_team
                                                                     double2 *dest,
                                                                     const double2 *src,
                                                                     size_t nreduce);
+
+#define DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP(SCOPE, TYPENAME, TYPE, OP) \
+    NVSHMEMI_HOSTDEVICE_PREFIX int nvshmemx_##TYPENAME##_##OP##_reducescatter_##SCOPE( \
+        nvshmem_team_t team, TYPE *dest, const TYPE *src, size_t nreduce);
+
+#define DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER(SC)                   \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(                \
+        DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, and) \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(                \
+        DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, or)  \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE(                \
+        DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, xor) \
+                                                                      \
+    NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(               \
+        DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, max) \
+    NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE(               \
+        DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, min) \
+                                                                      \
+    NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(                  \
+        DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, sum) \
+    NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE(                  \
+        DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, prod)
+
+DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER(warp);
+DECL_NVSHMEMX_TYPENAME_OP_REDUCESCATTER(block);
 
 #ifdef __cplusplus
 }

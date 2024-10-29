@@ -138,13 +138,11 @@ static ucs_status_t nvshmemt_ucx_recv_send_am_data_cb(void *arg, const void *hea
                                                       size_t header_length, void *data,
                                                       size_t length,
                                                       const ucp_am_recv_param_t *param) {
-    struct nvshmem_transport *transport = (struct nvshmem_transport *)arg;
     nvshmemt_ucx_am_header_t *header_info;
     nvshmemt_ucx_am_header_t *buffer_header;
     bool dynamic_allocation = false;
     ucs_status_t status;
 
-    assert(transport);
     assert(length == sizeof(nvshmemt_ucx_am_header_t));
     /* I believe this is guaranteed by the way we specify our flags. */
     assert(!(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV));

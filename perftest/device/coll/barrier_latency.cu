@@ -138,12 +138,12 @@ int barrier_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, v
     }
 
     if (!mype) {
-        print_table("barrier_device", "thread", "threads per block", "latency", "us", '-', &num_tpb,
-                    h_thread_lat, 1);
-        print_table("barrier_device", "warp", "threads per block", "latency", "us", '-', &num_tpb,
-                    h_warp_lat, 1);
-        print_table("barrier_device", "block", "threads per block", "latency", "us", '-', &num_tpb,
-                    h_block_lat, 1);
+        print_table_basic("barrier_device", "thread", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_thread_lat, 1);
+        print_table_basic("barrier_device", "warp", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_warp_lat, 1);
+        print_table_basic("barrier_device", "block", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_block_lat, 1);
     }
 
     nvshmem_barrier_all();
@@ -227,12 +227,12 @@ int barrier_calling_kernel(nvshmem_team_t team, cudaStream_t stream, int mype, v
     }
 
     if (!mype) {
-        print_table("barrier_all_device", "thread", "threads per block", "latency", "us", '-',
-                    &num_tpb, h_thread_lat, 1);
-        print_table("barrier_all_device", "warp", "threads per block", "latency", "us", '-',
-                    &num_tpb, h_warp_lat, 1);
-        print_table("barrier_all_device", "block", "threads per block", "latency", "us", '-',
-                    &num_tpb, h_block_lat, 1);
+        print_table_basic("barrier_all_device", "thread", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_thread_lat, 1);
+        print_table_basic("barrier_all_device", "warp", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_warp_lat, 1);
+        print_table_basic("barrier_all_device", "block", "threads per block", "latency", "us", '-',
+                          &num_tpb, h_block_lat, 1);
     }
 
     return status;

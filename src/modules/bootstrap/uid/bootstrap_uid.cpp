@@ -177,7 +177,7 @@ static bootstrap_result_t bootstrap_net_init() {
 
     sprintf(line, " %s:", priv_info.bootstrap_netifname);
     fn_table.to_string(&priv_info.bootstrap_netifaddr, line + strlen(line), AF_NUMERICFORM_DEFAULT);
-    BOOTSTRAP_INFO_PRINT("UID bootstrap network using: %s\n", line);
+    BOOTSTRAP_DEBUG_PRINT("UID bootstrap network using: %s\n", line);
 
     pthread_mutex_unlock(&priv_info.bootstrap_netlock);
     return BOOTSTRAP_SUCCESS;

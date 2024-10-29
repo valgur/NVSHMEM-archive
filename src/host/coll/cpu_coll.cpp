@@ -8,13 +8,15 @@
 #include <assert.h>                                      // for assert
 #include <algorithm>                                     // for max
 #include <iosfwd>                                        // for std
+#include <stdlib.h>                                      // for std
 #include "bootstrap_host_transport/env_defs_internal.h"  // for nvshmemi_opt...
 #include "device_host/nvshmem_types.h"                   // for gpu_coll_env...
-#include "internal/host/debug.h"                         // for WARN
-#include "internal/host/nvshmem_internal.h"              // for nvshmemi_is_...
-#include "internal/host/util.h"                          // for nvshmemi_opt...s
-#include "non_abi/nvshmem_build_options.h"               // for NVSHMEM_USE_...
-#include "non_abi/nvshmemx_error.h"                      // for NVSHMEMI_WAR...
+#include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"
+#include "internal/host/debug.h"             // for WARN
+#include "internal/host/nvshmem_internal.h"  // for nvshmemi_is_...
+#include "internal/host/util.h"              // for nvshmemi_opt...s
+#include "non_abi/nvshmem_build_options.h"   // for NVSHMEM_USE_...
+#include "non_abi/nvshmemx_error.h"          // for NVSHMEMI_WAR...
 
 using namespace std;
 
@@ -42,6 +44,14 @@ static int nvshmemi_coll_common_cpu_read_env() {
         nvshmemi_options.BARRIER_TG_DISSEM_KVAL;
     nvshmemi_device_state.gpu_coll_env_params_var.fcollect_ll_threshold =
         nvshmemi_options.FCOLLECT_LL_THRESHOLD;
+    nvshmemi_device_state.gpu_coll_env_params_var.fcollect_ll128_threshold =
+        nvshmemi_options.FCOLLECT_LL128_THRESHOLD;
+    nvshmemi_device_state.gpu_coll_env_params_var.fcollect_nvls_threshold =
+        nvshmemi_options.FCOLLECT_NVLS_THRESHOLD;
+    nvshmemi_device_state.gpu_coll_env_params_var.reducescatter_nvls_threshold =
+        nvshmemi_options.REDUCESCATTER_NVLS_THRESHOLD;
+    nvshmemi_device_state.gpu_coll_env_params_var.reduce_scratch_size =
+        nvshmemi_options.REDUCE_SCRATCH_SIZE;
     nvshmemi_device_state.gpu_coll_env_params_var.reduce_recexch_kval =
         nvshmemi_options.REDUCE_RECEXCH_KVAL;
 
@@ -53,9 +63,35 @@ static int nvshmemi_coll_common_cpu_read_env() {
         nvshmemi_options.BCAST_TREE_KVAL;
     assert(nvshmemi_options.BCAST_TREE_KVAL >= 2);
 
+    nvshmemi_device_state.gpu_coll_env_params_var.fcollect_algo = nvshmemi_options.FCOLLECT_ALGO;
     nvshmemi_device_state.gpu_coll_env_params_var.bcast_algo = nvshmemi_options.BCAST_ALGO;
-    nvshmemi_device_state.gpu_coll_env_params_var.reduce_algo = nvshmemi_options.REDMAXLOC_ALGO;
+    nvshmemi_device_state.gpu_coll_env_params_var.reduce_algo = nvshmemi_options.REDUCE_ALGO;
+    nvshmemi_device_state.gpu_coll_env_params_var.reduce_maxloc_algo =
+        nvshmemi_options.REDMAXLOC_ALGO;
+    nvshmemi_device_state.gpu_coll_env_params_var.reducescatter_algo =
+        nvshmemi_options.REDUCESCATTER_ALGO;
     return status;
+}
+
+void nvshmemi_coll_common_cpu_check_ll128_availability() {
+    bool *scratch = (bool *)malloc(sizeof(bool) * nvshmemi_state->npes);
+
+    nvshmemi_boot_handle.allgather(&nvshmemi_state->are_nics_ll128_compliant, scratch, sizeof(bool),
+                                   &nvshmemi_boot_handle);
+    for (int i = 0; i < nvshmemi_state->npes; i++) {
+        nvshmemi_state->are_nics_ll128_compliant &= scratch[i];
+    }
+    if (!nvshmemi_state->is_platform_nvl || !nvshmemi_state->are_nics_ll128_compliant) {
+        INFO(NVSHMEM_INIT, "Disabling LL128 on unsupported platform. NVL OK: %d NIC OK: %d",
+             nvshmemi_state->is_platform_nvl, nvshmemi_state->are_nics_ll128_compliant);
+        nvshmemi_device_state.gpu_coll_env_params_var.fcollect_ll128_threshold = 0;
+    }
+    if (nvshmemi_device_state.symmetric_heap_kind == NVSHMEMI_HEAP_KIND_SYSMEM) {
+        INFO(NVSHMEM_INIT, "Disabling LL128 due to system memory being used in heap.");
+        nvshmemi_device_state.gpu_coll_env_params_var.fcollect_ll128_threshold = 0;
+    }
+
+    free(scratch);
 }
 
 int nvshmemi_coll_common_cpu_init() {
@@ -119,6 +155,7 @@ int nvshmemi_coll_common_cpu_init() {
     LOAD_SYM(nccl_handle, "ncclCommInitRank", nccl_ftable.CommInitRank);
     LOAD_SYM(nccl_handle, "ncclCommDestroy", nccl_ftable.CommDestroy);
     LOAD_SYM(nccl_handle, "ncclAllReduce", nccl_ftable.AllReduce);
+    LOAD_SYM(nccl_handle, "ncclReduceScatter", nccl_ftable.ReduceScatter);
     LOAD_SYM(nccl_handle, "ncclBroadcast", nccl_ftable.Broadcast);
     LOAD_SYM(nccl_handle, "ncclAllGather", nccl_ftable.AllGather);
     LOAD_SYM(nccl_handle, "ncclGetErrorString", nccl_ftable.GetErrorString);

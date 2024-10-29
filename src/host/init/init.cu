@@ -69,6 +69,8 @@ pthread_mutex_t nvshmem_debug_output_lock;
 bool nvshmemi_is_limited_mpg_run = 0;
 static uint64_t num_initialized_device_states = 0;
 static bool nvshmemi_is_device_state_ready;
+int nvshmemi_can_use_cuda_64_bit_stream_memops = false;
+int nvshmemi_can_flush_remote_writes = false;
 FILE *nvshmem_debug_file = stdout;
 static char shm_name[100];
 nvshmemi_version_t nvshmemi_host_lib_version = {
@@ -383,8 +385,16 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr) {
     /* Set pe distribution type. First check for round robin distribution. Then check for block
      * distribution. */
     nvshmemi_pe_dist = NVSHMEMI_PE_DIST_MISC;
-    if (npes % npes_node != 0) goto out;
-    num_nodes = npes / npes_node;
+
+    if (npes_node != 0) {
+        if (npes % npes_node != 0) goto out;
+        num_nodes = npes / npes_node;
+    } else {
+        NVSHMEMI_ERROR_JMP(
+            status, NVSHMEMX_ERROR_INTERNAL, out,
+            "NVSHMEM hit the error of division by zero: npes_node == 0 what happen!?\n");
+    }
+
     for (int i = 0; i < num_nodes; i++) {
         for (int j = 0; j < npes_node; j++) {
             if (nvshmemi_host_hashes[i * npes_node] != nvshmemi_host_hashes[i * num_nodes + j])
@@ -417,8 +427,57 @@ int nvshmemi_init_nvshmemi_state(nvshmemi_state_t *state) {
     state->npes = nvshmemi_boot_handle.pg_size;
     state->mype_node = nvshmemi_boot_handle.mype_node;
     state->npes_node = nvshmemi_boot_handle.npes_node;
+    state->is_platform_nvl = true;
+    state->are_nics_ll128_compliant = true;
 
     return status;
+}
+
+static void nvshmemi_detect_nvls_support(nvshmemi_state_t *state) {
+    int status = NVSHMEMX_ERROR_INTERNAL;
+    int mc_support = 0;
+    int cuda_dev;
+    state->is_platform_nvls = false; /* By default assume it is not supported */
+    CUdevice current_dev;
+    CUDA_RUNTIME_CHECK(cudaGetDevice(&cuda_dev));
+    status = CUPFN(nvshmemi_cuda_syms, cuDeviceGet(&current_dev, cuda_dev));
+    if (status != CUDA_SUCCESS) {
+        WARN("cuDeviceGet failed\n");
+        return;
+    }
+
+    status = CUPFN(
+        nvshmemi_cuda_syms,
+        cuDeviceGetAttribute(
+            &mc_support, static_cast<CUdevice_attribute>(CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED),
+            current_dev));
+    if (status != CUDA_SUCCESS) {
+        WARN("cuDeviceGetAttribute failed\n");
+        return;
+    }
+
+    if (!mc_support || nvshmemi_options.DISABLE_NVLS) {
+        INFO(NVSHMEM_INIT, "cuMulticast is not supported on CUDA or disabled by user\n");
+        return;
+    }
+
+    if (state->heap_obj != nullptr &&
+        dynamic_cast<nvshmemi_symmetric_heap_vidmem_dynamic_vmm *>(state->heap_obj) == nullptr) {
+        WARN("Unsupported heap kind for NVLS. Supported are: cuMemCreate\n");
+        return;
+    }
+
+    /* On newer platform, when using an older CUDA driver at runtime, check if APIs are available */
+    if (nvshmemi_cuda_driver_version >= 12010) {
+        CUASSERTAPIAVAILABLE(nvshmemi_cuda_syms, cuMulticastCreate);
+        CUASSERTAPIAVAILABLE(nvshmemi_cuda_syms, cuMulticastBindMem);
+        CUASSERTAPIAVAILABLE(nvshmemi_cuda_syms, cuMulticastUnbind);
+        CUASSERTAPIAVAILABLE(nvshmemi_cuda_syms, cuMulticastGetGranularity);
+        CUASSERTAPIAVAILABLE(nvshmemi_cuda_syms, cuMulticastAddDevice);
+        state->is_platform_nvls = true;
+    }
+
+    return;
 }
 
 int nvshmemi_get_cucontext(nvshmemi_state_t *state) {
@@ -791,6 +850,32 @@ static int nvshmemi_mpg_finalize() {
     return 0;
 }
 
+static void nvshmemi_query_cuda_attributes() {
+    int status = 0;
+    CUdevice device;
+    status = CUPFN(nvshmemi_cuda_syms, cuCtxGetDevice)(&device);
+    if (status != CUDA_SUCCESS) {
+        fprintf(stderr, "cuCtxGetDevice failed \n");
+        exit(-1);
+    }
+
+    status = CUPFN(nvshmemi_cuda_syms, cuDeviceGetAttribute)(
+        &nvshmemi_can_use_cuda_64_bit_stream_memops,
+        (CUdevice_attribute)CU_DEVICE_ATTRIBUTE_CAN_USE_64_BIT_STREAM_MEM_OPS, device);
+    if (status != CUDA_SUCCESS) {
+        nvshmemi_can_use_cuda_64_bit_stream_memops = false;
+        CUDA_RUNTIME_CHECK(cudaGetLastError());
+    }
+
+    status = CUPFN(nvshmemi_cuda_syms, cuDeviceGetAttribute)(
+        &nvshmemi_can_flush_remote_writes,
+        (CUdevice_attribute)CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES, device);
+    if (status != CUDA_SUCCESS) {
+        nvshmemi_can_flush_remote_writes = false;
+        CUDA_RUNTIME_CHECK(cudaGetLastError());
+    }
+}
+
 int nvshmemi_common_init(nvshmemi_state_t *state) {
     int status = 0;
     void *dev_state_ptr = NULL;
@@ -857,6 +942,18 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
     status = nvshmemi_get_cucontext(state);
     NZ_DEBUG_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "nvshmem get cucontext failed \n");
 
+    nvshmemi_query_cuda_attributes();
+
+    if (nvshmemi_use_cuda_vmm &&
+        nvshmemi_cuda_driver_version < 12050) {  // stream mem ops could not be used with VMM memory
+                                                 // until CUDA 12.5 because of a bug in CUDA driver
+        nvshmemi_can_use_cuda_64_bit_stream_memops = false;
+    }
+
+    if (!nvshmemi_can_use_cuda_64_bit_stream_memops) {
+        INFO(NVSHMEM_INIT, "CUDA 64-bit stream memops support is not available");
+    }
+
     /* Set max teams before reserving heap */
     status = nvshmemi_set_max_teams();
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Requested too many teams.\n");
@@ -866,6 +963,7 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
     nvshmemi_init_symmetric_heap(state, nvshmemi_use_cuda_vmm,
                                  nvshmemi_device_state.symmetric_heap_kind);
 
+    nvshmemi_detect_nvls_support(state);
     nvshmemi_get_mem_handle(&dev_state_ptr, &transport_dev_state_ptr);
     NVSHMEMI_NULL_ERROR_JMP(dev_state_ptr, status, NVSHMEMX_ERROR_INVALID_VALUE, out,
                             "Unable to query pointer information.\n");
@@ -907,6 +1005,8 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmem register static heaps failed \n");
 
+    nvshmemi_coll_common_cpu_check_ll128_availability();
+
     status = nvshmemi_init_device_state(state);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmem device state setup failed \n");
@@ -934,6 +1034,7 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "team setup failed \n");
 
     nvshmemi_boot_handle.barrier(&nvshmemi_boot_handle);
+
     if (nvshmemi_is_mpg_run) {
         status = nvshmemi_determine_mpg_support_level();
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,

@@ -12,73 +12,42 @@
 
 #include "coll_test.h"
 #define LARGEST_DT uint64_t
+int coll_max_iters = MAX_ITERS;
 
-#define RUN_RDXN(TYPENAME, TYPE, OP, team, d_source, h_source, d_dest, h_dest, num_elems, stream) \
-    do {                                                                                          \
-        int iters = MAX_ITERS;                                                                    \
-        int skip = MAX_SKIP;                                                                      \
-        struct timeval t_start, t_stop;                                                           \
-        for (iters = 0; iters < MAX_ITERS + skip; iters++) {                                      \
-            CUDA_CHECK(cudaMemcpyAsync(d_source, h_source, (sizeof(TYPE) * num_elems),            \
-                                       cudaMemcpyHostToDevice, stream));                          \
-            CUDA_CHECK(cudaMemcpyAsync(d_dest, h_dest, (sizeof(TYPE) * num_elems),                \
-                                       cudaMemcpyHostToDevice, stream));                          \
-                                                                                                  \
-            CUDA_CHECK(cudaStreamSynchronize(stream));                                            \
-            nvshmemx_barrier_all_on_stream(stream);                                               \
-                                                                                                  \
-            if (iters >= skip) gettimeofday(&t_start, NULL);                                      \
-                                                                                                  \
-            nvshmemx_##TYPENAME##_##OP##_reduce_on_stream(                                        \
-                team, (TYPE *)d_dest, (const TYPE *)d_source, num_elems, stream);                 \
-            CUDA_CHECK(cudaStreamSynchronize(stream));                                            \
-                                                                                                  \
-            if (iters >= skip) {                                                                  \
-                gettimeofday(&t_stop, NULL);                                                      \
-                latency += ((t_stop.tv_usec - t_start.tv_usec) +                                  \
-                            (1e+6 * (t_stop.tv_sec - t_start.tv_sec)));                           \
-            }                                                                                     \
-                                                                                                  \
-            CUDA_CHECK(cudaMemcpyAsync(h_source, d_source, (sizeof(TYPE) * num_elems),            \
-                                       cudaMemcpyDeviceToHost, stream));                          \
-            CUDA_CHECK(cudaMemcpyAsync(h_dest, d_dest, (sizeof(TYPE) * num_elems),                \
-                                       cudaMemcpyDeviceToHost, stream));                          \
-            CUDA_CHECK(cudaStreamSynchronize(stream));                                            \
-        }                                                                                         \
+#define RUN_RDXN(TYPENAME, TYPE, OP, team, d_source, h_source, d_dest, h_dest, num_elems, array, \
+                 stream)                                                                         \
+    do {                                                                                         \
+        int iters;                                                                               \
+        int skip = MAX_SKIP;                                                                     \
+        float ms = 0.0f;                                                                         \
+        cudaEvent_t start_event, stop_event;                                                     \
+        CUDA_CHECK(cudaEventCreate(&start_event));                                               \
+        CUDA_CHECK(cudaEventCreate(&stop_event));                                                \
+        for (iters = 0; iters < coll_max_iters + skip; iters++) {                                \
+            nvshmemx_barrier_all_on_stream(stream);                                              \
+                                                                                                 \
+            if (iters >= skip) CUDA_CHECK(cudaEventRecord(start_event, stream));                 \
+            nvshmemx_##TYPENAME##_##OP##_reduce_on_stream(                                       \
+                team, (TYPE *)d_dest, (const TYPE *)d_source, num_elems, stream);                \
+                                                                                                 \
+            if (iters >= skip) {                                                                 \
+                CUDA_CHECK(cudaEventRecord(stop_event, stream));                                 \
+                CUDA_CHECK(cudaStreamSynchronize(stream));                                       \
+                CUDA_CHECK(cudaEventElapsedTime(&ms, start_event, stop_event));                  \
+                array[iters - skip] = ms * 1e+3;                                                 \
+            }                                                                                    \
+        }                                                                                        \
+        CUDA_CHECK(cudaEventDestroy(start_event));                                               \
+        CUDA_CHECK(cudaEventDestroy(stop_event));                                                \
     } while (0)
 
-#define RUN_RDXN_ITERS(TYPENAME, TYPE, team, d_source, h_source, d_dest, h_dest, num_elems,        \
-                       stream, mype, size, usec_sum, usec_prod, usec_and, usec_or, usec_xor,       \
-                       usec_min, usec_max)                                                         \
-    do {                                                                                           \
-        double latency = 0;                                                                        \
-        size = num_elems * sizeof(TYPE);                                                           \
-        RUN_RDXN(TYPENAME, TYPE, sum, team, d_source, h_source, d_dest, h_dest, num_elems,         \
-                 stream);                                                                          \
-        usec_sum = latency / MAX_ITERS;                                                            \
-        latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, prod, team, d_source, h_source, d_dest, h_dest, num_elems,        \
-                 stream);                                                                          \
-        usec_prod = latency / MAX_ITERS;                                                           \
-        latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, and, team, d_source, h_source, d_dest, h_dest, num_elems,         \
-                 stream);                                                                          \
-        usec_and = latency / MAX_ITERS;                                                            \
-        latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, or, team, d_source, h_source, d_dest, h_dest, num_elems, stream); \
-        usec_or = latency / MAX_ITERS;                                                             \
-        latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, xor, team, d_source, h_source, d_dest, h_dest, num_elems,         \
-                 stream);                                                                          \
-        usec_xor = latency / MAX_ITERS;                                                            \
-        latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, min, team, d_source, h_source, d_dest, h_dest, num_elems,         \
-                 stream);                                                                          \
-        usec_min = latency / MAX_ITERS;                                                            \
-        latency = 0;                                                                               \
-        RUN_RDXN(TYPENAME, TYPE, max, team, d_source, h_source, d_dest, h_dest, num_elems,         \
-                 stream);                                                                          \
-        usec_max = latency / MAX_ITERS;                                                            \
+#define RUN_RDXN_ITERS(TYPENAME, TYPE, team, d_source, h_source, d_dest, h_dest, num_elems,  \
+                       stream, mype, size, usec_sum, usec_prod, usec_and, usec_or, usec_xor, \
+                       usec_min, usec_max)                                                   \
+    do {                                                                                     \
+        size = num_elems * sizeof(TYPE);                                                     \
+        RUN_RDXN(TYPENAME, TYPE, sum, team, d_source, h_source, d_dest, h_dest, num_elems,   \
+                 usec_sum, stream);                                                          \
     } while (0)
 
 int main(int argc, char **argv) {
@@ -94,23 +63,25 @@ int main(int argc, char **argv) {
     LARGEST_DT *h_source, *h_dest;
     char size_string[100];
     uint64_t size_array[MAX_ELEMS_LOG];
-    double sum_latency_array[MAX_ELEMS_LOG];
-    double prod_latency_array[MAX_ELEMS_LOG];
-    double and_latency_array[MAX_ELEMS_LOG];
-    double or_latency_array[MAX_ELEMS_LOG];
-    double xor_latency_array[MAX_ELEMS_LOG];
-    double min_latency_array[MAX_ELEMS_LOG];
-    double max_latency_array[MAX_ELEMS_LOG];
+    double **sum_latency_array = (double **)malloc(MAX_ELEMS_LOG * sizeof(double *));
+    double **prod_latency_array = (double **)malloc(MAX_ELEMS_LOG * sizeof(double *));
+    double **and_latency_array = (double **)malloc(MAX_ELEMS_LOG * sizeof(double *));
+    double **or_latency_array = (double **)malloc(MAX_ELEMS_LOG * sizeof(double *));
+    double **xor_latency_array = (double **)malloc(MAX_ELEMS_LOG * sizeof(double *));
+    double **min_latency_array = (double **)malloc(MAX_ELEMS_LOG * sizeof(double *));
+    double **max_latency_array = (double **)malloc(MAX_ELEMS_LOG * sizeof(double *));
     cudaStream_t stream;
 
     memset(size_array, 0, MAX_ELEMS_LOG * sizeof(uint64_t));
-    memset(sum_latency_array, 0, MAX_ELEMS_LOG * sizeof(double));
-    memset(prod_latency_array, 0, MAX_ELEMS_LOG * sizeof(double));
-    memset(and_latency_array, 0, MAX_ELEMS_LOG * sizeof(double));
-    memset(or_latency_array, 0, MAX_ELEMS_LOG * sizeof(double));
-    memset(xor_latency_array, 0, MAX_ELEMS_LOG * sizeof(double));
-    memset(min_latency_array, 0, MAX_ELEMS_LOG * sizeof(double));
-    memset(max_latency_array, 0, MAX_ELEMS_LOG * sizeof(double));
+    for (int i = 0; i < MAX_ELEMS_LOG; i++) {
+        sum_latency_array[i] = (double *)calloc(coll_max_iters, sizeof(double));
+        prod_latency_array[i] = (double *)calloc(coll_max_iters, sizeof(double));
+        and_latency_array[i] = (double *)calloc(coll_max_iters, sizeof(double));
+        or_latency_array[i] = (double *)calloc(coll_max_iters, sizeof(double));
+        xor_latency_array[i] = (double *)calloc(coll_max_iters, sizeof(double));
+        min_latency_array[i] = (double *)calloc(coll_max_iters, sizeof(double));
+        max_latency_array[i] = (double *)calloc(coll_max_iters, sizeof(double));
+    }
 
     DEBUG_PRINT("symmetric size requested %lu\n", size);
     sprintf(size_string, "%lu", size);
@@ -141,13 +112,14 @@ int main(int argc, char **argv) {
         goto out;
     }
 
+    /* Run NVLS only specific cases */
     d_source = (LARGEST_DT *)d_buffer;
     d_dest = (LARGEST_DT *)&d_source[num_elems];
 
     i = 0;
     for (num_elems = 1; num_elems < (MAX_ELEMS / 2); num_elems *= 2) {
-        RUN_RDXN_ITERS(int32, int32_t, NVSHMEM_TEAM_WORLD, (int *)d_source, (int *)h_source,
-                       (int *)d_dest, (int *)h_dest, num_elems, stream, mype, size_array[i],
+        RUN_RDXN_ITERS(float, float, NVSHMEM_TEAM_WORLD, (float *)d_source, (float *)h_source,
+                       (float *)d_dest, (float *)h_dest, num_elems, stream, mype, size_array[i],
                        sum_latency_array[i], prod_latency_array[i], and_latency_array[i],
                        or_latency_array[i], xor_latency_array[i], min_latency_array[i],
                        max_latency_array[i]);
@@ -155,50 +127,11 @@ int main(int argc, char **argv) {
     }
 
     if (!mype) {
-        print_table("reduction_on_stream", "int-sum", "size (Bytes)", "latency", "us", '-',
-                    size_array, sum_latency_array, i);
-        print_table("reduction_on_stream", "int-prod", "size (Bytes)", "latency", "us", '-',
-                    size_array, prod_latency_array, i);
-        print_table("reduction_on_stream", "int-and", "size (Bytes)", "latency", "us", '-',
-                    size_array, and_latency_array, i);
-        print_table("reduction_on_stream", "int-or", "size (Bytes)", "latency", "us", '-',
-                    size_array, or_latency_array, i);
-        print_table("reduction_on_stream", "int-xor", "size (Bytes)", "latency", "us", '-',
-                    size_array, xor_latency_array, i);
-        print_table("reduction_on_stream", "int-min", "size (Bytes)", "latency", "us", '-',
-                    size_array, min_latency_array, i);
-        print_table("reduction_on_stream", "int-max", "size (Bytes)", "latency", "us", '-',
-                    size_array, max_latency_array, i);
-    }
-
-    i = 0;
-    for (num_elems = 1; num_elems < (MAX_ELEMS / 2); num_elems *= 2) {
-        RUN_RDXN_ITERS(int64, int64_t, NVSHMEM_TEAM_WORLD, d_source, h_source, d_dest, h_dest,
-                       num_elems, stream, mype, size_array[i], sum_latency_array[i],
-                       prod_latency_array[i], and_latency_array[i], or_latency_array[i],
-                       xor_latency_array[i], min_latency_array[i], max_latency_array[i]);
-        i++;
-    }
-
-    if (!mype) {
-        print_table("reduction_on_stream", "int64-sum", "size (Bytes)", "latency", "us", '-',
-                    size_array, sum_latency_array, i);
-        print_table("reduction_on_stream", "int64-prod", "size (Bytes)", "latency", "us", '-',
-                    size_array, prod_latency_array, i);
-        print_table("reduction_on_stream", "int64-and", "size (Bytes)", "latency", "us", '-',
-                    size_array, and_latency_array, i);
-        print_table("reduction_on_stream", "int64-or", "size (Bytes)", "latency", "us", '-',
-                    size_array, or_latency_array, i);
-        print_table("reduction_on_stream", "int64-xor", "size (Bytes)", "latency", "us", '-',
-                    size_array, xor_latency_array, i);
-        print_table("reduction_on_stream", "int64-min", "size (Bytes)", "latency", "us", '-',
-                    size_array, min_latency_array, i);
-        print_table("reduction_on_stream", "int64-max", "size (Bytes)", "latency", "us", '-',
-                    size_array, max_latency_array, i);
+        print_table_v2("reduction_on_stream", "float-sum", "size (Bytes)", "latency", "us", '-',
+                       size_array, sum_latency_array, i);
     }
 
     nvshmem_barrier_all();
-
     CUDA_CHECK(cudaFreeHost(h_buffer));
     nvshmem_free(d_buffer);
 

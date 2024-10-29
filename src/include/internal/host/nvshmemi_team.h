@@ -48,4 +48,11 @@ static inline int nvshmemi_team_pe(nvshmemi_team_t *team, int pe) {
 }
 
 size_t nvshmemi_get_teams_mem_requirement();
+
+bool nvshmemi_team_support_nvls(nvshmemi_team_t *team);
+
+long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_team_op_t op);
+
+int nvshmemi_team_translate_pe(nvshmemi_team_t *src_team, int src_pe, nvshmemi_team_t *dest_team);
+
 #endif

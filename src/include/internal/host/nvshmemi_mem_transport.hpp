@@ -42,7 +42,7 @@ class nvshmemi_mem_p2p_transport final {
     struct nvml_function_table *get_nvml_ftable(void) {
         return &nvml_ftable_;
     }
-    int get_mem_handle_type(void) const { return nvshmemi_mem_handle_type_; }
+    CUmemAllocationHandleType get_mem_handle_type(void) const { return nvshmemi_mem_handle_type_; }
     bool is_mnnvl_fabric(void) const { return nvshmemi_has_mnnvl_fabric_; }
     bool is_initialized(void) const { return !errored_on_initialization_; }
     int create_proc_map(nvshmemi_symmetric_heap &obj);
@@ -59,7 +59,7 @@ class nvshmemi_mem_p2p_transport final {
     explicit nvshmemi_mem_p2p_transport(int mype, int npes);
     static nvshmemi_mem_p2p_transport *p2p_objref_;  // singleton instance
     std::map<pid_t, int> proc_map_;
-    void *nvml_handle_;
+    void *nvml_handle_ = nullptr;
     struct nvml_function_table nvml_ftable_;
     bool nvshmemi_has_mnnvl_fabric_ = false;
     std::vector<int> nvshmemi_nvl_connected_pes_;
@@ -73,7 +73,7 @@ class nvshmemi_mem_p2p_transport final {
 class nvshmemi_mem_remote_transport final {
    public:
     ~nvshmemi_mem_remote_transport() {
-        if (remote_objref_ != nullptr) delete remote_objref_;
+        if (remote_objref_ != nullptr) remote_objref_ = nullptr;
     }
     nvshmemi_mem_remote_transport(const nvshmemi_mem_remote_transport &obj) = delete;
     nvshmemi_mem_remote_transport(nvshmemi_mem_remote_transport &&obj) = delete;
@@ -86,8 +86,7 @@ class nvshmemi_mem_remote_transport final {
         }
     }
 
-    int gather_mem_handles(nvshmem_mem_handle_t *local_handles, nvshmemi_symmetric_heap &obj,
-                           uint64_t heap_offset, size_t size);
+    int gather_mem_handles(nvshmemi_symmetric_heap &obj, uint64_t heap_offset, size_t size);
     /* On-demand registration and release of memory */
     int register_mem_handle(nvshmem_mem_handle_t *local_handles, int transport_idx,
                             nvshmem_mem_handle_t *in, void *buf, size_t size,

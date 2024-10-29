@@ -31,6 +31,34 @@ namespace cg = cooperative_groups;
 
 #ifdef __CUDA_ARCH__
 
+/* This is used to create custom floating type traits such fp16, fp8, etc
+ * For now, using this to create compile-time checks for float/double
+ */
+#if not defined __CUDACC_RTC__
+template <typename T>
+struct is_float : std::false_type {};
+template <>
+struct is_float<float> : std::true_type {};
+
+template <typename T>
+struct is_double : std::false_type {};
+template <>
+struct is_double<double> : std::true_type {};
+
+#else
+
+template <typename T>
+struct is_float : cuda::std::false_type {};
+template <>
+struct is_float<float> : cuda::std::true_type {};
+
+template <typename T>
+struct is_double : cuda::std::false_type {};
+template <>
+struct is_double<double> : cuda::std::true_type {};
+
+#endif
+
 #define GPU_BITS_COPY_THREADGROUP_DIRECT(TYPENAME, TYPE, dest, src, nelems, myIdx, groupSize) \
     do {                                                                                      \
         int i;                                                                                \
@@ -107,6 +135,421 @@ static inline __device__ void gpu_linear_reduce_threadgroup(TYPE *x, TYPE *y, TY
     for (i = myIdx; i < nelems; i += groupSize) {
         z[i] = perform_gpu_rdxn<TYPE, OP>(x[i], y[i]);
     }
+}
+
+#define float_ZERO 0.0f
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_u32 "r"
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_b32 "r"
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_s32 "r"
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_f32 "f"
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_u64 "l"
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_b64 "l"
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_s64 "l"
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_f64 "d"
+#define NVSHMEMI_MCAST_PTX_REG_TYPE_f16x2 "f"
+
+// mcast ldreduce+multimem.st of 16B
+// The requirement to use these primitives is that nelems % UNROLL == 0
+template <typename TYPE, threadgroup_t SCOPE, int UNROLL>
+__device__ inline void nvshmemi_f32_add_reduce_mcast16_v4_threadgroup(int4 *dest,
+                                                                      const int4 *source,
+                                                                      size_t nelems) {
+    int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+    for (size_t j = myIdx * UNROLL; j < nelems; j += groupSize * UNROLL) {
+        uint32_t u4[4 * UNROLL];
+#pragma unroll UNROLL
+        for (int u = 0; u < UNROLL; u++) {
+            asm("multimem.ld_reduce.global.add.v4.f32 {%0, %1, %2, %3}, [%4];"
+                : "=r"(u4[4 * u]), "=r"(u4[4 * u + 1]), "=r"(u4[4 * u + 2]), "=r"(u4[4 * u + 3])
+                : "l"(source + j + u));
+        }
+#pragma unroll UNROLL
+        for (int u = 0; u < UNROLL; u++) {
+            asm("multimem.st.global.v4.f32 [%0], {%1, %2, %3, %4};" ::"l"(dest + j + u),
+                "r"(u4[4 * u]), "r"(u4[4 * u + 1]), "r"(u4[4 * u + 2]), "r"(u4[4 * u + 3]));
+        }
+    }
+}
+
+// mcast ldreduce+multimem.st of 8B
+#define NVSHMEMI_MCAST8_ALLREDUCE_THREADGROUP_SUM_V2(CXX_TYPE, PTX_TYPE)           \
+    template <typename TYPE, threadgroup_t SCOPE>                                  \
+    __device__ inline void nvshmemi_##PTX_TYPE##_add_reduce_mcast8_v2_threadgroup( \
+        uint64_t *dest, const uint64_t *source, size_t nelems) {                   \
+        int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();                    \
+        int groupSize = nvshmemi_threadgroup_size<SCOPE>();                        \
+        for (size_t j = myIdx; j < nelems; j += groupSize) {                       \
+            CXX_TYPE val1[2];                                                      \
+            asm("multimem.ld_reduce.global.add.v2." #PTX_TYPE " {%0, %1}, [%2];"   \
+                : "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1[0]),             \
+                  "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1[1])              \
+                : "l"(source + j));                                                \
+            asm("multimem.st.global.v2.f32 [%0], {%1, %2};" ::"l"(dest + j),       \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1[0]),                   \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1[1]));                  \
+        }                                                                          \
+    }
+
+// mcast ldreduce+multimem.st of 4B
+#define NVSHMEMI_MCAST4_ALLREDUCE_THREADGROUP(OP, CXX_TYPE, PTX_TYPE)              \
+    template <typename TYPE, threadgroup_t SCOPE>                                  \
+    __device__ inline void nvshmemi_##PTX_TYPE##_##OP##_reduce_mcast4_threadgroup( \
+        uint32_t *dest, const uint32_t *source, size_t nelems) {                   \
+        int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();                    \
+        int groupSize = nvshmemi_threadgroup_size<SCOPE>();                        \
+        for (size_t j = myIdx; j < nelems; j += groupSize) {                       \
+            CXX_TYPE val1;                                                         \
+            asm("multimem.ld_reduce.global." #OP "." #PTX_TYPE " %0, [%1];"        \
+                : "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1)                 \
+                : "l"(source + j));                                                \
+            asm("multimem.st.global.f32 [%0], %1;" ::"l"(dest + j),                \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1));                     \
+        }                                                                          \
+    }
+
+// mcast ldreduce+st of 16B
+// The requirement to use these primitives is that nelems % UNROLL == 0
+template <typename TYPE, threadgroup_t SCOPE, int UNROLL>
+__device__ inline void nvshmemi_f32_add_local_reduce_mcast16_v4_threadgroup(int4 *dest,
+                                                                            const int4 *source,
+                                                                            size_t nelems) {
+    int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+    int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+    for (size_t j = myIdx * UNROLL; j < nelems; j += groupSize * UNROLL) {
+        union {
+            uint32_t u4[4 * UNROLL];
+            uint64_t u8[2 * UNROLL];
+        };
+#pragma unroll UNROLL
+        for (int u = 0; u < UNROLL; u++) {
+            asm("multimem.ld_reduce.global.add.v4.f32 {%0, %1, %2, %3}, [%4];"
+                : "=r"(u4[4 * u]), "=r"(u4[4 * u + 1]), "=r"(u4[4 * u + 2]), "=r"(u4[4 * u + 3])
+                : "l"(source + j + u));
+        }
+#pragma unroll UNROLL
+        for (int u = 0; u < UNROLL; u++) {
+            asm("st.global.v2.b64 [%0], {%1, %2};" ::"l"(dest + j + u), "l"(u8[2 * u]),
+                "l"(u8[2 * u + 1]));
+        }
+    }
+}
+
+// The requirement to use these primitives is that nelems % UNROLL == 0
+#define NVSHMEMI_MCAST16_REDUCEOP_THREADGROUP_MINMAX_V4(OP, CXX_TYPE, PTX_TYPE)                 \
+    template <typename TYPE, threadgroup_t SCOPE, int UNROLL>                                   \
+    __device__ inline void nvshmemi_##PTX_TYPE##_##OP##_local_reduce_mcast16_v4_threadgroup(    \
+        int4 *dest, const int4 *source, size_t nelems) {                                        \
+        int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();                                 \
+        int groupSize = nvshmemi_threadgroup_size<SCOPE>();                                     \
+        for (size_t j = myIdx * UNROLL; j < nelems; j += groupSize * UNROLL) {                  \
+            union {                                                                             \
+                uint32_t u4[4 * UNROLL];                                                        \
+                uint64_t u8[2];                                                                 \
+            };                                                                                  \
+            _Pragma("unroll UNROLL") for (int u = 0; u < UNROLL; u++) {                         \
+                asm("multimem.ld_reduce.global." #OP ".v4." #PTX_TYPE                           \
+                    ""                                                                          \
+                    " {%0, %1, %2, %3}, [%4];"                                                  \
+                    : "=r"(u4[4 * u + 0]), "=r"(u4[4 * u + 1]), "=r"(u4[4 * u + 2]),            \
+                      "=r"(u4[4 * u + 3])                                                       \
+                    : "l"(source + j + u));                                                     \
+            }                                                                                   \
+            _Pragma("unroll UNROLL") for (int u = 0; u < UNROLL; u++) {                         \
+                asm("st.global.v2.b64 [%0], {%1, %2};" ::"l"(dest + j + u), "l"(u8[2 * u + 0]), \
+                    "l"(u8[2 * u + 1]));                                                        \
+            }                                                                                   \
+        }                                                                                       \
+    }
+
+// mcast ldreduce+st of 8B
+#define NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_MINMAX(OP, CXX_TYPE, PTX_TYPE)              \
+    template <typename TYPE, threadgroup_t SCOPE>                                        \
+    __device__ inline void nvshmemi_##PTX_TYPE##_##OP##_local_reduce_mcast8_threadgroup( \
+        uint64_t *dest, const uint64_t *source, size_t nelems) {                         \
+        int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();                          \
+        int groupSize = nvshmemi_threadgroup_size<SCOPE>();                              \
+        for (size_t j = myIdx; j < nelems; j += groupSize) {                             \
+            CXX_TYPE val1;                                                               \
+            asm("multimem.ld_reduce.global." #OP "." #PTX_TYPE " %0, [%1];"              \
+                : "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1)                       \
+                : "l"(source + j));                                                      \
+            asm("st.global.b64 [%0], %1;" ::"l"(dest + j),                               \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1));                           \
+        }                                                                                \
+    }
+
+#define NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_SUM(CXX_TYPE, PTX_TYPE)                  \
+    template <typename TYPE, threadgroup_t SCOPE>                                     \
+    __device__ inline void nvshmemi_##PTX_TYPE##_add_local_reduce_mcast8_threadgroup( \
+        uint64_t *dest, const uint64_t *source, size_t nelems) {                      \
+        int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();                       \
+        int groupSize = nvshmemi_threadgroup_size<SCOPE>();                           \
+        for (size_t j = myIdx; j < nelems; j += groupSize) {                          \
+            CXX_TYPE val1;                                                            \
+            asm("multimem.ld_reduce.global.add." #PTX_TYPE " %0, [%1];"               \
+                : "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1)                    \
+                : "l"(source + j));                                                   \
+            asm("st.global.b64 [%0], %1;" ::"l"(dest + j),                            \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1));                        \
+        }                                                                             \
+    }
+
+#define NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP(OP, CXX_TYPE, PTX_TYPE)                     \
+    template <typename TYPE, threadgroup_t SCOPE>                                        \
+    __device__ inline void nvshmemi_##PTX_TYPE##_##OP##_local_reduce_mcast8_threadgroup( \
+        uint64_t *dest, const uint64_t *source, size_t nelems) {                         \
+        int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();                          \
+        int groupSize = nvshmemi_threadgroup_size<SCOPE>();                              \
+        for (size_t j = myIdx; j < nelems; j += groupSize) {                             \
+            CXX_TYPE val1;                                                               \
+            asm("multimem.ld_reduce.global." #OP "." #PTX_TYPE " %0, [%1];"              \
+                : "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1)                       \
+                : "l"(source + j));                                                      \
+            asm("st.global.b64 [%0], %1;" ::"l"(dest + j),                               \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1));                           \
+        }                                                                                \
+    }
+
+#define NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_SUM_V2(CXX_TYPE, PTX_TYPE)                  \
+    template <typename TYPE, threadgroup_t SCOPE>                                        \
+    __device__ inline void nvshmemi_##PTX_TYPE##_add_local_reduce_mcast8_v2_threadgroup( \
+        uint64_t *dest, const uint64_t *source, size_t nelems) {                         \
+        int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();                          \
+        int groupSize = nvshmemi_threadgroup_size<SCOPE>();                              \
+        for (size_t j = myIdx; j < nelems; j += groupSize) {                             \
+            CXX_TYPE val1[2];                                                            \
+            asm("multimem.ld_reduce.global.add.v2." #PTX_TYPE " {%0, %1}, [%2];"         \
+                : "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1[0]),                   \
+                  "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1[1])                    \
+                : "l"(source + j));                                                      \
+            asm("st.global.v2.b32 [%0], {%1, %2};" ::"l"(dest + j),                      \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1[0]),                         \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1[1]));                        \
+        }                                                                                \
+    }
+
+// mcast ldreduce+st of 4B
+#define NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(OP, CXX_TYPE, PTX_TYPE)                     \
+    template <typename TYPE, threadgroup_t SCOPE>                                        \
+    __device__ inline void nvshmemi_##PTX_TYPE##_##OP##_local_reduce_mcast4_threadgroup( \
+        uint32_t *dest, const uint32_t *source, size_t nelems) {                         \
+        int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();                          \
+        int groupSize = nvshmemi_threadgroup_size<SCOPE>();                              \
+        for (size_t j = myIdx; j < nelems; j += groupSize) {                             \
+            CXX_TYPE val1;                                                               \
+            asm("multimem.ld_reduce.global." #OP "." #PTX_TYPE " %0, [%1];"              \
+                : "=" NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1)                       \
+                : "l"(source + j));                                                      \
+            asm("st.global.b32 [%0], %1;" ::"l"(dest + j),                               \
+                NVSHMEMI_MCAST_PTX_REG_TYPE_##PTX_TYPE(val1));                           \
+        }                                                                                \
+    }
+
+#define NVSHMEMI_MCAST_RDXN_OP_IS_CAP(OP) \
+    (OP != RDXN_OPS_PROD && OP != RDXN_OPS_MAXLOC && OP != RDXN_OPS_sentinel)
+#define NVSHMEMI_MCAST_RDXN_OP_IS_CAP_8B(OP) (NVSHMEMI_MCAST_RDXN_OP_IS_CAP(OP))
+#define NVSHMEMI_MCAST_RDXN_OP_IS_CAP_16B(OP) \
+    (OP == RDXN_OPS_SUM || OP == RDXN_OPS_MIN || OP == RDXN_OPS_MAX)
+#define NVSHMEMI_MCAST_RDXN_OP_IS_CAP_UNTYPED(OP) \
+    (OP == RDXN_OPS_SUM || OP == RDXN_OPS_AND || OP == RDXN_OPS_OR || OP == RDXN_OPS_XOR)
+
+/* Supported matrix here:
+ * https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-multimem-ld-reduce-multimem-st-multimem-red
+ */
+
+/* 4B reduce + copy primitives */
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(add, uint32_t, u32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(add, int32_t, s32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(add, float, f32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(min, uint32_t, u32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(min, int32_t, s32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(max, uint32_t, u32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(max, int32_t, s32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(and, uint32_t, b32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(xor, uint32_t, b32)
+NVSHMEMI_MCAST4_REDUCEOP_THREADGROUP(or, uint32_t, b32)
+
+/* 8B reduce + copy primitives */
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_SUM(uint64_t, u64)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_SUM(double, f64)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_SUM_V2(float, f32)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_MINMAX(min, uint64_t, u64)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_MINMAX(min, int64_t, s64)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_MINMAX(max, uint64_t, u64)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP_MINMAX(max, int64_t, s64)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP(and, uint64_t, b64)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP(xor, uint64_t, b64)
+NVSHMEMI_MCAST8_REDUCEOP_THREADGROUP(or, uint64_t, b64)
+
+/* 16B reduce + copy primitives */
+NVSHMEMI_MCAST16_REDUCEOP_THREADGROUP_MINMAX_V4(min, uint32_t, f16x2)
+NVSHMEMI_MCAST16_REDUCEOP_THREADGROUP_MINMAX_V4(max, uint32_t, f16x2)
+
+/* 16B allreduce(SUM) primitives */
+NVSHMEMI_MCAST8_ALLREDUCE_THREADGROUP_SUM_V2(float, f32)
+NVSHMEMI_MCAST4_ALLREDUCE_THREADGROUP(add, float, f32)
+
+template <typename TYPE, rdxn_ops_t OP, threadgroup_t SCOPE>
+__device__ inline int nvshmemi_local_reduce_mcast_threadgroup(TYPE *__restrict__ dest,
+                                                              const TYPE *__restrict__ src,
+                                                              size_t nreduce) {
+    constexpr bool is_unsigned = std::is_integral<TYPE>::value && std::is_unsigned<TYPE>::value;
+    constexpr bool is_signed = std::is_integral<TYPE>::value && std::is_signed<TYPE>::value;
+    constexpr bool is_float_v = is_float<TYPE>::value;
+    constexpr bool is_double_v = is_double<TYPE>::value;
+    size_t len = nreduce * sizeof(TYPE);
+
+    if ((uintptr_t)dest % sizeof(int4) == 0 && (uintptr_t)src % sizeof(int4) == 0 &&
+        len >= sizeof(int4) && NVSHMEMI_MCAST_RDXN_OP_IS_CAP_16B(OP)) {
+        const size_t nelems = len / sizeof(int4);
+        int4 *__restrict__ dst_p = (int4 *)dest;
+        const int4 *__restrict__ src_p = (const int4 *)src;
+
+        switch (OP) {
+            case RDXN_OPS_SUM:
+                if (is_unsigned || is_signed || is_float_v) {
+                    if (len >= 64 && len % 64 == 0)
+                        nvshmemi_f32_add_local_reduce_mcast16_v4_threadgroup<TYPE, SCOPE, 4>(
+                            dst_p, src_p, nelems);
+                    else
+                        nvshmemi_f32_add_local_reduce_mcast16_v4_threadgroup<TYPE, SCOPE, 1>(
+                            dst_p, src_p, nelems);
+                } else if (is_double_v)
+                    goto use_8B_aligned;  // double doesn't support vec for multimem, so fallback to
+                                          // non-vec double multimem
+                break;
+            case RDXN_OPS_MIN:
+                if (len >= 64 && len % 64 == 0)
+                    nvshmemi_f16x2_min_local_reduce_mcast16_v4_threadgroup<TYPE, SCOPE, 4>(
+                        dst_p, src_p, nelems);
+                else
+                    nvshmemi_f16x2_min_local_reduce_mcast16_v4_threadgroup<TYPE, SCOPE, 1>(
+                        dst_p, src_p, nelems);
+                break;
+            case RDXN_OPS_MAX:
+                if (len >= 64 && len % 64 == 0)
+                    nvshmemi_f16x2_max_local_reduce_mcast16_v4_threadgroup<TYPE, SCOPE, 4>(
+                        dst_p, src_p, nelems);
+                else
+                    nvshmemi_f16x2_max_local_reduce_mcast16_v4_threadgroup<TYPE, SCOPE, 1>(
+                        dst_p, src_p, nelems);
+                break;
+            default:
+                break;
+        }
+
+        len -= nelems * sizeof(int4);
+        if (0 == len) return 0;
+        dest = (TYPE *)(dst_p + nelems);
+        src = (TYPE *)(src_p + nelems);
+    }
+
+use_8B_aligned:
+    if ((uintptr_t)dest % sizeof(uint64_t) == 0 && (uintptr_t)src % sizeof(uint64_t) == 0 &&
+        len >= sizeof(uint64_t) && NVSHMEMI_MCAST_RDXN_OP_IS_CAP_8B(OP)) {
+        const size_t nelems = len / sizeof(uint64_t);
+        uint64_t *__restrict__ dst_p = (uint64_t *)dest;
+        const uint64_t *__restrict__ src_p = (const uint64_t *)src;
+        switch (OP) {
+            case RDXN_OPS_SUM:
+                if (is_unsigned || is_signed)
+                    nvshmemi_u64_add_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                else if (is_float_v)
+                    nvshmemi_f32_add_local_reduce_mcast8_v2_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                     nelems);
+                else if (is_double_v)
+                    nvshmemi_f64_add_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                break;
+            case RDXN_OPS_MIN:
+                if (is_unsigned)
+                    nvshmemi_u64_min_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                else if (is_signed)
+                    nvshmemi_s64_min_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                break;
+            case RDXN_OPS_MAX:
+                if (is_unsigned)
+                    nvshmemi_u64_max_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                else if (is_signed)
+                    nvshmemi_s64_max_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                break;
+            case RDXN_OPS_AND:
+                nvshmemi_b64_and_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p, nelems);
+                break;
+            case RDXN_OPS_XOR:
+                nvshmemi_b64_xor_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p, nelems);
+                break;
+            case RDXN_OPS_OR:
+                nvshmemi_b64_or_local_reduce_mcast8_threadgroup<TYPE, SCOPE>(dst_p, src_p, nelems);
+                break;
+            default:
+                break;
+        }
+
+        len -= nelems * sizeof(uint64_t);
+        if (0 == len) return 0;
+        dest = (TYPE *)(dst_p + nelems);
+        src = (TYPE *)(src_p + nelems);
+    }
+
+    if ((uintptr_t)dest % sizeof(uint32_t) == 0 && (uintptr_t)src % sizeof(uint32_t) == 0 &&
+        len >= sizeof(uint32_t)) {
+        const size_t nelems = len / sizeof(uint32_t);
+        uint32_t *__restrict__ dst_p = (uint32_t *)dest;
+        const uint32_t *__restrict__ src_p = (const uint32_t *)src;
+        switch (OP) {
+            case RDXN_OPS_SUM:
+                if (is_unsigned)
+                    nvshmemi_u32_add_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                else if (is_signed)
+                    nvshmemi_s32_add_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                else if (is_float_v)
+                    nvshmemi_f32_add_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                break;
+            case RDXN_OPS_MIN:
+                if (is_unsigned)
+                    nvshmemi_u32_min_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                else if (is_signed)
+                    nvshmemi_s32_min_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                break;
+            case RDXN_OPS_MAX:
+                if (is_unsigned)
+                    nvshmemi_u32_max_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                else if (is_signed)
+                    nvshmemi_s32_max_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p,
+                                                                                  nelems);
+                break;
+            case RDXN_OPS_XOR:
+                nvshmemi_b32_xor_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p, nelems);
+                break;
+            case RDXN_OPS_AND:
+                nvshmemi_b32_and_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p, nelems);
+                break;
+            case RDXN_OPS_OR:
+                nvshmemi_b32_or_local_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p, nelems);
+                break;
+            default:
+                break;
+        }
+
+        len -= nelems * sizeof(uint32_t);
+        if (0 == len) return 0;
+    }
+
+    /* Return the remainder length, incase the caller wants to retry with unicast */
+    return (len);
 }
 
 template <typename TYPE, rdxn_ops_t OP>
@@ -569,7 +1012,8 @@ static inline __device__ void gpu_rdxn_segment_threadgroup(nvshmem_team_t team, 
     int round = 0;
     size_t exchange_size = 0;
     int my_active_set_pe = ((nvshmemi_device_state_d.mype - start) / stride);
-    size_t nvshm_gpu_rdxn_seg_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE;
+    size_t nvshm_gpu_rdxn_seg_size =
+        (nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size / 2) / sizeof(long);
 
     tmp_operand = (TYPE *)pWrk;
     nvshmemi_put_nbi_threadgroup<TYPE, SCOPE>((TYPE *)dest, (const TYPE *)source, nelems,
@@ -903,7 +1347,9 @@ static __forceinline__ __device__ void nvshmemi_gpu_rdxn_hierarchical_fcollect_t
 
     TYPE *pWrk = (TYPE *)nvshmemi_team_get_psync(teami_node, REDUCE);
     if (teami_node->size >= 2)
-        nvshmemi_fcollect_threadgroup<TYPE, SCOPE>(NVSHMEMX_TEAM_NODE, pWrk, source, nreduce);
+        nvshmemi_fcollect_threadgroup<TYPE, SCOPE>(
+            NVSHMEMX_TEAM_NODE, pWrk, source, nvshmemi_team_my_pe(NVSHMEMX_TEAM_NODE) * nreduce,
+            nreduce);
     else
         nvshmemi_memcpy_threadgroup<SCOPE>(dest, source, nreduce * sizeof(TYPE));
 
@@ -921,8 +1367,9 @@ static __forceinline__ __device__ void nvshmemi_gpu_rdxn_hierarchical_fcollect_t
 
     if (teami_same_mype_node->size >= 2) {
         pWrk = (TYPE *)nvshmemi_team_get_psync(teami_same_mype_node, REDUCE);
-        nvshmemi_fcollect_threadgroup<TYPE, SCOPE>(NVSHMEMX_TEAM_SAME_MYPE_NODE, pWrk, dest,
-                                                   nreduce);
+        nvshmemi_fcollect_threadgroup<TYPE, SCOPE>(
+            NVSHMEMX_TEAM_SAME_MYPE_NODE, pWrk, dest,
+            nvshmemi_team_my_pe(NVSHMEMX_TEAM_SAME_MYPE_NODE) * nreduce, nreduce);
 #if CUDART_VERSION >= 12000 && defined(__cplusplus) && __cplusplus >= 201703L
         if constexpr (SCOPE == NVSHMEMI_THREADGROUP_BLOCK && OP == RDXN_OPS_SUM &&
                       sizeof(TYPE) >= 4 && sizeof(TYPE) <= 8) {
@@ -963,7 +1410,9 @@ static inline __device__ void nvshmemi_gpu_rdxn_threadgroup(nvshmem_team_t team,
 #else
     size_t subelems = sizeof(TYPE) / sizeof(uint32_t);
     size_t pwrk_req_sz_allgather = ((subelems * nreduce) * sizeof(uint64_t)) * size;
-    size_t wrk_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * sizeof(TYPE);
+    size_t wrk_size =
+        ((nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size / 2) / sizeof(long)) *
+        sizeof(TYPE);
     if (subelems && (pwrk_req_sz_allgather <= wrk_size)) {
         nvshmemi_gpu_rdxn_threadgroup_putall_direct<TYPE, OP, SCOPE>(team, dest, source, nreduce);
     } else {
@@ -980,14 +1429,16 @@ static inline __device__ void nvshmemi_gpu_rdxn_threadgroup(nvshmem_team_t team,
     int k = nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_recexch_kval;
     if (start == 0 && stride == 1 && size == nvshmemi_device_state_d.npes && sizeof(TYPE) >= 4 &&
         nreduce % 2 == 0 &&
-        NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * sizeof(long) >= size * nreduce * sizeof(TYPE) &&
+        nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size / 2 >=
+            size * nreduce * sizeof(TYPE) &&
         nvshmemi_device_state_d.gpu_coll_env_params_var.fcollect_ll_threshold >=
             nreduce * sizeof(TYPE) &&
         SCOPE == NVSHMEMI_THREADGROUP_BLOCK)
         nvshmemi_gpu_rdxn_hierarchical_fcollect_threadgroup<TYPE, OP, SCOPE>(team, dest, source,
                                                                              nreduce);
     else if (start == 0 && stride == 1 && size == nvshmemi_device_state_d.npes &&
-             NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE >=
+             ((nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size / 2) /
+              sizeof(long)) >=
                  ((k - 1) * nreduce + k * teami->reduce_recexch.step2_nphases * nreduce +
                   teami->reduce_recexch.step2_nphases * nreduce)) {
         gpu_rdxn_recexch_threadgroup<TYPE, OP, SCOPE>(team, dest, source, nreduce);
@@ -1000,7 +1451,9 @@ static inline __device__ void nvshmemi_gpu_rdxn_threadgroup(nvshmem_team_t team,
     int groupSize = nvshmemi_threadgroup_size<SCCOPE>();
     size_t pwrk_req_sz_ring =
         ((subelems * nreduce) * sizeof(uint64_t)) + (groupSize * sizeof(uint32_t));
-    size_t wrk_size = NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * sizeof(TYPE);
+    size_t wrk_size =
+        ((nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size / 2) / sizeof(long)) *
+        sizeof(TYPE);
     if (subelems && pwrk_req_sz_allgather <= wrk_size) {
         nvshmemi_gpu_rdxn_threadgroup_putall<TYPE, OP, SCOPE>(team, dest, source, nreduce);
     } else if (subelems && pwrk_req_sz_ring <= wrk_size) {
@@ -1009,6 +1462,88 @@ static inline __device__ void nvshmemi_gpu_rdxn_threadgroup(nvshmem_team_t team,
         nvshmemi_gpu_rdxn_threadgroup_put_bar<TYPE, OP, SCOPE>(team, dest, source, nreduce);
     }
 #endif
+#endif
+}
+
+/* Works for inplace and out-of-place reduction */
+template <typename TYPE, threadgroup_t SCOPE>
+__device__ inline void nvshmemi_add_reduce_mcast_threadroup(nvshmemi_team_t *teami,
+                                                            TYPE *__restrict__ dst_ptr,
+                                                            const TYPE *__restrict__ src_ptr,
+                                                            int nreduce) {
+    TYPE *src = (TYPE *)nvshmemi_mc_ptr(teami, src_ptr);
+    TYPE *dest = (TYPE *)nvshmemi_mc_ptr(teami, dst_ptr);
+    nvshmemi_threadgroup_sync<SCOPE>();
+    size_t len = nreduce * sizeof(TYPE);
+
+    if ((uintptr_t)dest % sizeof(int4) == 0 && (uintptr_t)src % sizeof(int4) == 0 &&
+        len >= sizeof(int4)) {
+        const size_t nelems = len / sizeof(int4);
+        int4 *__restrict__ dst_p = (int4 *)dest;
+        const int4 *__restrict__ src_p = (const int4 *)src;
+        if (len >= 64 && len % 64 == 0)
+            nvshmemi_f32_add_reduce_mcast16_v4_threadgroup<TYPE, SCOPE, 4>(dst_p, src_p, nelems);
+        else
+            nvshmemi_f32_add_reduce_mcast16_v4_threadgroup<TYPE, SCOPE, 1>(dst_p, src_p, nelems);
+        len -= nelems * sizeof(int4);
+        if (0 == len) return;
+        dest = (TYPE *)(dst_p + nelems);
+        src = (TYPE *)(src_p + nelems);
+    }
+
+    if ((uintptr_t)dest % sizeof(uint64_t) == 0 && (uintptr_t)src % sizeof(uint64_t) == 0 &&
+        len >= sizeof(uint64_t)) {
+        const size_t nelems = len / sizeof(uint64_t);
+        uint64_t *__restrict__ dst_p = (uint64_t *)dest;
+        const uint64_t *__restrict__ src_p = (const uint64_t *)src;
+        nvshmemi_f32_add_reduce_mcast8_v2_threadgroup<TYPE, SCOPE>(dst_p, src_p, nelems);
+        len -= nelems * sizeof(uint64_t);
+        if (0 == len) return;
+        dest = (TYPE *)(dst_p + nelems);
+        src = (TYPE *)(src_p + nelems);
+    }
+
+    if ((uintptr_t)dest % sizeof(uint32_t) == 0 && (uintptr_t)src % sizeof(uint32_t) == 0 &&
+        len >= sizeof(uint32_t)) {
+        const size_t nelems = len / sizeof(uint32_t);
+        uint32_t *__restrict__ dst_p = (uint32_t *)dest;
+        const uint32_t *__restrict__ src_p = (const uint32_t *)src;
+        nvshmemi_f32_add_reduce_mcast4_threadgroup<TYPE, SCOPE>(dst_p, src_p, nelems);
+        len -= nelems * sizeof(uint32_t);
+        if (0 == len) return;
+    }
+
+    return;
+}
+
+template <typename TYPE, threadgroup_t SCOPE>
+__device__ inline void nvshmemi_add_reduce_nvls_twoshot_threadgroup(nvshmem_team_t team, TYPE *dest,
+                                                                    const TYPE *source,
+                                                                    size_t nreduce) {
+#if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
+    nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
+    int my_idx_in_active_set = (nvshmemi_device_state_d.mype - teami->start) / (teami->stride);
+    /* Divide nreduce by team size and handle for the 3 cases */
+    int elems_per_pe = nreduce / teami->size;
+    int elems_remain = nreduce % teami->size;
+    // Case 1: elems_per_pe == 0 => GPU [size-1] does the work on nreduce
+    // Case 2: elems_per_pe != 0 and elems_remain != 0 => GPU [0-size-2] does elems_per_pe,
+    // GPU[size-1] does elems_per_pe + elems_remain Case 3: elems_per_pe != 0 and elems_remain == 0
+    // => all GPUs do work for elems_per_pe
+    int my_nelems = elems_per_pe;
+    if (my_idx_in_active_set == (teami->size - 1)) {
+        my_nelems = elems_per_pe + elems_remain;
+    }
+
+    if (my_nelems > 0) {
+        nvshmemi_add_reduce_mcast_threadroup<TYPE, SCOPE>(
+            teami, dest + elems_per_pe * my_idx_in_active_set,
+            source + elems_per_pe * my_idx_in_active_set, my_nelems);
+    }
+
+    nvshmemi_barrier_threadgroup<SCOPE>(team);
+#else
+    assert(0 && "Unsupported NVLS on this platform\n");
 #endif
 }
 
@@ -1022,7 +1557,33 @@ __device__ inline void nvshmemi_reduce_threadgroup(nvshmem_team_t team, TYPE *de
     if (!myIdx) /* Only one thread should increment rdxn_count */
         nvshmemi_device_state_d.team_pool[team]->rdxn_count += 1;
     nvshmemi_threadgroup_sync<SCOPE>();
-    nvshmemi_gpu_rdxn_threadgroup<TYPE, OP, SCOPE>(team, dest, source, nreduce);
+
+    constexpr bool is_rdxn_sum = (OP == RDXN_OPS_SUM);
+    constexpr bool is_float_v = is_float<TYPE>::value;
+    int reduce_algo = nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_algo;
+    switch (reduce_algo) {
+        case 0:
+        case 3: /* NVLS Two Shot Allreduce for REDUCE_SUM and FLOAT dtype */
+            if (is_rdxn_sum && is_float_v &&
+                nvshmemi_device_state_d.team_pool[team]->nvls_rsc_base_ptr != NULL &&
+                (nreduce * sizeof(TYPE)) % 4 == 0)
+                reduce_algo = 3;
+            else {
+                reduce_algo = 0;
+            }
+            break;
+        default:
+            break;
+    }
+
+    switch (reduce_algo) {
+        case 3: /* NVLS Two Shot Allreduce (RS + AG) */
+            nvshmemi_add_reduce_nvls_twoshot_threadgroup<TYPE, SCOPE>(team, dest, source, nreduce);
+            break;
+        default:
+            nvshmemi_gpu_rdxn_threadgroup<TYPE, OP, SCOPE>(team, dest, source, nreduce);
+            break;
+    }
 }
 
 static __device__ inline void nvshmemi_double2_maxloc_reduce_alltoall_block(nvshmem_team_t team,
@@ -1040,7 +1601,7 @@ static __device__ inline void nvshmemi_double2_maxloc_reduce_alltoall_block(nvsh
     const uint32_t ll_flag = teami->ll_flag;
     char *pWrk = (char *)nvshmemi_team_get_psync(teami, REDUCE);
 
-    nvshmemi_packLL<double2, SCOPE>((uint64_t *)(pWrk), source, 1, ll_flag);
+    nvshmemi_packLL_naive<double2, SCOPE>((uint64_t *)pWrk, source, 1, ll_flag);
     nvshmemi_threadgroup_sync<SCOPE>();
     const int my_pe = nvshmemi_team_my_pe(team);
     const int n_pes = nvshmemi_team_n_pes(team);
@@ -1082,7 +1643,7 @@ static __device__ inline void nvshmemi_double2_maxloc_rooted_reduce_flat_block(
     char *pWrk = (char *)nvshmemi_team_get_psync(teami, REDUCE);
 
     if (nvshmemi_team_my_pe(team) != 0) {
-        nvshmemi_packLL<double2, SCOPE>((uint64_t *)(pWrk), source, 1, ll_flag);
+        nvshmemi_packLL_naive<double2, SCOPE>((uint64_t *)pWrk, source, 1, ll_flag);
         size_t offset = 2 * sizeof(double2) * nvshmemi_team_my_pe(team);
         nvshmemi_put_nbi_threadgroup<uint64_t, SCOPE>(
             (uint64_t *)(pWrk + offset), (uint64_t *)(pWrk), sizeof(double2) / sizeof(uint32_t),
@@ -1112,7 +1673,7 @@ static __device__ inline int nvshmemx_double2_maxloc_reduce_block(nvshmem_team_t
 #endif
 #define SCOPE NVSHMEMI_THREADGROUP_BLOCK
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
-    switch (nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_algo) {
+    switch (nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_maxloc_algo) {
         case 1: /*  Alltoall algorithm */
             nvshmemi_double2_maxloc_reduce_alltoall_block(team, dest, source);
             break;

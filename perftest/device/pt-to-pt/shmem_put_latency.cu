@@ -117,8 +117,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_put_latency", "Thread", "size (Bytes)", "latency", "us", '-', h_size_arr,
-                    h_lat, i);
+        print_table_v1("shmem_put_latency", "Thread", "size (Bytes)", "latency", "us", '-',
+                       h_size_arr, h_lat, i);
     }
 
     i = 0;
@@ -146,8 +146,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_put_latency", "Warp", "size (Bytes)", "latency", "us", '-', h_size_arr,
-                    h_lat, i);
+        print_table_v1("shmem_put_latency", "Warp", "size (Bytes)", "latency", "us", '-',
+                       h_size_arr, h_lat, i);
     }
 
     i = 0;
@@ -175,8 +175,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_put_latency", "Block", "size (Bytes)", "latency", "us", '-', h_size_arr,
-                    h_lat, i);
+        print_table_v1("shmem_put_latency", "Block", "size (Bytes)", "latency", "us", '-',
+                       h_size_arr, h_lat, i);
     }
 
 finalize:

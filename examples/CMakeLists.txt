@@ -145,6 +145,7 @@ set(EXAMPLES
 if(NVSHMEM_MPI_SUPPORT)
   LIST(APPEND EXAMPLES
     mpi-based-init.cu
+    uid-based-init.cu
     dev-guide-ring-mpi.cu
   )
 endif()
@@ -169,6 +170,9 @@ foreach(example ${EXAMPLES})
   $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-O0;-g;-G>
   $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<BOOL:${NVCC_THREADS}>>:-t4>
   )
-
+  set_target_properties(${NAME_} PROPERTIES OUTPUT_NAME "${NAME_}" INSTALL_RPATH "$ORIGIN/../../lib" BUILD_WITH_INSTALL_RPATH TRUE)
   install(TARGETS ${NAME_} RUNTIME DESTINATION "${NVSHMEM_EXAMPLES_INSTALL_PREFIX}")
+  if (NVSHMEM_EXAMPLES_RELEASE_PREFIX)
+    install(TARGETS ${NAME_} RUNTIME DESTINATION "${NVSHMEM_EXAMPLES_RELEASE_PREFIX}")
+  endif()
 endforeach()

@@ -74,8 +74,8 @@ int main(int argc, char *argv[]) {
         malloc_size *= 2;
     }
     if (!mype) {
-        print_table("malloc", "None", "size (Bytes)", "time", "us", '-', h_size_arr, h_time,
-                    loop_size);
+        print_table_v1("malloc", "None", "size (Bytes)", "time", "us", '-', h_size_arr, h_time,
+                       loop_size);
     }
 
     finalize_wrapper();

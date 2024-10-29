@@ -12,5 +12,6 @@
 #include "broadcast.cuh"
 #include "fcollect.cuh"
 #include "reduce.cuh"
+#include "reducescatter.cuh"
 
 #endif /* NVSHMEMI_DEVICE_COLL_DEFINES_H */

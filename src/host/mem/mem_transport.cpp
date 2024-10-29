@@ -74,7 +74,6 @@ out:
 }
 
 nvshmemi_mem_p2p_transport::nvshmemi_mem_p2p_transport(int mype, int npes) {
-    int flag = false;
     int status = 0;
     int nvml_status = 0;
     int device_id = -1;
@@ -88,8 +87,9 @@ nvshmemi_mem_p2p_transport::nvshmemi_mem_p2p_transport(int mype, int npes) {
     errored_on_initialization_ =
         true; /* By default, p2p is not initialized, so some features may be disabled */
 
-    nvmlDevice_t local_device;
     cudaDeviceProp prop;
+    int flag = false;
+    nvmlDevice_t local_device;
     nvmlGpuFabricInfoV_t fabricInfo = {}, fabricInfo1 = {}, fabricInfo2 = {};
     nvmlGpuFabricInfoV_t *pe_fabricInfo = nullptr;
     fabricInfo.version = nvmlGpuFabricInfo_v2;
@@ -146,15 +146,21 @@ nvshmemi_mem_p2p_transport::nvshmemi_mem_p2p_transport(int mype, int npes) {
 
     /* For the assigned device_id, discover nvmlDevice properties */
     cudaGetDeviceProperties(&prop, device_id);
-    if (nvshmemi_cuda_driver_version >= 12040 && prop.major >= 9) {
+    if (nvshmemi_cuda_driver_version >= 12040 && prop.major >= 9 &&
+        !nvshmemi_options.DISABLE_MNNVL) {
         nvml_status = nvml_ftable_.nvmlDeviceGetHandleByPciBusId(pcie_bdf, &local_device);
         NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                               "nvmlDeviceGetHandleByPciBusId failed \n");
 
+        /* Some platforms with older driver may not support this API, so bypass MNNVL discovery */
         if (nvml_ftable_.nvmlDeviceGetGpuFabricInfoV == NULL) {
-            NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                                  "nvmlDeviceGetGpuFabricInfoV not found \n");
+            INFO(NVSHMEM_INIT,
+                 "nvmlDeviceGetGpuFabricInfoV not found. Detection of MNNVL environment will not "
+                 "be attempted\n");
+            status |= NVSHMEMX_SUCCESS;
+            goto out;
         }
+
         fabricInfo.clusterUuid[0] = '\0';
         nvml_status = nvml_ftable_.nvmlDeviceGetGpuFabricInfoV(local_device, &fabricInfo);
         NVSHMEMI_NE_ERROR_JMP(nvml_status, NVML_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
@@ -189,9 +195,6 @@ nvshmemi_mem_p2p_transport::nvshmemi_mem_p2p_transport(int mype, int npes) {
             (nvshmemi_has_mnnvl_fabric_ && flag)
                 ? static_cast<CUmemAllocationHandleType>(CU_MEM_HANDLE_TYPE_FABRIC)
                 : CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-        INFO(NVSHMEM_MEM, "Symmetric Memory Heap Handle Type: %s\n",
-             nvshmemi_mem_handle_type_ == CU_MEM_HANDLE_TYPE_FABRIC ? "Fabric Handle"
-                                                                    : "POSIX File Descriptor");
 
         for (int i = 0; i < npes && nvshmemi_has_mnnvl_fabric_; i++) {
             fabricInfo2 = pe_fabricInfo[i];
@@ -203,11 +206,22 @@ nvshmemi_mem_p2p_transport::nvshmemi_mem_p2p_transport(int mype, int npes) {
                 nvshmemi_nvl_connected_pes_.push_back(i);
             }
         }
+
         if (nvshmemi_has_mnnvl_fabric_) {
             INFO(NVSHMEM_MEM, "Multi-node NVLink is supported and enabled on this platform");
         }
     }
 
+    if (nvshmemi_options.CUMEM_HANDLE_TYPE_provided) {
+        if (strcmp_case_insensitive(nvshmemi_options.CUMEM_HANDLE_TYPE, "FABRIC") == 0)
+            nvshmemi_mem_handle_type_ = CU_MEM_HANDLE_TYPE_FABRIC;
+        else
+            nvshmemi_mem_handle_type_ = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+    }
+
+    INFO(NVSHMEM_MEM, "Symmetric Memory Heap Handle Type: %s\n",
+         nvshmemi_mem_handle_type_ == CU_MEM_HANDLE_TYPE_FABRIC ? "Fabric Handle"
+                                                                : "POSIX File Descriptor");
 out:
     if (status == 0) errored_on_initialization_ = false;
 
@@ -250,18 +264,14 @@ nvshmemi_mem_p2p_transport::~nvshmemi_mem_p2p_transport() {
         }
         nvshmemi_nvml_ftable_fini(&nvml_ftable_, &nvml_handle_);
     }
-
-    nvml_handle_ = NULL;
-    memset(&nvml_ftable_, 0, sizeof(struct nvml_function_table));
     proc_map_.clear();
-    if (p2p_objref_ != nullptr) delete p2p_objref_;
+    if (p2p_objref_ != nullptr) p2p_objref_ = nullptr;
 }
 
 /**
  * nvshmemi_mem_remote_transport specific functions
  */
-int nvshmemi_mem_remote_transport::gather_mem_handles(nvshmem_mem_handle_t *local_handles,
-                                                      nvshmemi_symmetric_heap &obj,
+int nvshmemi_mem_remote_transport::gather_mem_handles(nvshmemi_symmetric_heap &obj,
                                                       uint64_t heap_offset, size_t size) {
     int status = 0;
 

@@ -118,8 +118,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_sig_ping_lat", "None", "size (Bytes)", "latency", "us", '-', &size,
-                    h_lat, 1);
+        print_table_v1("shmem_sig_ping_lat", "None", "size (Bytes)", "latency", "us", '-', &size,
+                       h_lat, 1);
     }
 finalize:
 

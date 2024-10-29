@@ -27,7 +27,10 @@
 #define MAX_ITERS 128
 #define MAX_NPES 128
 #define BARRIER_MAX_ITERS 1000
+#define FCOLLECT_MAX_ITERS 1024
 #define BARRIER_MAX_SKIP 10
+
+extern int coll_max_iters;
 
 #define alltoall_src_size(DATATYPE, num_elems, npes) (sizeof(DATATYPE) * num_elems * npes)
 
@@ -76,52 +79,34 @@
     } while (0)
 
 #define RUN_COLL(coll, COLL, TYPENAME, TYPE, d_source, h_source, d_dest, h_dest, npes, root,       \
-                 stream, sizze_array, latency_array)                                               \
+                 stream, size_array, latency_array)                                                \
     do {                                                                                           \
         int array_index = 0;                                                                       \
         for (num_elems = 1; num_elems < (MAX_ELEMS / 2); num_elems *= 2) {                         \
             int iters = 0;                                                                         \
-            float latency = 0, total_latency = 0;                                                  \
+            double latency;                                                                        \
             int skip = MAX_SKIP;                                                                   \
-            cudaEvent_t t_start, t_stop;                                                           \
-            CUDA_CHECK(cudaEventCreate(&t_start));                                                 \
-            CUDA_CHECK(cudaEventCreate(&t_stop));                                                  \
-            float latency_iters = 0.0;                                                             \
-            for (iters = 0; iters < MAX_ITERS + skip; iters++) {                                   \
-                CUDA_CHECK(cudaMemcpyAsync(d_source, h_source,                                     \
-                                           coll##_src_size(DATATYPE, num_elems, npes),             \
-                                           cudaMemcpyHostToDevice, stream));                       \
-                CUDA_CHECK(cudaMemcpyAsync(d_dest, h_dest,                                         \
-                                           coll##_dest_size(DATATYPE, num_elems, npes),            \
-                                           cudaMemcpyHostToDevice, stream));                       \
-                if (iters >= skip) CUDA_CHECK(cudaEventRecord(t_start, stream));                   \
-                                                                                                   \
+            struct timeval t_start, t_stop;                                                        \
+            int latency_iters = 0;                                                                 \
+            nvshmem_barrier_all();                                                                 \
+            for (iters = 0; iters < skip; iters++) {                                               \
                 call_shmem_##coll(TYPENAME, TYPE, NVSHMEM_TEAM_WORLD, d_dest, d_source, num_elems, \
                                   root);                                                           \
-                                                                                                   \
-                if (iters >= skip) {                                                               \
-                    CUDA_CHECK(cudaEventRecord(t_stop, stream));                                   \
-                }                                                                                  \
-                                                                                                   \
-                CUDA_CHECK(cudaMemcpyAsync(h_source, d_source,                                     \
-                                           coll##_src_size(DATATYPE, num_elems, npes),             \
-                                           cudaMemcpyDeviceToHost, stream));                       \
-                CUDA_CHECK(cudaMemcpyAsync(h_dest, d_dest,                                         \
-                                           coll##_dest_size(DATATYPE, num_elems, npes),            \
-                                           cudaMemcpyDeviceToHost, stream));                       \
-                                                                                                   \
-                CUDA_CHECK(cudaStreamSynchronize(stream));                                         \
-                if (iters >= skip) {                                                               \
-                    CUDA_CHECK(cudaEventElapsedTime(&latency, t_start, t_stop));                   \
-                    total_latency += latency;                                                      \
-                    latency_iters++;                                                               \
-                }                                                                                  \
             }                                                                                      \
-            CUDA_CHECK(cudaEventDestroy(t_start));                                                 \
-            CUDA_CHECK(cudaEventDestroy(t_stop));                                                  \
+            nvshmem_barrier_all();                                                                 \
+            auto lat_idx_array = latency_array[array_index];                                       \
+            for (iters = 0; iters < coll_max_iters; iters++) {                                     \
+                gettimeofday(&t_start, NULL);                                                      \
+                call_shmem_##coll(TYPENAME, TYPE, NVSHMEM_TEAM_WORLD, d_dest, d_source, num_elems, \
+                                  root);                                                           \
+                gettimeofday(&t_stop, NULL);                                                       \
+                latency = ((t_stop.tv_usec - t_start.tv_usec) +                                    \
+                           (1e+6 * (t_stop.tv_sec - t_start.tv_sec)));                             \
+                lat_idx_array[latency_iters] = latency;                                            \
+                latency_iters++;                                                                   \
+            }                                                                                      \
             nvshmem_barrier_all();                                                                 \
             size_array[array_index] = num_elems * sizeof(DATATYPE);                                \
-            latency_array[array_index] = ((total_latency * 1e+3) / latency_iters);                 \
             array_index++;                                                                         \
         }                                                                                          \
     } while (0)
@@ -131,48 +116,34 @@
     do {                                                                                         \
         int array_index = 0;                                                                     \
         for (num_elems = 1; num_elems < (MAX_ELEMS / 2); num_elems *= 2) {                       \
-            int iters = 0;                                                                       \
-            float latency = 0, total_latency = 0;                                                \
+            float latency = 0;                                                                   \
             int skip = MAX_SKIP;                                                                 \
             cudaEvent_t t_start, t_stop;                                                         \
             CUDA_CHECK(cudaEventCreate(&t_start));                                               \
             CUDA_CHECK(cudaEventCreate(&t_stop));                                                \
-            float latency_iters = 0.0;                                                           \
-            for (iters = 0; iters < MAX_ITERS + skip; iters++) {                                 \
-                CUDA_CHECK(cudaMemcpyAsync(d_source, h_source,                                   \
-                                           coll##_src_size(DATATYPE, num_elems, npes),           \
-                                           cudaMemcpyHostToDevice, stream));                     \
-                CUDA_CHECK(cudaMemcpyAsync(d_dest, h_dest,                                       \
-                                           coll##_dest_size(DATATYPE, num_elems, npes),          \
-                                           cudaMemcpyHostToDevice, stream));                     \
-                                                                                                 \
-                if (iters >= skip) CUDA_CHECK(cudaEventRecord(t_start, stream));                 \
-                                                                                                 \
+            int latency_iters = 0;                                                               \
+            auto lat_idx_array = latency_array[array_index];                                     \
+            nvshmem_barrier_all();                                                               \
+            for (int iters = 0; iters < skip; iters++) {                                         \
                 call_shmem_##coll##_on_stream(TYPENAME, TYPE, NVSHMEM_TEAM_WORLD, d_dest,        \
                                               d_source, num_elems, root, stream);                \
-                if (iters >= skip) {                                                             \
-                    CUDA_CHECK(cudaEventRecord(t_stop, stream));                                 \
-                }                                                                                \
-                                                                                                 \
-                CUDA_CHECK(cudaMemcpyAsync(h_source, d_source,                                   \
-                                           coll##_src_size(DATATYPE, num_elems, npes),           \
-                                           cudaMemcpyDeviceToHost, stream));                     \
-                CUDA_CHECK(cudaMemcpyAsync(h_dest, d_dest,                                       \
-                                           coll##_dest_size(DATATYPE, num_elems, npes),          \
-                                           cudaMemcpyDeviceToHost, stream));                     \
-                CUDA_CHECK(cudaStreamSynchronize(stream));                                       \
-                if (iters >= skip) {                                                             \
-                    CUDA_CHECK(cudaEventElapsedTime(&latency, t_start, t_stop));                 \
-                    total_latency += latency;                                                    \
-                    latency_iters++;                                                             \
-                }                                                                                \
             }                                                                                    \
-                                                                                                 \
+            CUDA_CHECK(cudaStreamSynchronize(stream));                                           \
+            nvshmem_barrier_all();                                                               \
+            for (int iters = 0; iters < coll_max_iters; iters++) {                               \
+                CUDA_CHECK(cudaEventRecord(t_start, stream));                                    \
+                call_shmem_##coll##_on_stream(TYPENAME, TYPE, NVSHMEM_TEAM_WORLD, d_dest,        \
+                                              d_source, num_elems, root, stream);                \
+                CUDA_CHECK(cudaEventRecord(t_stop, stream));                                     \
+                CUDA_CHECK(cudaStreamSynchronize(stream));                                       \
+                CUDA_CHECK(cudaEventElapsedTime(&latency, t_start, t_stop));                     \
+                lat_idx_array[latency_iters] = latency * 1e+3;                                   \
+                latency_iters++;                                                                 \
+            }                                                                                    \
             CUDA_CHECK(cudaEventDestroy(t_start));                                               \
             CUDA_CHECK(cudaEventDestroy(t_stop));                                                \
             nvshmem_barrier_all();                                                               \
-            size_array[array_index] = num_elems * sizeof(DATATYPE);                              \
-            latency_array[array_index] = ((total_latency * 1e+3) / latency_iters);               \
+            size_array[array_index] = num_elems * sizeof(TYPE);                                  \
             array_index++;                                                                       \
         }                                                                                        \
     } while (0)

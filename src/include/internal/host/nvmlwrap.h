@@ -8,7 +8,7 @@
 #if ((NVML_API_VERSION < 12) || (CUDA_VERSION < 12040))
 
 #ifndef NVML_GPU_FABRIC_STATE_COMPLETED
-#define NVML_GPU_FABRIC_STATE_COMPLETED 16
+#define NVML_GPU_FABRIC_STATE_COMPLETED 3
 #endif
 
 #ifndef nvmlGpuFabricInfo_v2
@@ -16,7 +16,7 @@
 #endif
 
 #ifndef NVML_GPU_FABRIC_UUID_LEN
-#define NVML_GPU_FABRIC_UUID_LEN 80
+#define NVML_GPU_FABRIC_UUID_LEN 16
 #endif
 
 typedef unsigned char nvmlGpuFabricState_t;

@@ -127,7 +127,7 @@ macro(nvshmem_add_perftest_prefix SOURCE PREFIX)
   string(REPLACE ${SOURCE} "" DIR ${DIR})
   set(NAME "${PREFIX}${NAME_}")
   add_executable(${NAME} ${SOURCE})
-
+  set_target_properties(${NAME} PROPERTIES OUTPUT_NAME "${NAME_}" INSTALL_RPATH "$ORIGIN/../../../../lib" BUILD_WITH_INSTALL_RPATH TRUE)
   set_target_properties(${NAME} PROPERTIES
   POSITION_INDEPENDENT_CODE ON
   CXX_STANDARD_REQUIRED ON
@@ -147,6 +147,10 @@ macro(nvshmem_add_perftest_prefix SOURCE PREFIX)
   set_target_properties(${NAME} PROPERTIES OUTPUT_NAME "${NAME_}")
   target_link_libraries(${NAME} nvshmem_perftest_helper)
   install(TARGETS ${NAME} RUNTIME DESTINATION "${NVSHMEM_PERFTEST_INSTALL_PREFIX}/${DIR}")
+  if (NVSHMEM_PERFTEST_RELEASE_PREFIX)
+    install(TARGETS ${NAME} RUNTIME DESTINATION "${NVSHMEM_PERFTEST_RELEASE_PREFIX}/${DIR}")
+  endif()
+
 endmacro()
 
 add_subdirectory(device)

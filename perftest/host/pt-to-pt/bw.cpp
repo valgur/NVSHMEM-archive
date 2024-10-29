@@ -196,8 +196,8 @@ int main(int argc, char *argv[]) {
             i++;
         }
 
-        print_table("Bandwidth", "None", "size (Bytes)", "Bandwidth", "GB", '+', size_array,
-                    bandwidth_array, i);
+        print_table_v1("Bandwidth", "None", "size (Bytes)", "Bandwidth", "GB", '+', size_array,
+                       bandwidth_array, i);
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));
 

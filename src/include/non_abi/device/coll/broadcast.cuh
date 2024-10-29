@@ -46,7 +46,7 @@ __device__ inline void nvshmemi_bcast_intranode_tree_threadgroup(nvshmem_team_t 
     if (PE_root != my_pe_in_team) {
         nvshmemi_recvLL<T, SCOPE>(dest, (uint64_t *)(pWrk + recv_offset), nelems, ll_flag);
     } else {
-        nvshmemi_packLL<T, SCOPE>((uint64_t *)(pWrk + recv_offset), source, nelems, ll_flag);
+        nvshmemi_packLL_naive<T, SCOPE>((uint64_t *)(pWrk + recv_offset), source, nelems, ll_flag);
     }
 
     /*if (SCOPE == NVSHMEMI_THREADGROUP_BLOCK) {
@@ -118,7 +118,7 @@ __device__ inline void nvshmemi_bcast_internode_tree_threadgroup(nvshmem_team_t 
     if (PE_root != my_pe_in_team) {
         nvshmemi_recvLL<T, SCOPE>(dest, (uint64_t *)(pWrk + recv_offset), nelems, ll_flag);
     } else {
-        nvshmemi_packLL<T, SCOPE>((uint64_t *)(pWrk + recv_offset), source, nelems, ll_flag);
+        nvshmemi_packLL_naive<T, SCOPE>((uint64_t *)(pWrk + recv_offset), source, nelems, ll_flag);
     }
     nvshmemi_threadgroup_sync<SCOPE>();
     for (int i = myIdx; i < k; i += groupSize) {
@@ -164,7 +164,7 @@ __device__ inline void nvshmemi_bcast_tree_threadgroup(nvshmem_team_t team, T *d
     if (PE_root != my_pe_in_team) {
         nvshmemi_recvLL<T, SCOPE>(dest, (uint64_t *)(pWrk + recv_offset), nelems, ll_flag);
     } else {
-        nvshmemi_packLL<T, SCOPE>((uint64_t *)(pWrk + recv_offset), source, nelems, ll_flag);
+        nvshmemi_packLL_naive<T, SCOPE>((uint64_t *)(pWrk + recv_offset), source, nelems, ll_flag);
     }
     nvshmemi_threadgroup_sync<SCOPE>();
     /* Do remote transfers first */

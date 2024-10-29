@@ -1698,11 +1698,9 @@ __device__ static inline void ibgda_wait_for_slot_availability(nvshmemi_ibgda_de
         nvshmemi_ibgda_device_cq_t cq = *qp->tx_wq.cq;
         status = ibgda_poll_cq(&cq, wqe_idx - nwqes, &err);
         // TODO: Integrate the error handler with the core NVSHMEM
-#ifdef NVSHMEM_IBGDA_DEBUG
         if (status) {
             printf("ibgda_poll_cq failed with error=%d.\n", err);
         }
-#endif
         assert(likely(status == 0));
     }
     IBGDA_MFENCE();
@@ -2283,12 +2281,12 @@ __device__ static inline void ibgda_rma(uint64_t req_rptr, uint64_t req_lptr, si
     uint64_t lptr = req_lptr;
 
     __be32 lkey;
-    __be32 my_lkey;
+    __be32 my_lkey = 0;
     uint64_t my_laddr;
     size_t lchunk_size;
 
     __be32 rkey;
-    __be32 my_rkey;
+    __be32 my_rkey = 0;
     uint64_t raddr;
     uint64_t my_raddr;
     size_t rchunk_size;
@@ -2320,8 +2318,6 @@ __device__ static inline void ibgda_rma(uint64_t req_rptr, uint64_t req_lptr, si
 
     num_wqes_per_cmd =
         (qp->qp_type == NVSHMEMI_IBGDA_DEVICE_QP_TYPE_DCI) ? (support_half_av_seg ? 1 : 2) : 1;
-
-    if (unlikely(remaining_size == 0)) goto out;
 
     // Calculate how many chunks we need to send.
     while (remaining_size > 0) {
@@ -3226,12 +3222,12 @@ __device__ static inline void nvshmemi_ibgda_put_signal_impl(void *req_rptr, voi
     uint64_t lptr = (uint64_t)req_lptr;
 
     __be32 lkey;
-    __be32 my_lkey;
+    __be32 my_lkey = 0;
     uint64_t my_laddr;
     size_t lchunk_size;
 
     __be32 rkey;
-    __be32 my_rkey;
+    __be32 my_rkey = 0;
     uint64_t raddr;
     uint64_t my_raddr;
     size_t rchunk_size;

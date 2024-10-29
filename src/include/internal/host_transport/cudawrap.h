@@ -12,7 +12,7 @@
 
 #if CUDART_VERSION < 12040
 #define CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED 128
-#define CU_MEM_HANDLE_TYPE_FABRIC 0x8
+#define CU_MEM_HANDLE_TYPE_FABRIC (CUmemAllocationHandleType)0x8
 #define CU_CTX_SYNC_MEMOPS 0x80
 #endif
 
@@ -36,6 +36,34 @@ typedef CUresult(CUDAAPI *PFN_cuMemGetHandleForAddressRange_v11070)(void *handle
                                                                     unsigned long long flags);
 #endif
 
+#if CUDART_VERSION < 12010
+#define CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED 132
+typedef enum CUmulticastGranularity_flags_enum {
+    CU_MULTICAST_GRANULARITY_MINIMUM = 0x0,
+    CU_MULTICAST_GRANULARITY_RECOMMENDED = 0x1
+} CUmulticastGranularity_flags;
+typedef struct CUmulticastObjectProp_st {
+    unsigned int numDevices;
+    size_t size;
+    unsigned long long handleTypes;
+    unsigned long long flags;
+} CUmulticastObjectProp_v1;
+typedef CUmulticastObjectProp_v1 CUmulticastObjectProp;
+typedef CUresult(CUDAAPI *PFN_cuMulticastCreate_v12010)(CUmemGenericAllocationHandle *mcHandle,
+                                                        const CUmulticastObjectProp *prop);
+typedef CUresult(CUDAAPI *PFN_cuMulticastBindMem_v12010)(CUmemGenericAllocationHandle mcHandle,
+                                                         size_t mcOffset,
+                                                         CUmemGenericAllocationHandle memHandle,
+                                                         size_t memOffset, size_t size,
+                                                         unsigned long long flags);
+typedef CUresult(CUDAAPI *PFN_cuMulticastAddDevice_v12010)(CUmemGenericAllocationHandle mcHandle,
+                                                           CUdevice dev);
+typedef CUresult(CUDAAPI *PFN_cuMulticastUnbind_v12010)(CUmemGenericAllocationHandle mcHandle,
+                                                        CUdevice dev, size_t mcOffset, size_t size);
+typedef CUresult(CUDAAPI *PFN_cuMulticastGetGranularity_v12010)(
+    size_t *granularity, const CUmulticastObjectProp *prop, CUmulticastGranularity_flags option);
+#endif
+
 #if CUDART_VERSION >= 11030
 #include <cudaTypedefs.h>
 #else
@@ -46,6 +74,7 @@ typedef enum CUflushGPUDirectRDMAWritesScope_enum {
     CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER = 100,
     CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_ALL_DEVICES = 200
 } CUflushGPUDirectRDMAWritesScope;
+
 #define CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_FLUSH_WRITES_OPTIONS 117
 #define CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WRITES_ORDERING 118
 #define CU_FLUSH_GPU_DIRECT_RDMA_WRITES_OPTION_HOST (1 << 0)
@@ -95,6 +124,10 @@ typedef CUresult(CUDAAPI *PFN_cuMemUnmap_v10020)(CUdeviceptr ptr, size_t size);
 typedef CUresult(CUDAAPI *PFN_cuMemGetAccess_v10020)(unsigned long long *flags,
                                                      const CUmemLocation *location,
                                                      CUdeviceptr ptr);
+typedef CUresult(CUDAAPI *PFN_cuStreamWriteValue64_v11070)(CUstream stream, CUdeviceptr addr,
+                                                           cuuint64_t value, unsigned int flags);
+typedef CUresult(CUDAAPI *PFN_cuStreamWaitValue64_v11070)(CUstream stream, CUdeviceptr addr,
+                                                          cuuint64_t value, unsigned int flags);
 #endif
 
 #define DEFINE_SYM(symbol, version) PFN_##symbol##_v##version pfn_##symbol;
@@ -124,6 +157,13 @@ struct nvshmemi_cuda_fn_table {
     DEFINE_SYM(cuMemRelease, 10020)
     DEFINE_SYM(cuMemSetAccess, 10020)
     DEFINE_SYM(cuMemUnmap, 10020)
+    DEFINE_SYM(cuMulticastCreate, 12010)
+    DEFINE_SYM(cuMulticastAddDevice, 12010)
+    DEFINE_SYM(cuMulticastBindMem, 12010)
+    DEFINE_SYM(cuMulticastUnbind, 12010)
+    DEFINE_SYM(cuMulticastGetGranularity, 12010)
+    DEFINE_SYM(cuStreamWriteValue64, 11070)
+    DEFINE_SYM(cuStreamWaitValue64, 11070)
 
     /* CUDA Driver functions loaded with dlsym() */
     DEFINE_SYM(cuInit, 2000)

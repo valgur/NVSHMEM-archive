@@ -186,8 +186,8 @@ int main(int argc, char *argv[]) {
     if (mype == 0) {
         double *p_h_bw_tmp = bidirectional ? h_bw_total : h_bw;
         const char *const test_name = bidirectional ? "shmem_get_bw_bidi" : "shmem_get_bw_uni";
-        print_table(test_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, p_h_bw_tmp,
-                    i);
+        print_table_basic(test_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr,
+                          p_h_bw_tmp, i);
     }
 
 finalize:

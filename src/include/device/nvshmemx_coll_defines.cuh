@@ -99,8 +99,8 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_BROADCAS
     static __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
         nvshmem##SC_PREFIX##_##TYPENAME##_fcollect##SC_SUFFIX(nvshmem_team_t team, TYPE *dest,     \
                                                               const TYPE *source, size_t nelems) { \
-        nvshmemi_fcollect_threadgroup<TYPE, nvshmemi_threadgroup_##SC>(team, dest, source,         \
-                                                                       nelems);                    \
+        nvshmemi_fcollect_threadgroup<TYPE, nvshmemi_threadgroup_##SC>(                            \
+            team, dest, source, nelems * nvshmem_team_my_pe(team), nelems);                        \
         return 0;                                                                                  \
     }
 
@@ -140,7 +140,39 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(DEFN_NVSHMEMX_TYPENAME_FCOLLECT
 DEFN_NVSHMEM_REDUCE_THREADGROUP(warp, _warp, x);
 DEFN_NVSHMEM_REDUCE_THREADGROUP(block, _block, x);
 #undef DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP
-#undef DEFN_NVSHMEM_REDUCE_THREADGROUP
+
+#define DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, \
+                                                            TYPE, OP)                           \
+    static __device__ NVSHMEMI_DEVICE_INLINE int                                                \
+        nvshmem##SC_PREFIX##_##TYPENAME##_##OP##_reducescatter##SC_SUFFIX(                      \
+            nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce) {              \
+        nvshmemi_reducescatter_threadgroup<TYPE, RDXN_OPS_##OP, nvshmemi_threadgroup_##SC>(     \
+            team, dest, source, nreduce);                                                       \
+        return 0;                                                                               \
+    }
+
+#define DEFN_NVSHMEM_REDUCESCATTER_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX)                    \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE2(                                     \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, and) \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE2(                                     \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, or)  \
+    NVSHMEMI_REPT_FOR_BITWISE_REDUCE_TYPES_WITH_SCOPE2(                                     \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, xor) \
+                                                                                            \
+    NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE2(                                    \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, max) \
+    NVSHMEMI_REPT_FOR_STANDARD_REDUCE_TYPES_WITH_SCOPE2(                                    \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, min) \
+                                                                                            \
+    NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE2(                                       \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, sum) \
+    NVSHMEMI_REPT_FOR_ARITH_REDUCE_TYPES_WITH_SCOPE2(                                       \
+        DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP, SC, SC_SUFFIX, SC_PREFIX, prod)
+
+DEFN_NVSHMEM_REDUCESCATTER_THREADGROUP(warp, _warp, x);
+DEFN_NVSHMEM_REDUCESCATTER_THREADGROUP(block, _block, x);
+#undef DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP
+#undef DEFN_NVSHMEM_REDUCESCATTER_THREADGROUP
 #endif /* __CUDA_ARCH__ */
 
 #endif

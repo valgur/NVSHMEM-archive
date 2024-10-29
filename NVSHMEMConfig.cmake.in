@@ -14,3 +14,4 @@ set(my-config-var @my-config-var@)
 
 # Add the targets file
 include(${CMAKE_CURRENT_LIST_DIR}/NVSHMEMTargets.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/NVSHMEMDeviceTargets.cmake)

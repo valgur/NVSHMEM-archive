@@ -61,7 +61,26 @@ void nvshmemx_signal_wait_until_on_stream(uint64_t *sig_addr, int cmp, uint64_t 
                                           cudaStream_t cstream) {
     NVTX_FUNC_RANGE_IN_GROUP(WAIT_ON_STREAM);
     NVSHMEM_API_NOT_SUPPORTED_WITH_LIMITED_MPG_RUNS();
-    call_nvshmemi_signal_wait_until_on_stream_kernel(sig_addr, cmp, cmp_value, cstream);
+    int status = 0;
+    if (((cmp == NVSHMEM_CMP_GE) || (cmp == NVSHMEM_CMP_EQ)) &&
+        nvshmemi_can_use_cuda_64_bit_stream_memops &&
+        (nvshmemi_can_flush_remote_writes || nvshmemi_options.BYPASS_FLUSH) &&
+        CUPFN(nvshmemi_cuda_syms, cuStreamWaitValue64)) {
+        if (cmp == NVSHMEM_CMP_GE)
+            status =
+                CUPFN(nvshmemi_cuda_syms,
+                      cuStreamWaitValue64(cstream, (CUdeviceptr)sig_addr, cmp_value,
+                                          CU_STREAM_WAIT_VALUE_GEQ | CU_STREAM_WAIT_VALUE_FLUSH));
+        else {  // cmp == NVSHMEM_CMP_EQ
+            status =
+                CUPFN(nvshmemi_cuda_syms,
+                      cuStreamWaitValue64(cstream, (CUdeviceptr)sig_addr, cmp_value,
+                                          CU_STREAM_WAIT_VALUE_EQ | CU_STREAM_WAIT_VALUE_FLUSH));
+        }
+        NVSHMEMI_NZ_EXIT(status, "cuStreamWaitValue64() failed\n");
+    } else {
+        call_nvshmemi_signal_wait_until_on_stream_kernel(sig_addr, cmp, cmp_value, cstream);
+    }
 }
 
 void nvshmemi_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe,
@@ -71,9 +90,17 @@ void nvshmemi_signal_op_on_stream(uint64_t *sig_addr, uint64_t signal, int sig_o
         nvshmemi_state->heap_obj->get_local_pe_base()[pe] != NULL) {
         void *peer_addr;
         NVSHMEMU_MAPPED_PTR_TRANSLATE(peer_addr, sig_addr, pe)
-        status = cudaMemcpyAsync(peer_addr, (const void *)&signal, sizeof(uint64_t),
-                                 cudaMemcpyHostToDevice, cstrm);
-        NVSHMEMI_NZ_EXIT(status, "cudaMemcpyAsync() failed\n");
+        if (nvshmemi_can_use_cuda_64_bit_stream_memops &&
+            nvshmemi_job_connectivity == NVSHMEMI_JOB_GPU_LDST_ATOMICS &&
+            CUPFN(nvshmemi_cuda_syms, cuStreamWriteValue64)) {
+            status = CUPFN(nvshmemi_cuda_syms,
+                           cuStreamWriteValue64(cstrm, (CUdeviceptr)peer_addr, signal, 0));
+            NVSHMEMI_NZ_EXIT(status, "cuStreamWriteValue64() failed\n");
+        } else {
+            status = cudaMemcpyAsync(peer_addr, (const void *)&signal, sizeof(uint64_t),
+                                     cudaMemcpyHostToDevice, cstrm);
+            NVSHMEMI_NZ_EXIT(status, "cudaMemcpyAsync() failed\n");
+        }
     } else {
         call_nvshmemi_signal_op_kernel(sig_addr, signal, sig_op, pe, cstrm);
     }

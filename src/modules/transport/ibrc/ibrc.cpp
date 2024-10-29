@@ -114,7 +114,7 @@ struct ibrc_device {
     struct ibv_pd *pd;
     struct ibv_device_attr device_attr;
     struct ibv_port_attr port_attr[MAX_NUM_PORTS];
-    union ibv_gid gid[MAX_NUM_PORTS];
+    struct nvshmemt_ib_gid_info gid_info[MAX_NUM_PORTS];
     // bpool information
     struct ibv_srq *srq;
     int srq_posted;
@@ -389,11 +389,16 @@ static int ep_connect(struct ibrc_ep *ep, struct ibrc_ep_handle *ep_handle) {
     attr.dest_qp_num = ep_handle->qpn;
     attr.rq_psn = 0;
     if (port_attr->lid == 0) {
+        ib_get_gid_index(&ftable, device->context, portid, port_attr->gid_tbl_len,
+                         &device->gid_info[portid - 1].local_gid_index, ibrc_state->log_level,
+                         ibrc_state->options);
+        ftable.query_gid(device->context, portid, device->gid_info[portid - 1].local_gid_index,
+                         &device->gid_info[portid - 1].local_gid);
         attr.ah_attr.is_global = 1;
         attr.ah_attr.grh.dgid.global.subnet_prefix = ep_handle->spn;
         attr.ah_attr.grh.dgid.global.interface_id = ep_handle->iid;
         attr.ah_attr.grh.flow_label = 0;
-        attr.ah_attr.grh.sgid_index = ibrc_state->options->IB_GID_INDEX;
+        attr.ah_attr.grh.sgid_index = device->gid_info[portid - 1].local_gid_index;
         attr.ah_attr.grh.hop_limit = 255;
         attr.ah_attr.grh.traffic_class = ibrc_state->options->IB_TRAFFIC_CLASS;
     } else {
@@ -452,8 +457,8 @@ int ep_get_handle(struct ibrc_ep_handle *ep_handle, struct ibrc_ep *ep) {
     ep_handle->lid = device->port_attr[ep->portid - 1].lid;
     ep_handle->qpn = ep->qp->qp_num;
     if (ep_handle->lid == 0) {
-        ep_handle->spn = device->gid[ep->portid - 1].global.subnet_prefix;
-        ep_handle->iid = device->gid[ep->portid - 1].global.interface_id;
+        ep_handle->spn = device->gid_info[ep->portid - 1].local_gid.global.subnet_prefix;
+        ep_handle->iid = device->gid_info[ep->portid - 1].local_gid.global.interface_id;
     }
 
     return status;
@@ -1693,8 +1698,12 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
                     continue;
                 }
 
-                status = ftable.query_gid(device->context, p, ibrc_state->options->IB_GID_INDEX,
-                                          &device->gid[p - 1]);
+                ib_get_gid_index(&ftable, device->context, p, device->port_attr[p - 1].gid_tbl_len,
+                                 &device->gid_info[p - 1].local_gid_index, ibrc_state->log_level,
+                                 ibrc_state->options);
+                status =
+                    ftable.query_gid(device->context, p, device->gid_info[p - 1].local_gid_index,
+                                     &device->gid_info[p - 1].local_gid);
                 NVSHMEMI_NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out,
                                         "query_gid failed \n");
 

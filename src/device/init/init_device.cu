@@ -92,9 +92,11 @@ void nvshmemi_check_state_and_init_d() {
         nvshmemid_hostlib_finalize(NULL, NULL);
     }
 
-    status = _nvshmemi_init_device_only_state();
-    if (status) {
-        NVSHMEMI_ERROR_EXIT("nvshmem device initialization failed, exiting \n");
+    if (!nvshmemi_device_only_state.is_initialized) {
+        status = _nvshmemi_init_device_only_state();
+        if (status) {
+            NVSHMEMI_ERROR_EXIT("nvshmem device initialization failed, exiting \n");
+        }
     }
 }
 
@@ -119,6 +121,9 @@ int nvshmemi_init_thread(int requested_thread_support, int *provided_thread_supp
                          nvshmemi_version_t nvshmem_app_version) {
     int status = 0;
 
+#ifdef _NVSHMEM_DEBUG
+    printf("  %-28s %d\n", "DEVICE CUDA API", CUDART_VERSION);
+#endif
     status = nvshmemid_hostlib_init_attr(requested_thread_support, provided_thread_support,
                                          bootstrap_flags, bootstrap_attr,
                                          nvshmemi_device_lib_version, &nvshmemi_get_mem_handle);

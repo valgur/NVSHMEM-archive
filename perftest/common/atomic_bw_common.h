@@ -80,7 +80,7 @@ void atomic_usage(void) {
 #define DEFINE_ATOMIC_BW_FN_NO_ARG(AMO)                                                            \
     __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
                                       int pe, int iter) {                                          \
-        int u, i, j, peer, tid, slice;                                                             \
+        int i, j, peer, tid, slice;                                                                \
         unsigned int counter;                                                                      \
         int threads = gridDim.x * blockDim.x;                                                      \
         tid = blockIdx.x * blockDim.x + threadIdx.x;                                               \
@@ -90,12 +90,12 @@ void atomic_usage(void) {
                                                                                                    \
         for (i = 0; i < iter; i++) {                                                               \
             for (j = 0; j < len - slice; j += slice) {                                             \
-                int idx = j * threads + tid;                                                       \
+                int idx = j + tid;                                                                 \
                 nvshmem_uint64_atomic_##AMO(data_d + idx, peer);                                   \
                 __syncthreads();                                                                   \
             }                                                                                      \
                                                                                                    \
-            int idx = j + u * threads + tid;                                                       \
+            int idx = j + tid;                                                                     \
             if (idx < len) nvshmem_uint64_atomic_##AMO(data_d + idx, peer);                        \
                                                                                                    \
             /* synchronizing across blocks */                                                      \
@@ -132,7 +132,7 @@ void atomic_usage(void) {
 #define DEFINE_ATOMIC_BW_FN_ONE_ARG(AMO, SET_EXPR)                                                 \
     __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
                                       int pe, int iter) {                                          \
-        int u, i, j, peer, tid, slice;                                                             \
+        int i, j, peer, tid, slice;                                                                \
         unsigned int counter;                                                                      \
         int threads = gridDim.x * blockDim.x;                                                      \
         tid = blockIdx.x * blockDim.x + threadIdx.x;                                               \
@@ -142,12 +142,12 @@ void atomic_usage(void) {
                                                                                                    \
         for (i = 0; i < iter; i++) {                                                               \
             for (j = 0; j < len - slice; j += slice) {                                             \
-                int idx = j * threads + tid;                                                       \
+                int idx = j + tid;                                                                 \
                 nvshmem_uint64_atomic_##AMO(data_d + idx, SET_EXPR, peer);                         \
                 __syncthreads();                                                                   \
             }                                                                                      \
                                                                                                    \
-            int idx = j + u * threads + tid;                                                       \
+            int idx = j + tid;                                                                     \
             if (idx < len) nvshmem_uint64_atomic_##AMO(data_d + idx, SET_EXPR, peer);              \
                                                                                                    \
             /* synchronizing across blocks */                                                      \
@@ -186,7 +186,7 @@ void atomic_usage(void) {
 #define DEFINE_ATOMIC_BW_FN_TWO_ARG(AMO, COMPARE_EXPR, SET_EXPR)                                   \
     __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
                                       int pe, int iter) {                                          \
-        int u, i, j, peer, tid, slice;                                                             \
+        int i, j, peer, tid, slice;                                                                \
         unsigned int counter;                                                                      \
         int threads = gridDim.x * blockDim.x;                                                      \
         tid = blockIdx.x * blockDim.x + threadIdx.x;                                               \
@@ -196,12 +196,12 @@ void atomic_usage(void) {
                                                                                                    \
         for (i = 0; i < iter; i++) {                                                               \
             for (j = 0; j < len - slice; j += slice) {                                             \
-                int idx = j * threads + tid;                                                       \
+                int idx = j + tid;                                                                 \
                 nvshmem_uint64_atomic_##AMO(data_d + idx, COMPARE_EXPR, SET_EXPR, peer);           \
                 __syncthreads();                                                                   \
             }                                                                                      \
                                                                                                    \
-            int idx = j + u * threads + tid;                                                       \
+            int idx = j + tid;                                                                     \
             if (idx < len) {                                                                       \
                 nvshmem_uint64_atomic_##AMO(data_d + idx, COMPARE_EXPR, SET_EXPR, peer);           \
             }                                                                                      \

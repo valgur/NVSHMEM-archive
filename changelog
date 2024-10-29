@@ -1,4 +1,82 @@
 ===============================================================================
+				Changes in 3.1.0
+===============================================================================
+# Added support for NVLINK SHARP (NVLS) based collective algorithms on x86 + Hopper and
+Grace Hopper architecture based single and multi-node NVLINK platforms for
+popular deep-learning collective communications (ReduceScatter, Allgather, Allreduce)
+device and on-stream APIs. This feature improves latency for small-message
+size by 2-3x speedup, when compared with one-shot algorithms over
+NVLINK. 
+# Added support for GPU kernels that wish to utilize a low-level query API to
+NVLS enabled symmetric memory using `nvshmemx_mc_ptr` host and device API
+for a given target `team`.
+# Added support for new Low-Latency protocol (LL128) for Allgather collective
+communication device and on-stream APIs.
+# Enhanced support for existing low-latency protocol (LL) warp-scoped collective
+to provide a 2x speedup, over traditional algorithms when scaling up number of GPUs upto 32.
+# Added support for half-precision (FP16/BF16) format on collective
+communication (ReduceScatter, Allgather, Allreduce) on-device and on-stream
+APIs.
+# Added support for Python wheels via PyPI repository and rpm/deb package
+distribution.
+# Added support for dynamic RDMA Global Identifier (GID) discovery for RoCE
+transports. This feature enables automatic fallback to the discovered GID
+without requiring the user to specify the GID via runtime variable.
+# Added support for a heterogenous library build system. This feature allows
+the NVSHMEM static library to be built with a separate CUDA version from the NVSHMEM host library.
+This enables new features such as NVLS in the host library while still
+allowing applications compiled against lower versions of CUDA to link to the
+NVSHMEM device library, making the entire library portable to different CUDA
+minor versions while remaining feature complete. Users can specify a distinct 
+CUDA version for the device library by specifying
+``NVSHMEM_DEVICELIB_CUDA_HOME=<PATH TO CUDA>``. Otherwise the host CUDA version will be used.
+# Enhance support for NVSHMEM on_stream signal APIs to use
+`cuStreamWriteValue()` over P2P connected GPUs when possible. This makes it possible
+to have a zero-SM implementation of the on_stream signalling op when possible.
+# Added support for DMABuf based registration of NIC control-structures in
+IBGDA to leverage DMABuf mainline support in newer linux kernels (over
+proprietary solution nvidia-peermem).
+# Added a sample code for NVSHMEM UniqueID (UID) socket based
+bootstrap modality under `examples` directory.
+# Added support for NVSHMEM performance benchmarks to our release binary
+packages.
+# Removed host API based nvshmem collectives performance benchmarks.
+# Enhanced collectives performance by adding new metrics - Algorithmic Bandwidth
+(algoBW) and Bus Bandwidth (BusBW) to NVSHMEM performance benchmarks.
+# Fixed support for Ninja build generator in our CMake build system.
+# Fixed a runtime bug related to use of ``NVSHMEM_DEVICE_TIMEOUT_POLLLING`` build time variable.
+# Enhanced our CI pipelines to support job-specific timeout to force
+early termination of any job that is hung on the GPU or CPU and avoid pipeline
+starvation of subsequently queued jobs on the same system.
+# Fixed a performance bug in on-stream collectives perftest related to use of
+cudaMemcpyAsync on the same CUDA stream, where cudaEvent for profiling start &
+end time of the on-stream communication kernel are submitted
+# Fixed a bug related to virtual member functions of
+`nvshmemi_symmetric_heap` by forcing its access specifier to be protected to
+limit its access to only inherited child classes
+# Fixed a bug related to recursive destructor memory corruption and
+`nullptr` access to static member function of `nvshmemi_mem_transport`
+class.
+# Fixed a bug with incorrect compile-time value for
+``NVML_GPU_FABRIC_STATE_COMPLETED`` and ``NVML_GPU_FABRIC_UUID_LEN``
+constants.
+# Fixed a bug in ``nvshmemx_collective_launch_query_gridsize`` which could
+cause it to erroneously return a gridsize of 0.
+# Fixed a bug during ``nvshmem_init`` which could cause application to crash in MNNVL discovery
+when use with CUDA compat libraries at runtime for CUDA toolkit > 12.4.
+# Fixed a bug in ``nvshmemx_collective_launch`` which could cause duplicate initialization of
+nvshmem device state.
+# Fixed a bug related to uninitialized variables in IBGDA device code.
+# Fixed a bug related to out-of-bound access (OOB) in atomic BW performance
+test.
+# Fixed a bug related to missing C/C++ `stdint` headers on Ubuntu24.04 + x86
+based systems.
+# Fixed a bug related to incorrect calculation of team specific stride when
+creating a new team using `nvshmem_team_split_strided`.
+# Enhance the reduce-based collective symmetric memory scratch space to
+512KB to accomodate additional space for reducescatter based collectives. 
+
+===============================================================================
 				Changes in 3.0.6
 ===============================================================================
 # Added support for Multi-node systems that have both RDMA networks

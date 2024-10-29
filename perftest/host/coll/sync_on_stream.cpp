@@ -11,16 +11,17 @@
  */
 
 #include "coll_test.h"
+int coll_max_iters = MAX_ITERS;
 
 int main(int c, char *v[]) {
     int status = 0;
     int mype;
     size_t size = 1;
-    double latency_value;
     int iters = MAX_ITERS;
     int skip = MAX_SKIP;
     struct timeval t_start, t_stop;
     float ms = 0;
+    double latency_value;
     cudaEvent_t start_event, stop_event;
     cudaStream_t stream;
 
@@ -36,7 +37,7 @@ int main(int c, char *v[]) {
 
     DEBUG_PRINT("SHMEM: [%d of %d] hello shmem world! \n", mype, npes);
 
-    for (iters = 0; iters < MAX_ITERS + skip; iters++) {
+    for (iters = 0; iters < coll_max_iters + skip; iters++) {
         if (iters == skip) CUDA_CHECK(cudaEventRecord(start_event, stream));
 
         nvshmemx_team_sync_on_stream(NVSHMEM_TEAM_WORLD, stream);
@@ -46,9 +47,9 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaEventElapsedTime(&ms, start_event, stop_event));
 
     if (!mype) {
-        latency_value = (ms / MAX_ITERS) * 1000;
-        print_table("sync_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size,
-                    &latency_value, 1);
+        latency_value = (ms / coll_max_iters) * 1000;
+        print_table_basic("sync_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size,
+                          &latency_value, 1);
     }
 
     nvshmem_barrier_all();

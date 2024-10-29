@@ -34,6 +34,10 @@ __device__ inline void nvshmemx_signal_op(uint64_t *sig_addr, uint64_t signal, i
     nvshmemi_signal_op(sig_addr, signal, sig_op, pe);
 }
 
+__device__ inline void *nvshmemx_mc_ptr(nvshmem_team_t team, const void *ptr) {
+    return nvshmemi_mc_ptr(nvshmemi_device_state_d.team_pool[team], ptr);
+}
+
 #define NVSHMEM_TYPE_PUT_THREADGROUP(Name, Type, Group)                                         \
     __device__ inline void nvshmemx_##Name##_put_##Group(Type *dest, const Type *source,        \
                                                          size_t nelems, int pe) {               \

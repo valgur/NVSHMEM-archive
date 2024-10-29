@@ -82,7 +82,7 @@ struct ibdevx_device {
     struct ibv_pd *pd;
     struct ibv_device_attr device_attr;
     struct ibv_port_attr port_attr[MAX_NUM_PORTS];
-    union ibv_gid gid[MAX_NUM_PORTS];
+    struct nvshmemt_ib_gid_info gid_info[MAX_NUM_PORTS];
     // bpool information
     struct ibv_srq *srq;
     int srq_posted;
@@ -690,6 +690,11 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
     DEVX_SET(qpc, qp_context, atomic_mode, NVSHMEMT_IBDEVX_MLX5_QPC_ATOMIC_MODE_UP_TO_64B);
 
     if (port_attr->link_layer == IBV_LINK_LAYER_ETHERNET) {
+        ib_get_gid_index(&ftable, device->context, portid, port_attr->gid_tbl_len,
+                         &device->gid_info[portid - 1].local_gid_index, ibdevx_state->log_level,
+                         ibdevx_state->options);
+        /*ftable.query_gid(device->context, portid, device->gid_info[portid - 1].local_gid_index,
+                         &device->gid_info[portid - 1].local_gid);*/
         struct ibv_ah_attr ah_attr;
         struct ibv_ah *ah;
         struct mlx5dv_obj dv;
@@ -699,7 +704,7 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
         ah_attr.port_num = portid;
         ah_attr.grh.dgid.global.subnet_prefix = ep_handle->spn;
         ah_attr.grh.dgid.global.interface_id = ep_handle->iid;
-        ah_attr.grh.sgid_index = ibdevx_state->options->IB_GID_INDEX;
+        ah_attr.grh.sgid_index = device->gid_info[portid - 1].local_gid_index;
         ah_attr.grh.traffic_class = ibdevx_state->options->IB_TRAFFIC_CLASS;
         ah_attr.sl = ibdevx_state->options->IB_SL;
         ah_attr.src_path_bits = 0;
@@ -715,7 +720,7 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
                sizeof(dah.av->rmac));
         DEVX_SET(qpc, qp_context, primary_address_path.hop_limit, 255);
         DEVX_SET(qpc, qp_context, primary_address_path.src_addr_index,
-                 ibdevx_state->options->IB_GID_INDEX);
+                 device->gid_info[portid - 1].local_gid_index);
         DEVX_SET(qpc, qp_context, primary_address_path.eth_prio, ibdevx_state->options->IB_SL);
         DEVX_SET(qpc, qp_context, primary_address_path.udp_sport, ah_attr.dlid);
         DEVX_SET(qpc, qp_context, primary_address_path.dscp,
@@ -777,8 +782,8 @@ int ep_get_handle(struct ibdevx_ep_handle *ep_handle, struct ibdevx_ep *ep) {
     ep_handle->lid = device->port_attr[ep->portid - 1].lid;
     ep_handle->qpn = ep->qpid;
     if (ep_handle->lid == 0) {
-        ep_handle->spn = device->gid[ep->portid - 1].global.subnet_prefix;
-        ep_handle->iid = device->gid[ep->portid - 1].global.interface_id;
+        ep_handle->spn = device->gid_info[ep->portid - 1].local_gid.global.subnet_prefix;
+        ep_handle->iid = device->gid_info[ep->portid - 1].local_gid.global.interface_id;
     }
 
     return status;
@@ -1856,8 +1861,12 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
                     continue;
                 }
 
-                status = ftable.query_gid(device->context, p, ibdevx_state->options->IB_GID_INDEX,
-                                          &device->gid[p - 1]);
+                ib_get_gid_index(&ftable, device->context, p, device->port_attr[p - 1].gid_tbl_len,
+                                 &device->gid_info[p - 1].local_gid_index, ibdevx_state->log_level,
+                                 ibdevx_state->options);
+                status =
+                    ftable.query_gid(device->context, p, device->gid_info[p - 1].local_gid_index,
+                                     &device->gid_info[p - 1].local_gid);
                 NVSHMEMI_NULL_ERROR_JMP(dev_list, status, NVSHMEMX_ERROR_INTERNAL, out,
                                         "query_gid failed \n");
 

@@ -28,6 +28,8 @@
 #ifdef NVSHMEM_COMPLEX_SUPPORT
 #include <complex.h>
 #endif
+#include "cuda_fp16.h"
+#include "cuda_bf16.h"
 #include "non_abi/nvshmem_build_options.h"
 #include "device_host_transport/nvshmem_common_transport.h"
 #include "device_host/nvshmem_types.h"
@@ -35,6 +37,8 @@
 
 /* Note: The "long double" type is not supported */
 #define NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_FN_TEMPLATE) \
+    NVSHMEMI_FN_TEMPLATE(bfloat16, __nv_bfloat16)                  \
+    NVSHMEMI_FN_TEMPLATE(half, half)                               \
     NVSHMEMI_FN_TEMPLATE(float, float)                             \
     NVSHMEMI_FN_TEMPLATE(double, double)                           \
     NVSHMEMI_FN_TEMPLATE(char, char)                               \
@@ -60,6 +64,8 @@
     NVSHMEMI_FN_TEMPLATE(ptrdiff, ptrdiff_t)
 
 #define NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(NVSHMEMI_FN_TEMPLATE, SC) \
+    NVSHMEMI_FN_TEMPLATE(SC, bfloat16, __nv_bfloat16)                             \
+    NVSHMEMI_FN_TEMPLATE(SC, half, half)                                          \
     NVSHMEMI_FN_TEMPLATE(SC, float, float)                                        \
     NVSHMEMI_FN_TEMPLATE(SC, double, double)                                      \
     NVSHMEMI_FN_TEMPLATE(SC, char, char)                                          \
@@ -86,6 +92,8 @@
 
 #define NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE2(NVSHMEMI_FN_TEMPLATE, SC, SC_SUFFIX, \
                                                          SC_PREFIX)                           \
+    NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, bfloat16, __nv_bfloat16)                   \
+    NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, half, half)                                \
     NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, float, float)                              \
     NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, double, double)                            \
     NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, char, char)                                \
@@ -177,6 +185,8 @@
     NVSHMEMI_FN_TEMPLATE(int, int, opname)                                    \
     NVSHMEMI_FN_TEMPLATE(long, long, opname)                                  \
     NVSHMEMI_FN_TEMPLATE(longlong, long long, opname)                         \
+    NVSHMEMI_FN_TEMPLATE(bfloat16, __nv_bfloat16, opname)                     \
+    NVSHMEMI_FN_TEMPLATE(half, half, opname)                                  \
     NVSHMEMI_FN_TEMPLATE(float, float, opname)                                \
     NVSHMEMI_FN_TEMPLATE(double, double, opname)
 
@@ -215,6 +225,8 @@
     NVSHMEMI_FN_TEMPLATE(SC, int, int, opname)                                               \
     NVSHMEMI_FN_TEMPLATE(SC, long, long, opname)                                             \
     NVSHMEMI_FN_TEMPLATE(SC, longlong, long long, opname)                                    \
+    NVSHMEMI_FN_TEMPLATE(SC, bfloat16, __nv_bfloat16, opname)                                \
+    NVSHMEMI_FN_TEMPLATE(SC, half, half, opname)                                             \
     NVSHMEMI_FN_TEMPLATE(SC, float, float, opname)                                           \
     NVSHMEMI_FN_TEMPLATE(SC, double, double, opname)
 
@@ -256,6 +268,8 @@
     NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, int, int, opname)                             \
     NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, long, long, opname)                           \
     NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, longlong, long long, opname)                  \
+    NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, bfloat16, __nv_bfloat16, opname)              \
+    NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, half, half, opname)                           \
     NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, float, float, opname)                         \
     NVSHMEMI_FN_TEMPLATE(SC, SC_SUFFIX, SC_PREFIX, double, double, opname)
 
@@ -308,7 +322,39 @@
     NVSHMEMI_REPT_TYPES_AND_OPS_FOR_REDUCE_WITH_SCOPE2(NVSHMEMI_FN_TEMPLATE, warp, _warp, x) \
     NVSHMEMI_REPT_TYPES_AND_OPS_FOR_REDUCE_WITH_SCOPE2(NVSHMEMI_FN_TEMPLATE, block, _block, x)
 
-enum nvshmemi_team_op_t { SYNC = 0, ALLTOALL, BCAST, FCOLLECT, REDUCE, OP_SENTINEL = INT_MAX };
+/* Utility macros for calculating psync space */
+#define NVSHMEMI_TEAM_ROUND_UP_DIV(x, y) (((x) + (y)-1) / (y))
+#define NVSHMEMI_TEAM_ROUND_UP(x, y) (NVSHMEMI_TEAM_ROUND_UP_DIV(x, y) * (y))
+
+/* The LL 128 psync size for any PE is equal to:
+ * the size of the source buffer rounded up to the nearest multiple of 120
+ * plus (8 times the number of 120 byte packets consumed by the source buffer).
+ * Corrected for type.
+ */
+#define NVSHMEMI_FCOLLECT_LL128_CALC_PSYNC_SIZE(x, T) \
+    (NVSHMEMI_TEAM_ROUND_UP(x, (120 / sizeof(T))) +   \
+     sizeof(uint64_t) / sizeof(T) * NVSHMEMI_TEAM_ROUND_UP_DIV(x, (120 / sizeof(T))))
+
+typedef enum {
+    FCOLLECT_DEFAULT = 0,
+    FCOLLECT_LL8 = 1,
+    FCOLLECT_ONESHOT = 2,
+    FCOLLECT_NVLS = 3,
+    FCOLLECT_NVLS_LL = 4,
+    FCOLLECT_LL128 = 6,
+    FCOLLECT_INVALID = INT_MAX
+
+} fcollect_algo_t;
+
+enum nvshmemi_team_op_t {
+    SYNC = 0,
+    ALLTOALL,
+    BCAST,
+    FCOLLECT,
+    REDUCE,
+    FCOLLECT_128,
+    OP_SENTINEL = INT_MAX
+};
 
 typedef enum {
     NVSHMEMI_JOB_GPU_LDST_ATOMICS = 1,
@@ -368,7 +414,6 @@ enum {
 #define SYNC_SIZE 27648 /*XXX:Number of GPUs on Summit; currently O(N), need to be O(1)*/
 #define NVSHMEMI_SYNC_SIZE (2 * SYNC_SIZE)
 #define NVSHMEMI_BCAST_SYNC_SIZE (10 * SYNC_SIZE)
-#define NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE SYNC_SIZE
 #define NVSHMEMI_ALLTOALL_SYNC_SIZE SYNC_SIZE
 #define NVSHMEMI_WARP_SIZE 32
 

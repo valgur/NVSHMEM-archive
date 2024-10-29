@@ -11,17 +11,18 @@
  */
 
 #include "coll_test.h"
+int coll_max_iters = BARRIER_MAX_ITERS;
 
 int main(int c, char *v[]) {
     int status = 0;
     int mype;
     size_t size = 1;
-    double latency_value;
     int iters = BARRIER_MAX_ITERS;
     int skip = BARRIER_MAX_SKIP;
     float ms = 0;
     cudaEvent_t start_event, stop_event;
     cudaStream_t stream;
+    double latency_value;
 
     init_wrapper(&c, &v);
 
@@ -35,9 +36,14 @@ int main(int c, char *v[]) {
 
     DEBUG_PRINT("SHMEM: [%d of %d] hello shmem world! \n", mype, npes);
 
-    for (iters = 0; iters < BARRIER_MAX_ITERS + skip; iters++) {
-        if (iters == skip) CUDA_CHECK(cudaEventRecord(start_event, stream));
+    for (iters = 0; iters < skip; iters++) {
+        nvshmemx_barrier_all_on_stream(stream);
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    nvshmem_barrier_all();
 
+    CUDA_CHECK(cudaEventRecord(start_event, stream));
+    for (iters = 0; iters < coll_max_iters; iters++) {
         nvshmemx_barrier_all_on_stream(stream);
     }
     CUDA_CHECK(cudaEventRecord(stop_event, stream));
@@ -45,9 +51,9 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaEventElapsedTime(&ms, start_event, stop_event));
 
     if (!mype) {
-        latency_value = (ms / BARRIER_MAX_ITERS) * 1000;
-        print_table("barrier_all_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size,
-                    &latency_value, 1);
+        latency_value = (ms / coll_max_iters) * 1000;
+        print_table_basic("barrier_all_on_stream", "None", "size (Bytes)", "latency", "us", '-',
+                          &size, &latency_value, 1);
     }
 
     nvshmem_barrier_all();

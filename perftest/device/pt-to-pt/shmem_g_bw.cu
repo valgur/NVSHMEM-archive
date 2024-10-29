@@ -45,6 +45,7 @@ __device__ inline T call_nvshmem_g(T *rptr, int peer) {
         default:
             assert(0);
     }
+    return (T)0;
 }
 
 template <typename T>
@@ -270,10 +271,11 @@ int main(int argc, char *argv[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_g_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw, i);
+        print_table_v1("shmem_g_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
+                       i);
         if (report_msgrate)
-            print_table("shmem_g_bw", "None", "size (Bytes)", "msgrate", "MMPS", '+', h_size_arr,
-                        h_msgrate, i);
+            print_table_v1("shmem_g_bw", "None", "size (Bytes)", "msgrate", "MMPS", '+', h_size_arr,
+                           h_msgrate, i);
     }
 
 finalize:

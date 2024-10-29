@@ -6,15 +6,18 @@
 
 #ifndef NVSHMEMI_COLL_CPU_H
 #define NVSHMEMI_COLL_CPU_H 1
-#include "cpu_coll.h"
-#include <driver_types.h>                   // for CUstream_st, cudaStream_t
-#include <limits.h>                         // for CHAR_MIN
-#include <stdio.h>                          // for size_t, stderr, fflush
-#include "device_host/nvshmem_common.cuh"   // for RDXN_OPS_AND, RDXN_OPS_MAX
-#include "internal/host/nvshmemi_types.h"   // for nvshmemi_state, nvshmemi_...
-#include "non_abi/nvshmem_build_options.h"  // for NVSHMEM_USE_NCCL
+
+#include <cuda_fp16.h>                     // for half
+#include <driver_types.h>                  // for CUstream_st, cudaStream_t
+#include <limits.h>                        // for CHAR_MIN
+#include <stdio.h>                         // for size_t, stderr, fflush
+#include "cpu_coll.h"                      // lines 13-13
+#include "device_host/nvshmem_common.cuh"  // for RDXN_OPS_AND, RDXN_OPS_MAX
+#include "internal/host/nvshmemi_types.h"  // for nvshmemi_state, nvshmemi_...
 #ifdef NVSHMEM_USE_NCCL
-#include "nccl.h"
+#include "nccl.h"                           // for ncclDataType_t, ncclResult_t
+#include "non_abi/nvshmem_build_options.h"  // for NVSHMEM_USE_NCCL
+struct __nv_bfloat16;
 
 template <rdxn_ops_t op>
 inline ncclRedOp_t nvshmemi_get_nccl_op();
@@ -105,6 +108,14 @@ inline ncclDataType_t nvshmemi_get_nccl_dt<unsigned long long>() {
     return ncclUint64;
 }
 template <>
+inline ncclDataType_t nvshmemi_get_nccl_dt<__nv_bfloat16>() {
+    return ncclBfloat16;
+}
+template <>
+inline ncclDataType_t nvshmemi_get_nccl_dt<half>() {
+    return ncclHalf;
+}
+template <>
 inline ncclDataType_t nvshmemi_get_nccl_dt<float>() {
     return ncclFloat;
 }
@@ -136,6 +147,9 @@ struct nccl_function_table {
     ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count,
                               ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
                               cudaStream_t stream);
+    ncclResult_t (*ReduceScatter)(const void* sendbuff, void* recvbuff, size_t count,
+                                  ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
+                                  cudaStream_t stream);
     ncclResult_t (*Broadcast)(const void* sendbuff, void* recvbuff, size_t count,
                               ncclDataType_t datatype, int root, ncclComm_t comm,
                               cudaStream_t stream);
@@ -158,6 +172,7 @@ extern struct nccl_function_table nccl_ftable;
 #define NVSHMEMI_COLL_CPU_STATUS_ERROR 1
 
 int nvshmemi_coll_common_cpu_init();
+void nvshmemi_coll_common_cpu_check_ll128_availability();
 int nvshmemi_coll_common_cpu_finalize();
 
 #define NVSHMEMI_COLL_CPU_ERR_POP()                                                         \

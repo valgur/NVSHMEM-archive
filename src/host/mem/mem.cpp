@@ -215,10 +215,11 @@ out_unlock:
     }
 
 out_error_unlocked:
-    if (handle->registered_by_us) {
-        CUDA_RUNTIME_CHECK(cudaHostUnregister(addr));
-    }
     if (handle) {
+        if (handle->registered_by_us) {
+            CUDA_RUNTIME_CHECK(cudaHostUnregister(addr));
+        }
+
         for (i = 0; i < number_of_handles; i++) {
             NVSHMEMU_HOST_PTR_FREE(handle[i].handle);
         }

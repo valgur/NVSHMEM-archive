@@ -95,7 +95,13 @@ void init_wrapper(int *c, char ***v);
 void finalize_wrapper();
 void alloc_tables(void ***table_mem, int num_tables, int num_entries_per_table);
 void free_tables(void **tables, int num_tables);
-void print_table(const char *job_name, const char *subjob_name, const char *var_name,
-                 const char *output_var, const char *units, const char plus_minus, uint64_t *size,
-                 double *value, int num_entries);
+void print_table_basic(const char *job_name, const char *subjob_name, const char *var_name,
+                       const char *output_var, const char *units, const char plus_minus,
+                       uint64_t *size, double *value, int num_entries);
+void print_table_v1(const char *job_name, const char *subjob_name, const char *var_name,
+                    const char *output_var, const char *units, const char plus_minus,
+                    uint64_t *size, double *value, int num_entries);
+void print_table_v2(const char *job_name, const char *subjob_name, const char *var_name,
+                    const char *output_var, const char *units, const char plus_minus,
+                    uint64_t *size, double **value, int num_entries);
 #endif

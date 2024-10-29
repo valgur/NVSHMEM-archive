@@ -93,8 +93,20 @@ template <typename TYPE>
 __global__ void fcollect_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
                                           size_t nelems) {
 #ifdef __CUDA_ARCH__
-    if (!blockIdx.x)
-        nvshmemi_fcollect_threadgroup<TYPE, NVSHMEMI_THREADGROUP_BLOCK>(team, dest, source, nelems);
+    nvshmem_team_t myteam = nvshmemi_device_state_d.team_pool[team]->team_dups[blockIdx.x];
+    // Divide nelems by # of blocks per grid for cases: nelems_per_block == 0 and nelems_remain !=
+    // 0, != 0 and nelems_remain != 0, != 0 and nelems_remain == 0
+    int nelems_remain = (nelems % gridDim.x);
+    int nelems_per_block = (nelems / gridDim.x);
+    int my_nelems = nelems_per_block;
+    if (blockIdx.x == gridDim.x - 1) {
+        my_nelems = nelems_per_block + nelems_remain;
+    }
+
+    if (my_nelems > 0)
+        nvshmemi_fcollect_threadgroup<TYPE, NVSHMEMI_THREADGROUP_BLOCK>(
+            myteam, dest, source + nelems_per_block * blockIdx.x,
+            nelems_per_block * blockIdx.x + nvshmemi_team_my_pe(myteam) * nelems, my_nelems);
 #endif
 }
 
@@ -105,6 +117,16 @@ __global__ void rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYP
     if (!blockIdx.x)
         nvshmemi_reduce_threadgroup<TYPE, OP, NVSHMEMI_THREADGROUP_BLOCK>(team, dest, source,
                                                                           nreduce);
+#endif
+}
+
+template <typename TYPE, rdxn_ops_t OP>
+__global__ void reducescatter_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const TYPE *source,
+                                               size_t nreduce) {
+#ifdef __CUDA_ARCH__
+    if (!blockIdx.x)
+        nvshmemi_reducescatter_threadgroup<TYPE, OP, NVSHMEMI_THREADGROUP_BLOCK>(team, dest, source,
+                                                                                 nreduce);
 #endif
 }
 

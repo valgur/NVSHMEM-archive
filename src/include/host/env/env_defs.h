@@ -35,6 +35,12 @@ NVSHMEMI_ENV_DEF(INFO, bool, false, NVSHMEMI_ENV_CAT_OPENSHMEM,
                  "Print environment variable options at startup")
 NVSHMEMI_ENV_DEF(INFO_HIDDEN, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Print hidden environment variable options at startup")
+NVSHMEMI_ENV_DEF(DISABLE_NVLS, bool, false, NVSHMEMI_ENV_CAT_OPENSHMEM,
+                 "Disable NVLS SHARP resources for collectives, even if available for platform")
+
+NVSHMEMI_ENV_DEF(DISABLE_NVLS_SHARING, bool, true, NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Disable NVLS SHARP resource sharing for user-defined teams")
+
 NVSHMEMI_ENV_DEF(SYMMETRIC_SIZE, size, (size_t)(SYMMETRIC_SIZE_DEFAULT), NVSHMEMI_ENV_CAT_OPENSHMEM,
                  "Specifies the size (in bytes) of the symmetric heap memory per PE. The resulting "
                  "size is implementation-defined and must be at least as large as the integer "
@@ -85,26 +91,44 @@ NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI, string, NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT,
 #undef NVSHMEMI_ENV_BOOTSTRAP_PMI_DEFAULT
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_PLUGIN, string, "", NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Name of the bootstrap plugin file to load when NVSHMEM_BOOTSTRAP=plugin "
-                 "is specified")
+                 "Absolute path to or name of the bootstrap plugin file to load "
+                 "when NVSHMEM_BOOTSTRAP=plugin is specified")
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_MPI_PLUGIN, string, "nvshmem_bootstrap_mpi.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP, "Name of the MPI bootstrap plugin file")
+                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Absolute path to or name of the MPI bootstrap "
+                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+                 "priorities. See `man dlopen`")
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_SHMEM_PLUGIN, string, "nvshmem_bootstrap_shmem.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP, "Name of the SHMEM bootstrap plugin file")
+                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Absolute path to or name of the SHMEM bootstrap "
+                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+                 "priorities. See `man dlopen`")
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI_PLUGIN, string, "nvshmem_bootstrap_pmi.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP, "Name of the PMI bootstrap plugin file")
+                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Absolute path to or name of the PMI bootstrap "
+                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+                 "priorities. See `man dlopen`")
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI2_PLUGIN, string, "nvshmem_bootstrap_pmi2.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP, "Name of the PMI-2 bootstrap plugin file")
+                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Absolute path to or name of the PMI-2 bootstrap "
+                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+                 "priorities. See `man dlopen`")
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_PMIX_PLUGIN, string, "nvshmem_bootstrap_pmix.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP, "Name of the PMIx bootstrap plugin file")
+                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Absolute path to or name of the PMIx bootstrap "
+                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+                 "priorities. See `man dlopen`")
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_UID_PLUGIN, string, "nvshmem_bootstrap_uid.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP, "Name of the UID bootstrap plugin file")
+                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
+                 "Absolute path to or name of the UID bootstrap "
+                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+                 "priorities. See `man dlopen`")
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_TWO_STAGE, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Ignore CUDA device setting during initialization,"
@@ -149,6 +173,10 @@ NVSHMEMI_ENV_DEF(DISABLE_CUDA_VMM, bool, NVSHMEMI_ENV_DISABLE_CUDA_VMM_DEFAULT,
 
 NVSHMEMI_ENV_DEF(DISABLE_P2P, bool, false, NVSHMEMI_ENV_CAT_OTHER,
                  "Disable P2P connectivity of GPUs even when available")
+
+NVSHMEMI_ENV_DEF(DISABLE_MNNVL, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Disable MNNVL connectivity for GPUs even when available")
+
 NVSHMEMI_ENV_DEF(IGNORE_CUDA_MPS_ACTIVE_THREAD_PERCENTAGE, bool, false, NVSHMEMI_ENV_CAT_OTHER,
                  "When doing Multi-Process Per GPU (MPG) run, full API support is available "
                  "only if sum of CUDA_MPS_ACTIVE_THREAD_PERCENTAGE of processes running on a "
@@ -157,6 +185,9 @@ NVSHMEMI_ENV_DEF(IGNORE_CUDA_MPS_ACTIVE_THREAD_PERCENTAGE, bool, false, NVSHMEMI
                  "enable it at their own risk as NVSHMEM might deadlock.")
 NVSHMEMI_ENV_DEF(CUMEM_GRANULARITY, size, (size_t)((size_t)1 << 29), NVSHMEMI_ENV_CAT_OTHER,
                  "Granularity for ``cuMemAlloc``/``cuMemCreate``")
+
+NVSHMEMI_ENV_DEF(CUMEM_HANDLE_TYPE, string, "FILE_DESCRIPTOR", NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Handle type for ``cuMemCreate``. Supported are - FABRIC or FILE_DESCRIPTOR")
 
 NVSHMEMI_ENV_DEF(BYPASS_ACCESSIBILITY_CHECK, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Bypass peer GPU accessbility checks")
@@ -168,6 +199,23 @@ NVSHMEMI_ENV_DEF(CUDA_LIMIT_STACK_SIZE, size, (size_t)(0), NVSHMEMI_ENV_CAT_OTHE
 
 /** General Collectives **/
 
+NVSHMEMI_ENV_DEF(
+    FCOLLECT_NTHREADS, int, 512, NVSHMEMI_ENV_CAT_HIDDEN,
+    "Sets number of threads per block for fcollect collective.\n"
+    "By default, if no env is set, default value is min(max_occupancy per CTA, msg size per PE).\n"
+    "If env is specified, value overrides the default irrespective of max occupancy per CTA\n")
+
+NVSHMEMI_ENV_DEF(
+    REDUCESCATTER_NTHREADS, int, 512, NVSHMEMI_ENV_CAT_HIDDEN,
+    "Sets number of threads per block for reducescatter collective.\n"
+    "By default, if no env is set, default value is min(max_occupancy per CTA, msg size per PE).\n"
+    "If env is specified, value overrides the default irrespective of max occupancy per CTA\n")
+
+NVSHMEMI_ENV_DEF(MAX_CTAS, int, 1, NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Sets number of blocks per grid for host onstream collective.\n"
+                 "By default, if no env is set, default value to 1 CTA\n"
+                 "If env is specified, value overrides the default value\n")
+
 NVSHMEMI_ENV_DEF(DISABLE_NCCL, bool, false, NVSHMEMI_ENV_CAT_COLLECTIVES,
                  "Disable use of NCCL for collective operations")
 NVSHMEMI_ENV_DEF(BARRIER_DISSEM_KVAL, int, 2, NVSHMEMI_ENV_CAT_COLLECTIVES,
@@ -178,17 +226,45 @@ NVSHMEMI_ENV_DEF(REDUCE_RECEXCH_KVAL, int, 2, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Radix of the recursive exchange reduction algorithm")
 NVSHMEMI_ENV_DEF(FCOLLECT_LL_THRESHOLD, size, (size_t)(1 << 11), NVSHMEMI_ENV_CAT_COLLECTIVES,
                  "Message size threshold up to which "
-                 "fcollect LL algo will be used")
+                 "fcollect LL algo will be used\n")
+NVSHMEMI_ENV_DEF(FCOLLECT_LL128_THRESHOLD, size, (size_t)(0), NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Message size threshold up to which "
+                 "the fcollect LL128 algo will be used.\n"
+                 "LL128 will be used only when FCOLLECT_LL_THRESHOLD < size")
+NVSHMEMI_ENV_DEF(FCOLLECT_NVLS_THRESHOLD, size, (size_t)(1 << 24), NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Message size threshold up to which "
+                 "fcollect NVLS algo will be used\n")
+NVSHMEMI_ENV_DEF(REDUCESCATTER_NVLS_THRESHOLD, size, (size_t)(1 << 24), NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Message size threshold up to which "
+                 "reducescatter NVLS algo will be used\n")
+
+/* Size = 1 << 19 to manage 2*16B*8GPUs*2M bytes of scratchpad space for reductions */
+NVSHMEMI_ENV_DEF(
+    REDUCE_SCRATCH_SIZE, size, (size_t)(1 << 19), NVSHMEMI_ENV_CAT_COLLECTIVES,
+    "Amount of symmetric heap memory (minimum 16B, multiple of 8B) reserved by runtime "
+    "for every team to implement reduce and reducescatter collectives\n")
+
 NVSHMEMI_ENV_DEF(BCAST_TREE_KVAL, int, 2, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Radix of the broadcast tree algorithm")
 NVSHMEMI_ENV_DEF(BCAST_ALGO, int, 0, NVSHMEMI_ENV_CAT_COLLECTIVES,
                  "Broadcast algorithm to be used.\n"
                  "  * 0 - use default algorithm selection strategy\n")
+NVSHMEMI_ENV_DEF(FCOLLECT_ALGO, int, 0, NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Fcollect algorithm to be used. \n"
+                 "  * 0 - use default algorithm selection strategy\n")
+
+NVSHMEMI_ENV_DEF(REDUCE_ALGO, int, 0, NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Allreduce algorithm to be used. \n"
+                 "   * 0 - use default algorithm selection strategy\n")
+
 NVSHMEMI_ENV_DEF(REDMAXLOC_ALGO, int, 1, NVSHMEMI_ENV_CAT_COLLECTIVES,
-                 "Reduction algorithm to be used.\n"
+                 "Reduction algorithm to be used for MAXLOC operation.\n"
                  "  * 1 - default, flag alltoall algorithm\n"
                  "  * 2 - flat reduce + flat bcast\n"
                  "  * 3 - topo-aware two-level reduce + topo-aware bcast\n")
+NVSHMEMI_ENV_DEF(REDUCESCATTER_ALGO, int, 0, NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Reduce Scatter algorithm to be used. \n"
+                 "  * 0 - use default algorithm selection strategy\n")
 
 /** Transport **/
 

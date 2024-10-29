@@ -136,8 +136,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table("shmem_at_ping_lat", "None", "size (Bytes)", "latency", "us", '-', h_size_arr,
-                    h_lat, i);
+        print_table_v1("shmem_at_ping_lat", "None", "size (Bytes)", "latency", "us", '-',
+                       h_size_arr, h_lat, i);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());

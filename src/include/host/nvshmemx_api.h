@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -43,11 +43,12 @@ enum flags {
     NVSHMEMX_INIT_MAX = 1 << 31
 };
 
-// Local buffer registration
+// Heap management extensions
 int nvshmemx_buffer_register(void *addr, size_t length);
 int nvshmemx_buffer_unregister(void *addr);
 void nvshmemx_buffer_unregister_all();
 
+// Initialization & Finalization extensions
 int nvshmemx_hostlib_init_attr(unsigned int flags, nvshmemx_init_attr_t *attr);
 void nvshmemx_hostlib_finalize();
 

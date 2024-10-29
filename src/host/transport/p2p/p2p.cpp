@@ -176,6 +176,42 @@ int nvshmemt_p2p_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
         }
     }
 
+    if (nvshmemi_state->is_platform_nvl) {
+        status = snprintf(remote_pcie_bus_id, NVSHMEM_PCIE_BDF_BUFFER_LEN, "%x:%x:%x.0",
+                          peer_info->pcie_id.domain_id, peer_info->pcie_id.bus_id,
+                          peer_info->pcie_id.dev_id);
+        if (status < 0 || status > NVSHMEM_PCIE_BDF_BUFFER_LEN) {
+            INFO(NVSHMEM_TRANSPORT, "Unable to prepare buffer for NVML device detection.\n");
+            nvshmemi_state->is_platform_nvl = false;
+            goto out;
+        }
+
+        status = 0;
+
+        nvml_status =
+            nvml_ftable->nvmlDeviceGetHandleByPciBusId(remote_pcie_bus_id, &remote_device);
+        if (nvml_status != NVML_SUCCESS) {
+            INFO(NVSHMEM_TRANSPORT,
+                 "Unable to dereference device by UUID using NVML for NVL check.\n");
+            nvshmemi_state->is_platform_nvl = false;
+            goto out;
+        }
+        nvml_status =
+            nvml_ftable->nvmlDeviceGetHandleByPciBusId(p2p_state->pcie_bdf, &local_device);
+        if (nvml_status != NVML_SUCCESS) {
+            INFO(NVSHMEM_TRANSPORT,
+                 "Unable to dereference device by UUID using NVML for NVL check.\n");
+            nvshmemi_state->is_platform_nvl = false;
+            goto out;
+        }
+
+        nvml_status = nvml_ftable->nvmlDeviceGetP2PStatus(local_device, remote_device,
+                                                          NVML_P2P_CAPS_INDEX_NVLINK, &stat);
+        if (nvml_status != NVML_SUCCESS || stat != NVML_P2P_STATUS_OK) {
+            nvshmemi_state->is_platform_nvl = false;
+        }
+    }
+
 out:
     return status;
 }

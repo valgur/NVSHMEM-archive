@@ -18,14 +18,6 @@
 /host/pt-to-pt/bw
 /host/pt-to-pt/latency
 /host/pt-to-pt/stream_latency
-/host/coll/barrier_all
-/host/coll/barrier
-/host/coll/sync_all
-/host/coll/sync
-/host/coll/alltoall
-/host/coll/broadcast
-/host/coll/fcollect
-/host/coll/reduction
 /host/coll/barrier_all_on_stream
 /host/coll/barrier_on_stream
 /host/coll/sync_all_on_stream

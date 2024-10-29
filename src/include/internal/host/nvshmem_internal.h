@@ -90,6 +90,8 @@ typedef struct nvshmemi_session {
 } nvshmemi_session_t;
 
 extern struct nvshmemi_cuda_fn_table *nvshmemi_cuda_syms;
+extern int nvshmemi_can_use_cuda_64_bit_stream_memops;
+extern int nvshmemi_can_flush_remote_writes;
 extern uint64_t *nvshmemi_host_hashes;
 extern nvshmem_options_t nvshmem_options;
 extern int nvshmemi_cuda_driver_version;

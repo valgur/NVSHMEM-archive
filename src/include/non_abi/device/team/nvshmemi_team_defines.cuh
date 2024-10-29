@@ -1,6 +1,7 @@
 #ifndef _NVSHMEMI_TEAM_DEFINES_CUH_
 #define _NVSHMEMI_TEAM_DEFINES_CUH_
 
+#include "device_host/nvshmem_common.cuh"
 #include <cuda_runtime.h>
 
 #ifdef __CUDA_ARCH__
@@ -36,11 +37,22 @@ static inline __device__ size_t get_fcollect_psync_len_per_team() {
     return fcollect_sync_size;
 }
 
+static inline __device__ size_t get_fcollect_ll128_psync_len_per_team() {
+    size_t fcollect_ll128_threshold =
+        nvshmemi_device_state_d.gpu_coll_env_params_var.fcollect_ll128_threshold;
+    size_t fcollect_ll128_sync_size =
+        NVSHMEMI_FCOLLECT_LL128_CALC_PSYNC_SIZE(fcollect_ll128_threshold, char);
+
+    /* scale for npes and two separate psyncs */
+    fcollect_ll128_sync_size =
+        fcollect_ll128_sync_size * 2 * nvshmemi_device_state_d.npes / sizeof(long);
+
+    return fcollect_ll128_sync_size;
+}
+
 static inline __device__ size_t get_psync_len_per_team() {
-    size_t fcollect_ll_threshold =
-        nvshmemi_device_state_d.gpu_coll_env_params_var.fcollect_ll_threshold;
-    size_t fcollect_sync_size =
-        (2 * 2 * nvshmemi_device_state_d.npes * fcollect_ll_threshold) / sizeof(long);
+    size_t fcollect_sync_size = get_fcollect_psync_len_per_team();
+    size_t fcollect_ll128_sync_size = get_fcollect_ll128_psync_len_per_team();
     /* sync: Two buffers are used - one for sync/barrier collective ops, the second one during team
        split operation reduce: Two pWrk's are used alternatively across consecutive reduce calls,
        this is to avoid having to put a barrier in between bcast: The buffer is split to do multiple
@@ -49,8 +61,10 @@ static inline __device__ size_t get_psync_len_per_team() {
        same way as in reduce. The other fator of 2 is because when using LL double the space is
        needed to fuse flag with data */
 
-    return (2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE +
-            NVSHMEMI_BCAST_SYNC_SIZE + fcollect_sync_size + 2 * NVSHMEMI_ALLTOALL_SYNC_SIZE);
+    return (2 * NVSHMEMI_SYNC_SIZE +
+            nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size / sizeof(long) +
+            NVSHMEMI_BCAST_SYNC_SIZE + fcollect_sync_size + 2 * NVSHMEMI_ALLTOALL_SYNC_SIZE +
+            fcollect_ll128_sync_size);
 }
 
 __device__ static inline int nvshmemi_pe_in_active_set(int global_pe, int PE_start, int PE_stride,
@@ -92,17 +106,32 @@ __device__ inline long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_
         case SYNC:
             return team_psync;
         case REDUCE:
-            return &team_psync[2 * NVSHMEMI_SYNC_SIZE +
-                               (NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE * (team->rdxn_count % 2))];
+            return &team_psync
+                [2 * NVSHMEMI_SYNC_SIZE +
+                 (((nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size / 2) /
+                   sizeof(long)) *
+                  (team->rdxn_count % 2))];
         case BCAST:
-            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE];
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE +
+                               nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size /
+                                   sizeof(long)];
         case FCOLLECT:
-            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE +
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE +
+                               nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size /
+                                   sizeof(long) +
                                NVSHMEMI_BCAST_SYNC_SIZE];
         case ALLTOALL:
-            return &team_psync[2 * NVSHMEMI_SYNC_SIZE + 2 * NVSHMEMI_REDUCE_MIN_WRKDATA_SIZE +
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE +
+                               nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size /
+                                   sizeof(long) +
                                NVSHMEMI_BCAST_SYNC_SIZE + psync_fcollect_len +
                                (NVSHMEMI_ALLTOALL_SYNC_SIZE * (team->alltoall_count % 2))];
+        case FCOLLECT_128:
+            return &team_psync[2 * NVSHMEMI_SYNC_SIZE +
+                               nvshmemi_device_state_d.gpu_coll_env_params_var.reduce_scratch_size /
+                                   sizeof(long) +
+                               NVSHMEMI_BCAST_SYNC_SIZE + psync_fcollect_len +
+                               2 * NVSHMEMI_ALLTOALL_SYNC_SIZE];
         default:
             printf("Incorrect argument to nvshmemi_team_get_psync\n");
             return NULL;

@@ -1,12 +1,46 @@
 # this requires cmake 3.19
 include(CheckCompilerFlag)
 include(CheckSourceCompiles)
+include(ExternalProject)
 
 check_compiler_flag(CUDA -t4 NVCC_THREADS)
 
 set(BOOTSTRAP_VERSION_MAJOR 3)
 set(BOOTSTRAP_VERSION_MINOR 0)
 set(BOOTSTRAP_VERSION_PATCH 0)
+
+ExternalProject_Add(nvshmem_device_project
+                    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/device
+                    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/device
+                    CMAKE_ARGS  -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+                                -DNVSHMEM_PREFIX=${NVSHMEM_PREFIX}
+                                -DNVSHMEM_DEBUG=${NVSHMEM_DEBUG}
+                                -DNVSHMEM_DEVICELIB_CUDA_HOME=${NVSHMEM_DEVICELIB_CUDA_HOME}
+                                -DNVSHMEM_ENABLE_ALL_DEVICE_INLINING=${NVSHMEM_ENABLE_ALL_DEVICE_INLINING}
+                                -DPROJECT_VERSION=${PROJECT_VERSION}
+                    CMAKE_CACHE_ARGS -DCMAKE_CUDA_ARCHITECTURES:STRING=${CMAKE_CUDA_ARCHITECTURES}
+                    STEP_TARGETS build install
+                    BUILD_ALWAYS TRUE
+                    BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.a
+                    )
+
+add_library(nvshmem_device STATIC IMPORTED)
+set_property(TARGET nvshmem_device PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.a)
+
+if(NVSHMEM_BUILD_EXAMPLES)
+set(NVSHMEM_EXAMPLES_RELEASE_PREFIX "bin/examples")
+  add_subdirectory(${CMAKE_SOURCE_DIR}/examples ${CMAKE_SOURCE_DIR}/build/examples)
+endif()
+if(NVSHMEM_BUILD_TESTS)
+  set(NVSHMEM_PERFTEST_RELEASE_PREFIX "bin/perftest")
+  add_subdirectory(${CMAKE_SOURCE_DIR}/perftest ${CMAKE_SOURCE_DIR}/build/perftest)
+  if(EXISTS ${CMAKE_SOURCE_DIR}/test)
+    if (NVSHMEM_INSTALL_FUNCTIONAL_TESTS)
+      set(NVSHMEM_TEST_RELEASE_PREFIX "bin/test")
+    endif()
+    add_subdirectory(${CMAKE_SOURCE_DIR}/test ${CMAKE_SOURCE_DIR}/build/test)
+  endif()
+endif()
 
 # Start bootstrap definitions
 add_library(
@@ -122,10 +156,6 @@ add_library(
   nvshmem STATIC
 )
 
-add_library(
-  nvshmem_device STATIC
-)
-
 set(INTERLIB_VERSION_MAJOR 3)
 set(INTERLIB_VERSION_MINOR 0)
 set(INTERLIB_VERSION_PATCH 0)
@@ -135,7 +165,7 @@ add_library(
 )
 
 ## Start generic variable configuration
-set_target_properties(nvshmem nvshmem_host nvshmem_device
+set_target_properties(nvshmem nvshmem_host
                       PROPERTIES POSITION_INDEPENDENT_CODE ON
                       CXX_STANDARD_REQUIRED ON
                       CUDA_STANDARD_REQUIRED ON
@@ -175,7 +205,8 @@ macro(nvshmem_library_set_base_config LIBNAME)
               -Wall
               -Wextra
               -Wno-unused-function
-              -Wno-unused-parameter>
+              -Wno-unused-parameter
+              -Wno-missing-field-initializers>
     )
   endif()
 endmacro()
@@ -201,6 +232,13 @@ set(NVSHMEM_HOST_SOURCES_NOMAXREGCOUNT
     host/stream/coll/rdxn/reduce_prod.cu
     host/stream/coll/rdxn/reduce_sum.cu
     host/stream/coll/rdxn/reduce_team.cu
+    host/stream/coll/reducescatter/reducescatter_and.cu
+    host/stream/coll/reducescatter/reducescatter_or.cu
+    host/stream/coll/reducescatter/reducescatter_xor.cu
+    host/stream/coll/reducescatter/reducescatter_min.cu
+    host/stream/coll/reducescatter/reducescatter_max.cu
+    host/stream/coll/reducescatter/reducescatter_prod.cu
+    host/stream/coll/reducescatter/reducescatter_sum.cu
 )
 
 set(NVSHMEM_HOST_SOURCES
@@ -217,6 +255,8 @@ set(NVSHMEM_HOST_SOURCES
     host/coll/fcollect/fcollect_on_stream.cpp
     host/coll/rdxn/rdxn.cpp
     host/coll/rdxn/rdxn_on_stream.cpp
+    host/coll/reducescatter/reducescatter.cpp
+    host/coll/reducescatter/reducescatter_on_stream.cpp
     host/comm/putget.cpp
     host/comm/fence.cpp
     host/comm/quiet.cpp
@@ -236,6 +276,7 @@ set(NVSHMEM_HOST_SOURCES
     host/team/team.cu
     host/team/team_internal.cpp
     host/team/team_internal_cuda.cu
+    host/team/team_internal_nvls.cpp
     host/topo/topo.cpp
     host/util/cs.cpp
     host/util/debug.cpp
@@ -257,15 +298,6 @@ target_include_directories(
 )
 
 target_include_directories(
-  nvshmem_device
-  PRIVATE include
-          host/coll
-          host/stream/coll
-  INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-            $<INSTALL_INTERFACE:include>
-)
-
-target_include_directories(
   nvshmem_host
   PRIVATE include
           include/host/env
@@ -278,11 +310,9 @@ target_include_directories(
 )
 
 target_link_libraries(nvshmem PRIVATE CUDA::cudart_static)
-target_link_libraries(nvshmem_device PRIVATE CUDA::cudart_static)
 target_link_libraries(nvshmem_host PRIVATE CUDA::cudart_static)
 nvshmem_library_set_base_config(nvshmem)
 nvshmem_library_set_base_config(nvshmem_host)
-nvshmem_library_set_base_config(nvshmem_device)
 ## End generic variable configuration
 
 ## Start transports
@@ -383,6 +413,11 @@ if(NVSHMEM_IBGDA_SUPPORT)
     int main(void) { int x = MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED; return 1; }"
     HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED
   )
+  check_source_compiles(C
+    "#include <infiniband/mlx5dv.h>
+    int main(void) { int x = MLX5DV_UMEM_MASK_DMABUF; return 1; }"
+    HAVE_MLX5DV_UMEM_MASK_DMABUF
+  )
   add_library(
     nvshmem_transport_ibgda SHARED
   )
@@ -408,6 +443,9 @@ if(NVSHMEM_IBGDA_SUPPORT)
   endif()
   if(HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED)
     target_compile_definitions(nvshmem_transport_ibgda PRIVATE HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED=${HAVE_MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED})
+  endif()
+  if(HAVE_MLX5DV_UMEM_MASK_DMABUF)
+      target_compile_definitions(nvshmem_transport_ibgda PRIVATE HAVE_MLX5DV_UMEM_MASK_DMABUF=${HAVE_MLX5DV_UMEM_MASK_DMABUF})
   endif()
   if(HAVE_IBV_ACCESS_RELAXED_ORDERING)
     target_compile_definitions(nvshmem_transport_ibgda PRIVATE HAVE_IBV_ACCESS_RELAXED_ORDERING=${HAVE_IBV_ACCESS_RELAXED_ORDERING})
@@ -454,7 +492,6 @@ set_target_properties(${ACTIVE_TRANSPORTS}
 if(NVSHMEM_USE_NCCL)
   target_include_directories(nvshmem PRIVATE ${NCCL_INCLUDE})
   target_include_directories(nvshmem_host PRIVATE ${NCCL_INCLUDE})
-  target_include_directories(nvshmem_device PRIVATE ${NCCL_INCLUDE})
 endif()
 
 if(NVSHMEM_USE_DLMALLOC)
@@ -496,7 +533,6 @@ target_link_options(nvshmem_host PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_S
 set_source_files_properties(${NVSHMEM_HOST_SOURCES} ${NVSHMEM_DEVICE_SOURCES} PROPERTIES COMPILE_OPTIONS $<$<COMPILE_LANGUAGE:CUDA>:--maxrregcount=32>)
 target_sources(nvshmem PRIVATE ${NVSHMEM_HOST_SOURCES} ${NVSHMEM_HOST_SOURCES_NOMAXREGCOUNT} ${NVSHMEM_DEVICE_SOURCES} ${NVSHMEM_DEVICE_SOURCES_NOMAXREGCOUNT})
 target_sources(nvshmem_host PRIVATE ${NVSHMEM_HOST_SOURCES} ${NVSHMEM_HOST_SOURCES_NOMAXREGCOUNT})
-target_sources(nvshmem_device PRIVATE ${NVSHMEM_DEVICE_SOURCES} ${NVSHMEM_DEVICE_SOURCES_NOMAXREGCOUNT})
 
 add_library(NVSHMEM::nvshmem ALIAS nvshmem)
 
@@ -535,6 +571,7 @@ set(INCEXPORTS
     non_abi/device/coll/defines.cuh
     non_abi/device/coll/fcollect.cuh
     non_abi/device/coll/reduce.cuh
+    non_abi/device/coll/reducescatter.cuh
     non_abi/device/coll/utils.cuh
     non_abi/device/wait/nvshmemi_wait_until_apis.cuh
     non_abi/device/pt-to-pt/ibgda_device.cuh
@@ -584,7 +621,7 @@ set(SHAREEXPORTS
 
 foreach(SHARE ${SHAREEXPORTS})
   get_filename_component(SHAREFILE ${SHARE} NAME)
-  configure_file(${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/bootstrap-plugins/${SHARE} COPYONLY)
+  configure_file(${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/bootstrap-plugins/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREEXPORTS})
 
 set(SHAREINCEXPORTS
@@ -593,7 +630,7 @@ set(SHAREINCEXPORTS
 )
 
 foreach(SHARE ${SHAREINCEXPORTS})
-  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/bootstrap-plugins/${SHARE} COPYONLY)
+  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/bootstrap-plugins/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREINCEXPORTS})
 
 set(TRANSPORTINCEXPORTS
@@ -603,7 +640,7 @@ set(TRANSPORTINCEXPORTS
 )
 
 foreach(SHARE ${TRANSPORTINCEXPORTS})
-  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/transport-plugins/common/${SHARE} COPYONLY)
+  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/transport-plugins/common/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREEXPORTS})
 
 set(TRANSPORTEXPORTS
@@ -628,7 +665,7 @@ set(TRANSPORTEXPORTS
 )
 
 foreach(SHARE ${TRANSPORTEXPORTS})
-  configure_file(modules/transport/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/transport-plugins/${SHARE} COPYONLY)
+  configure_file(modules/transport/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/transport-plugins/${SHARE} COPYONLY)
 endforeach(SHARE ${SHAREEXPORTS})
 
 # end share configuration
@@ -641,14 +678,14 @@ add_custom_target(git_commit ALL COMMAND test -f git_commit.txt || git rev-parse
                   COMMAND grep -q NVSHMEM_PACKAGE git_commit.txt || echo "NVSHMEM_PACKAGE := ${PROJECT_VERSION_TWEAK}" >> git_commit.txt
                   COMMAND cp git_commit.txt version.txt
                   BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt
-                             ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt
+                             ${CMAKE_CURRENT_SOURCE_DIR}/../version.txt
                   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 if(NVSHMEM_BUILD_PACKAGES)
   add_custom_target(hydra
                     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/install_hydra.sh ${CMAKE_CURRENT_SOURCE_DIR}/hydra_build ${CMAKE_CURRENT_BINARY_DIR}
                     COMMAND rm -rf ${CMAKE_CURRENT_SOURCE_DIR}/hydra_build
-		    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/bin/hydra_nameserver
+                    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/bin/hydra_nameserver
                                ${CMAKE_CURRENT_BINARY_DIR}/bin/hydra_persist
                                ${CMAKE_CURRENT_BINARY_DIR}/bin/hydra_pmi_proxy
                                ${CMAKE_CURRENT_BINARY_DIR}/bin/nvshmrun
@@ -656,10 +693,11 @@ if(NVSHMEM_BUILD_PACKAGES)
                   )
   add_dependencies(nvshmem git_commit hydra)
 endif()
+add_dependencies(nvshmem_host nvshmem_device_project-build)
 
 # Start Installation definitions
 install(
-	TARGETS nvshmem nvshmem_host nvshmem_device nvshmem-info ${ACTIVE_BOOTSTRAPS} ${ACTIVE_TRANSPORTS}
+	TARGETS nvshmem nvshmem_host nvshmem-info ${ACTIVE_BOOTSTRAPS} ${ACTIVE_TRANSPORTS}
   EXPORT NVSHMEMTargets
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
@@ -668,6 +706,35 @@ install(
   DESTINATION include
   PUBLIC_HEADER DESTINATION include
 )
+
+install(
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.a
+  DESTINATION lib/
+  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+              GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+)
+
+install(
+  FILES ${CMAKE_BINARY_DIR}/lib/cmake/nvshmem/NVSHMEMDeviceTargets.cmake
+  DESTINATION lib/cmake/nvshmem/
+  PERMISSIONS OWNER_READ OWNER_WRITE
+              GROUP_READ WORLD_READ
+)
+
+install(
+  FILES ${CMAKE_BINARY_DIR}/lib/cmake/nvshmem/NVSHMEMDeviceTargets-${CMAKE_BUILD_TYPE}.cmake
+  DESTINATION lib/cmake/nvshmem/
+  PERMISSIONS OWNER_READ OWNER_WRITE
+              GROUP_READ WORLD_READ
+)
+
+install(
+  DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/
+  DESTINATION lib
+  FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                   GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+)
+
 install(
   DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin/
   DESTINATION bin
@@ -675,8 +742,8 @@ install(
                    GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 install(
-  DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/share/nvshmem/src/
-  DESTINATION share/nvshmem/src/
+  DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/share/src/
+  DESTINATION share/src/
 )
 install(
   DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/
@@ -685,30 +752,26 @@ install(
 )
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../examples/
-  DESTINATION examples/
+  DESTINATION share/src/examples/
   PATTERN "examples_install" EXCLUDE
 )
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../perftest/
-  DESTINATION perftest/
+  DESTINATION share/src/perftest/
   PATTERN "perftest_install" EXCLUDE
+  PATTERN "perftestCommon.py" EXCLUDE
+  PATTERN "perftest-ib.list" EXCLUDE
+  PATTERN "perftest-p2p.list" EXCLUDE
+  PATTERN "perftestRunner.py" EXCLUDE
+  PATTERN "perfTestRunnerSlurm.py" EXCLUDE
 )
-install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/install_hydra.sh
-  DESTINATION scripts
-  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
-              GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-)
+
 install(
   FILES ${CMAKE_CURRENT_SOURCE_DIR}/../changelog
   DESTINATION ./
 )
 install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/../COPYRIGHT.txt
-  DESTINATION ./
-)
-install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/../NVSHMEM-SLA.txt
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/../License.txt
   DESTINATION ./
 )
 install(
@@ -718,7 +781,13 @@ install(
 )
 include(CMakePackageConfigHelpers)
 
-list(APPEND CPACK_GENERATOR "TXZ")
+if(NVSHMEM_BUILD_TGZ_PACKAGE)
+  list(APPEND CPACK_GENERATOR "TGZ")
+endif()
+
+if(NVSHMEM_BUILD_TXZ_PACKAGE)
+  list(APPEND CPACK_GENERATOR "TXZ")
+endif()
 
 if(NVSHMEM_BUILD_RPM_PACKAGE)
   list(APPEND CPACK_GENERATOR "RPM")
@@ -756,17 +825,22 @@ set(CPACK_SOURCE_IGNORE_FILES
 /include/non_abi/nvshmem_build_options.h$;\
 /include/non_abi/nvshmem_version.h$;\
 /perftest/perftest_install/;\
+/test/test_install/;
 /scripts/cronjob_peak.sh;\
 /scripts/cronjob_prom.sh;\
 /scripts/cronjob_psg.sh;\
 /scripts/cronjob_pwr0x.sh;\
 /scripts/dependency_installer.sh;\
+/scripts/locate_package_dir.sh;\
 /scripts/run_dev_coll.sh;\
 /scripts/run_perf.sh;\
 /scripts/run_tests.sh;\
 /scripts/testrunner.pl;\
-/src/build/;\
-/test/;")
+/src/build/;")
+
+if(NOT NVSHMEM_INSTALL_FUNCTIONAL_TESTS)
+  set(CPACK_SOURCE_IGNORE_FILES ${CPACK_SOURCE_IGNORE_FILES}"/test/;")
+endif()
 
 
 set(CPACK_PACKAGE_NAME "libnvshmem")
@@ -779,7 +853,7 @@ set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 set(CPACK_PACKAGE_FILE_NAME "libnvshmem_${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}-${PROJECT_VERSION_TWEAK}+cuda${CUDAToolkit_VERSION_MAJOR}.${CUDAToolkit_VERSION_MINOR}_${PACKAGE_SUFFIX}")
 set(CPACK_SOURCE_PACKAGE_FILE_NAME "nvshmem_src_${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}-${PROJECT_VERSION_TWEAK}")
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/../NVSHMEM-SLA.txt")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/../License.txt")
 set(CPACK_PACKAGE_CONTACT "nvshmem@nvidia.com")
 
 # RPM-Specific Configurations

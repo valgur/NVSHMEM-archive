@@ -12,6 +12,9 @@
 
 #include "utils.h"
 #include <stdlib.h>
+#include <sstream>
+#include <vector>
+#include <tuple>
 
 double *d_latency = NULL;
 double *d_avg_time = NULL;
@@ -249,15 +252,73 @@ void free_tables(void **tables, int num_tables) {
     CUDA_CHECK(cudaFreeHost(tables));
 }
 
-void print_table(const char *job_name, const char *subjob_name, const char *var_name,
-                 const char *output_var, const char *units, const char plus_minus, uint64_t *size,
-                 double *value, int num_entries) {
+uint64_t get_coll_info(double *algBw, double *busBw, const char *job_name, uint64_t size,
+                       double usec, int npes) {
+    double baseBw, factor;
+    // size == count * typesize
+    // convert to seconds
+    double sec = usec / 1.0E6;
+    uint64_t total_bytes = 0;
+
+    if (strcmp(job_name, "reduction") == 0 || strcmp(job_name, "reduction_on_stream") == 0 ||
+        strcmp(job_name, "device_reduction") == 0) {
+        baseBw = (double)(size) / 1.0E9 / sec;
+        factor = ((double)2 * (npes - 1)) / ((double)(npes));
+        total_bytes = size;
+    } else if (strcmp(job_name, "broadcast") == 0 || strcmp(job_name, "broadcast_on_stream") == 0 ||
+               strcmp(job_name, "bcast_device") == 0) {
+        baseBw = (double)(size) / 1.0E9 / sec;
+        factor = 1;
+        total_bytes = size;
+    } else if (strcmp(job_name, "alltoall") == 0 || strcmp(job_name, "alltoall_on_stream") == 0 ||
+               strcmp(job_name, "alltoall_device") == 0 || strcmp(job_name, "fcollect") == 0 ||
+               strcmp(job_name, "fcollect_on_stream") == 0 ||
+               strcmp(job_name, "fcollect_device") == 0 || strcmp(job_name, "reducescatter") == 0 ||
+               strcmp(job_name, "reducescatter_on_stream") == 0 ||
+               strcmp(job_name, "device_reducescatter") == 0) {
+        baseBw = (double)(size * npes) / 1.0E9 / sec;
+        factor = ((double)(npes - 1)) / ((double)(npes));
+        total_bytes = size * npes;
+    } else {
+        printf("Job Name %s bandwidth factor not set. Using 1 values for bw.\n", job_name);
+        *algBw = 1;
+        *busBw = 1;
+        return size;
+    }
+    *algBw = baseBw;
+    *busBw = baseBw * factor;
+    return total_bytes;
+}
+
+tuple<double, double, double> get_latency_metrics(double *values) {
+    double min, max, sum;
+    int i = 0;
+    min = max = values[0];
+    sum = 0.0;
+
+    while (values[i] != 0.00) {
+        auto v = values[i];
+        if (v < min) {
+            min = v;
+        }
+        if (v > max) {
+            max = v;
+        }
+        sum += v;
+        i++;
+    }
+    double avg = (double)sum / i;
+    return make_tuple(avg, min, max);
+}
+
+void print_table_basic(const char *job_name, const char *subjob_name, const char *var_name,
+                       const char *output_var, const char *units, const char plus_minus,
+                       uint64_t *size, double *value, int num_entries) {
     bool machine_readable = false;
     char *env_value = getenv("NVSHMEM_MACHINE_READABLE_OUTPUT");
     if (env_value) machine_readable = atoi(env_value);
     int i;
 
-    /* Used for automated test output. It outputs the data in a non human-friendly format. */
     if (machine_readable) {
         printf("%s\n", job_name);
         for (i = 0; i < num_entries; i++) {
@@ -267,17 +328,157 @@ void print_table(const char *job_name, const char *subjob_name, const char *var_
             }
         }
     } else {
-        printf("+------------------------+----------------------+\n");
-        printf("| %-22s | %-20s |\n", job_name, subjob_name);
-        printf("+------------------------+----------------------+\n");
-        printf("| %-22s | %10s %-9s |\n", var_name, output_var, units);
-        printf("+------------------------+----------------------+\n");
+        printf("#%10s\n", job_name);
+        printf("%-10s  %-8s  %-16s\n", "size(B)", "scope", "latency(us)");
         for (i = 0; i < num_entries; i++) {
             if (size[i] != 0 && value[i] != 0.00) {
-                printf("| %-22.1lu | %-20.6lf |\n", size[i], value[i]);
-                printf("+------------------------+----------------------+\n");
+                printf("%-10lu  %-8s  %-16.6lf", size[i], subjob_name, value[i]);
+                printf("\n");
             }
         }
     }
-    printf("\n\n");
+}
+
+void print_table_v1(const char *job_name, const char *subjob_name, const char *var_name,
+                    const char *output_var, const char *units, const char plus_minus,
+                    uint64_t *size, double *value, int num_entries) {
+    bool machine_readable = false;
+    char *env_value = getenv("NVSHMEM_MACHINE_READABLE_OUTPUT");
+    if (env_value) machine_readable = atoi(env_value);
+    int i;
+
+    int npes = nvshmem_n_pes();
+    double avg, algbw, busbw, avgBusBw = 0;
+
+    char **tokens = (char **)malloc(3 * sizeof(char *));
+    const char *delim = "-";
+    char copy[strlen(subjob_name) + 1];
+    strcpy(copy, subjob_name);
+    char *token = strtok(copy, delim);
+    i = 0;
+    while (token != NULL) {
+        tokens[i] = strdup(token);
+        token = strtok(NULL, delim);
+        i++;
+    }
+    /* Used for automated test output. It outputs the data in a non human-friendly format. */
+    if (machine_readable) {
+        printf("%s\n", job_name);
+        for (i = 0; i < num_entries; i++) {
+            if (size[i] != 0 && value[i] != 0.00) {
+                printf("&&&& PERF %s___%s___size__%lu___%s %lf %c%s\n", job_name, subjob_name,
+                       size[i], output_var, value[i], plus_minus, units);
+            }
+        }
+    } else if (strcmp(job_name, "device_reduction") == 0 ||
+               strcmp(job_name, "device_reducescatter") == 0) {
+        printf("#%10s\n", job_name);
+        printf("%-10s  %-8s  %-8s  %-8s  %-16s  %-12s  %-12s\n", "size(B)", "type", "redop",
+               "scope", "latency(us)", "algbw(GB/s)", "busbw(GB/s)");
+        for (i = 0; i < num_entries; i++) {
+            if (size[i] != 0 && value[i] != 0.00) {
+                avg = value[i];
+                uint64_t total_bytes = get_coll_info(&algbw, &busbw, job_name, size[i], avg, npes);
+                avgBusBw += busbw;
+                printf("%-10lu  %-8s  %-8s  %-8s  %-16.6lf  %-12.3lf  %-12.3lf", total_bytes,
+                       tokens[0], tokens[1], tokens[2], avg, algbw, busbw);
+                printf("\n");
+            }
+        }
+
+    } else {
+        // recombine first two tokens of subjob_name
+        char type[strlen(subjob_name)];
+        strcpy(type, subjob_name);
+        char *last_delim = strrchr(type, '-');
+        if (last_delim != NULL) *last_delim = '\0';
+        printf("#%10s\n", job_name);
+        printf("%-10s  %-8s  %-8s  %-16s  %-12s  %-12s\n", "size(B)", "type", "scope",
+               "latency(us)", "algbw(GB/s)", "busbw(GB/s)");
+        for (i = 0; i < num_entries; i++) {
+            if (size[i] != 0 && value[i] != 0.00) {
+                avg = value[i];
+                uint64_t total_bytes = get_coll_info(&algbw, &busbw, job_name, size[i], avg, npes);
+                avgBusBw += busbw;
+                printf("%-10lu  %-8s  %-8s  %-16.6lf  %-12.3lf  %-12.3lf", total_bytes, type,
+                       tokens[2], avg, algbw, busbw);
+                printf("\n");
+            }
+        }
+    }
+    avgBusBw = avgBusBw / num_entries;
+    printf("\n# Avg bus bandwidth    : %g\n\n", avgBusBw);
+}
+
+void print_table_v2(const char *job_name, const char *subjob_name, const char *var_name,
+                    const char *output_var, const char *units, const char plus_minus,
+                    uint64_t *size, double **values, int num_entries) {
+    bool machine_readable = false;
+    char *env_value = getenv("NVSHMEM_MACHINE_READABLE_OUTPUT");
+    if (env_value) machine_readable = atoi(env_value);
+    int i;
+
+    int npes = nvshmem_n_pes();
+    double avgBusBw = 0;
+    double avg, min, max, algbw, busbw = 0;
+
+    /* Used for automated test output. It outputs the data in a non human-friendly format. */
+    if (machine_readable) {
+        printf("%s\n", job_name);
+        for (i = 0; i < num_entries; i++) {
+            auto value = values[i];
+            tie(avg, min, max) = get_latency_metrics(value);
+            if (size[i] != 0 && value[i] != 0.00) {
+                printf("&&&& PERF %s___%s___size__%lu___%s %lf %c%s\n", job_name, subjob_name,
+                       size[i], output_var, avg, plus_minus, units);
+            }
+        }
+    } else if (strcmp(job_name, "reduction") == 0) {
+        /* Splits subjob_name into data type and operation name */
+        char **tokens = (char **)malloc(2 * sizeof(char *));
+        const char *delim = "-";
+        char copy[strlen(subjob_name) + 1];
+        strcpy(copy, subjob_name);
+        char *token = strtok(copy, delim);
+        if (token != NULL) {
+            tokens[0] = strdup(token);
+            token = strtok(NULL, delim);
+            if (token != NULL) {
+                tokens[1] = strdup(token);
+            } else {
+                tokens[1] = strdup("None");
+            }
+        }
+        printf("#%10s\n", job_name);
+        printf("%-10s  %-8s  %-8s  %-16s  %-16s  %-16s  %-12s  %-12s\n", "size(B)", "type", "redop",
+               "latency(us)", "min_lat(us)", "max_lat(us)", "algbw(GB/s)", "busbw(GB/s)");
+        for (i = 0; i < num_entries; i++) {
+            auto value = values[i];
+            if (size[i] != 0 && value[i] != 0.00) {
+                tie(avg, min, max) = get_latency_metrics(value);
+                uint64_t total_bytes = get_coll_info(&algbw, &busbw, job_name, size[i], avg, npes);
+                avgBusBw += busbw;
+                printf("%-10.1lu  %-8s  %-8s  %-16.6lf  %-16.3lf  %-16.3lf  %-12.3lf  %-12.3lf",
+                       total_bytes, tokens[0], tokens[1], avg, min, max, algbw, busbw);
+                printf("\n");
+            }
+        }
+    } else {
+        printf("#%10s\n", job_name);
+        printf("%-10s  %-8s  %-16s  %-16s  %-16s  %-12s  %-12s\n", "size(B)", "type", "latency(us)",
+               "min_lat(us)", "max_lat(us)", "algbw(GB/s)", "busbw(GB/s)");
+        for (i = 0; i < num_entries; i++) {
+            auto value = values[i];
+            if (size[i] != 0 && value[i] != 0.00) {
+                tie(avg, min, max) = get_latency_metrics(value);
+                uint64_t total_bytes = get_coll_info(&algbw, &busbw, job_name, size[i], avg, npes);
+                avgBusBw += busbw;
+                printf("%-10.1lu  %-8s  %-16.6lf  %-16.3lf  %-16.3lf  %-12.3lf  %-12.3lf",
+                       total_bytes, subjob_name, avg, min, max, algbw, busbw);
+                printf("\n");
+            }
+        }
+    }
+    avgBusBw = avgBusBw / num_entries;
+    printf("\n# Avg bus bandwidth    : %g\n\n", avgBusBw);
 }

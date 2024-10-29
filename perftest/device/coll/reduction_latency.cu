@@ -145,114 +145,114 @@ int rdxn_calling_kernel(nvshmem_team_t team, void *dest, const void *source, int
     if (run_options.run_thread) {
         RUN_ITERS(int32, int32_t, , 512);
         if (!mype) {
-            print_table("device_reduction", "int32-sum-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_sum_lat, j);
-            print_table("device_reduction", "int32-prod-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_prod_lat, j);
-            print_table("device_reduction", "int32-and-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_and_lat, j);
-            print_table("device_reduction", "int32-or-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_or_lat, j);
-            print_table("device_reduction", "int32-xor-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_xor_lat, j);
-            print_table("device_reduction", "int32-min-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_min_lat, j);
-            print_table("device_reduction", "int32-max-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_max_lat, j);
+            print_table_v1("device_reduction", "int32-sum-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_sum_lat, j);
+            print_table_v1("device_reduction", "int32-prod-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_prod_lat, j);
+            print_table_v1("device_reduction", "int32-and-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_and_lat, j);
+            print_table_v1("device_reduction", "int32-or-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_or_lat, j);
+            print_table_v1("device_reduction", "int32-xor-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_xor_lat, j);
+            print_table_v1("device_reduction", "int32-min-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_min_lat, j);
+            print_table_v1("device_reduction", "int32-max-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_max_lat, j);
         }
 
         RUN_ITERS(int64, int64_t, , 512);
         if (!mype) {
-            print_table("device_reduction", "int64-sum-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_sum_lat, j);
-            print_table("device_reduction", "int64-prod-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_prod_lat, j);
-            print_table("device_reduction", "int64-and-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_and_lat, j);
-            print_table("device_reduction", "int64-or-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_or_lat, j);
-            print_table("device_reduction", "int64-xor-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_xor_lat, j);
-            print_table("device_reduction", "int64-min-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_min_lat, j);
-            print_table("device_reduction", "int64-max-t", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_max_lat, j);
+            print_table_v1("device_reduction", "int64-sum-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_sum_lat, j);
+            print_table_v1("device_reduction", "int64-prod-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_prod_lat, j);
+            print_table_v1("device_reduction", "int64-and-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_and_lat, j);
+            print_table_v1("device_reduction", "int64-or-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_or_lat, j);
+            print_table_v1("device_reduction", "int64-xor-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_xor_lat, j);
+            print_table_v1("device_reduction", "int64-min-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_min_lat, j);
+            print_table_v1("device_reduction", "int64-max-t", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_max_lat, j);
         }
     }
 
     if (run_options.run_warp) {
         RUN_ITERS(int32, int32_t, _warp, 4096);
         if (!mype) {
-            print_table("device_reduction", "int32-sum-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_sum_lat, j);
-            print_table("device_reduction", "int32-prod-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_prod_lat, j);
-            print_table("device_reduction", "int32-and-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_and_lat, j);
-            print_table("device_reduction", "int32-or-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_or_lat, j);
-            print_table("device_reduction", "int32-xor-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_xor_lat, j);
-            print_table("device_reduction", "int32-min-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_min_lat, j);
-            print_table("device_reduction", "int32-max-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_max_lat, j);
+            print_table_v1("device_reduction", "int32-sum-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_sum_lat, j);
+            print_table_v1("device_reduction", "int32-prod-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_prod_lat, j);
+            print_table_v1("device_reduction", "int32-and-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_and_lat, j);
+            print_table_v1("device_reduction", "int32-or-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_or_lat, j);
+            print_table_v1("device_reduction", "int32-xor-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_xor_lat, j);
+            print_table_v1("device_reduction", "int32-min-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_min_lat, j);
+            print_table_v1("device_reduction", "int32-max-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_max_lat, j);
         }
 
         RUN_ITERS(int64, int64_t, _warp, 4096);
         if (!mype) {
-            print_table("device_reduction", "int64-sum-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_sum_lat, j);
-            print_table("device_reduction", "int64-prod-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_prod_lat, j);
-            print_table("device_reduction", "int64-and-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_and_lat, j);
-            print_table("device_reduction", "int64-or-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_or_lat, j);
-            print_table("device_reduction", "int64-xor-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_xor_lat, j);
-            print_table("device_reduction", "int64-min-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_min_lat, j);
-            print_table("device_reduction", "int64-max-w", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_max_lat, j);
+            print_table_v1("device_reduction", "int64-sum-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_sum_lat, j);
+            print_table_v1("device_reduction", "int64-prod-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_prod_lat, j);
+            print_table_v1("device_reduction", "int64-and-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_and_lat, j);
+            print_table_v1("device_reduction", "int64-or-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_or_lat, j);
+            print_table_v1("device_reduction", "int64-xor-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_xor_lat, j);
+            print_table_v1("device_reduction", "int64-min-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_min_lat, j);
+            print_table_v1("device_reduction", "int64-max-w", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_max_lat, j);
         }
     }
 
     if (run_options.run_block) {
         RUN_ITERS(int32, int32_t, _block, max_elems);
         if (!mype) {
-            print_table("device_reduction", "int32-sum-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_sum_lat, j);
-            print_table("device_reduction", "int32-prod-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_prod_lat, j);
-            print_table("device_reduction", "int32-and-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_and_lat, j);
-            print_table("device_reduction", "int32-or-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_or_lat, j);
-            print_table("device_reduction", "int32-xor-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_xor_lat, j);
-            print_table("device_reduction", "int32-min-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_min_lat, j);
-            print_table("device_reduction", "int32-max-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_max_lat, j);
+            print_table_v1("device_reduction", "int32-sum-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_sum_lat, j);
+            print_table_v1("device_reduction", "int32-prod-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_prod_lat, j);
+            print_table_v1("device_reduction", "int32-and-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_and_lat, j);
+            print_table_v1("device_reduction", "int32-or-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_or_lat, j);
+            print_table_v1("device_reduction", "int32-xor-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_xor_lat, j);
+            print_table_v1("device_reduction", "int32-min-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_min_lat, j);
+            print_table_v1("device_reduction", "int32-max-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_max_lat, j);
         }
 
         RUN_ITERS(int64, int64_t, _block, max_elems);
         if (!mype) {
-            print_table("device_reduction", "int64-sum-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_sum_lat, j);
-            print_table("device_reduction", "int64-prod-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_prod_lat, j);
-            print_table("device_reduction", "int64-and-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_and_lat, j);
-            print_table("device_reduction", "int64-or-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_or_lat, j);
-            print_table("device_reduction", "int64-xor-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_xor_lat, j);
-            print_table("device_reduction", "int64-min-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_min_lat, j);
-            print_table("device_reduction", "int64-max-b", "size (Bytes)", "latency", "us", '-',
-                        size_arr, h_max_lat, j);
+            print_table_v1("device_reduction", "int64-sum-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_sum_lat, j);
+            print_table_v1("device_reduction", "int64-prod-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_prod_lat, j);
+            print_table_v1("device_reduction", "int64-and-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_and_lat, j);
+            print_table_v1("device_reduction", "int64-or-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_or_lat, j);
+            print_table_v1("device_reduction", "int64-xor-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_xor_lat, j);
+            print_table_v1("device_reduction", "int64-min-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_min_lat, j);
+            print_table_v1("device_reduction", "int64-max-b", "size (Bytes)", "latency", "us", '-',
+                           size_arr, h_max_lat, j);
         }
     }
 

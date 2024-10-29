@@ -192,10 +192,10 @@ int main(int argc, char *argv[]) {
             i++;
         }
 
-        print_table("Stream_Latency", "with _on_stream", "size (Bytes)", "latency", "us", '-',
-                    size_array, ons_latency_array, i);
-        print_table("Stream_Latency", "without _on_stream", "size (Bytes)", "latency", "us", '-',
-                    size_array, offs_latency_array, i);
+        print_table_v1("Stream_Latency", "with _on_stream", "size (Bytes)", "latency", "us", '-',
+                       size_array, ons_latency_array, i);
+        print_table_v1("Stream_Latency", "without _on_stream", "size (Bytes)", "latency", "us", '-',
+                       size_array, offs_latency_array, i);
 
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));

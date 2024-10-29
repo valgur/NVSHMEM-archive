@@ -378,6 +378,7 @@ int nvshmemi_get_devices_by_distance(int *device_arr, int max_dev_per_pe,
 
     /* No need to report this in a loop - All Devices will have the same perf characteristics. */
     if (pci_distance_perf[pe_device_distance[mype_array_index]] < pci_distance_perf[PATH_PIX]) {
+        nvshmemi_state->are_nics_ll128_compliant = false;
         INFO(NVSHMEM_TOPO,
              "Our PE is connected to a NIC with pci distance %s."
              "this will provide less than optimal performance.\n",

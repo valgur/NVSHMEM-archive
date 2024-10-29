@@ -53,6 +53,8 @@ void nvshmemi_call_rdxn_on_stream_kernel(nvshmem_team_t team, TYPE *dest, const 
     FN(unsigned long long, RDXN_OPS_##OP)
 
 #define REPT_FOR_FLOATING_TYPES(FN, OP) \
+    FN(half, RDXN_OPS_##OP)             \
+    FN(__nv_bfloat16, RDXN_OPS_##OP)    \
     FN(float, RDXN_OPS_##OP)            \
     FN(double, RDXN_OPS_##OP)
 

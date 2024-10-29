@@ -6,6 +6,7 @@
 #define REDUCE_PADDING 32
 #define TIMEOUT_PADDING 16
 #define COLL_ENV_VARS_PADDING 472
+#define COLL_ENV_VARS_V2_PADDING 424
 
 #define RED_REC_INVALID_SCALAR -1
 #define TEAM_CONFIG_SCALAR_INVALID -1
@@ -13,7 +14,7 @@
 #define COLL_ENV_PARAMS_SCALAR_INVALID -1
 #define COLL_ENV_PARAMS_USCALAR_INVALID 0xFFFFFFFF
 #define COLL_ENV_PARAMS_ULSCALAR_INVALID 0xFFFFFFFFFFFFFFFF
-#define TIMEOUT_ULSCALAR_INVALID 0xFFFFFFFF
+#define TIMEOUT_ULSCALAR_INVALID 0
 #define TEAM_SCALAR_INVALID -1
 #define TEAM_USCALAR_INVALID 0xFFFFFFFF
 #define TEAM_ULSCALAR_INVALID 0xFFFFFFFFFFFFFFFF
@@ -77,7 +78,7 @@
 
 #define NVSHMEMI_TEAM_INITIALIZER                                                               \
     {                                                                                           \
-        (1 << 16) + sizeof(nvshmemi_team_t),                       /* version */                \
+        (2 << 16) + sizeof(nvshmemi_team_t),                       /* version */                \
             TEAM_SCALAR_INVALID,                                   /* my_pe */                  \
             TEAM_SCALAR_INVALID,                                   /* start */                  \
             TEAM_SCALAR_INVALID,                                   /* stride */                 \
@@ -98,19 +99,34 @@
             false,                                                 /* is_team_node */           \
             TEAM_SCALAR_INVALID,                                   /* team_node */              \
             false,                                                 /* is_team_same_mype_node */ \
-            TEAM_SCALAR_INVALID                                    /* team_same_mype_node */    \
+            TEAM_SCALAR_INVALID,                                   /* team_same_mype_node */    \
+            NULL,                                                  /* nvls_rsc */               \
+            NULL,                                                  /* nvls_rsc_base_ptr */      \
+        {                                                                                       \
+            TEAM_SCALAR_INVALID                                                                 \
+        } /* team_dups */                                                                       \
     }
 
-#define NVSHMEMI_GPU_COLL_PARAMS_INITIALIZER                                    \
-    {                                                                           \
-        (1 << 16) + sizeof(gpu_coll_env_params_t), /* version */                \
-            COLL_ENV_PARAMS_SCALAR_INVALID,        /* barrier_dissem_kval */    \
-            COLL_ENV_PARAMS_SCALAR_INVALID,        /* barrier_tg_dissem_kval */ \
-            COLL_ENV_PARAMS_SCALAR_INVALID,        /* reduce_recexch_kval */    \
-            COLL_ENV_PARAMS_SCALAR_INVALID,        /* bcast_tree_kval */        \
-            COLL_ENV_PARAMS_SCALAR_INVALID,        /* bcast_algo */             \
-            COLL_ENV_PARAMS_SCALAR_INVALID,        /* reduce_algo */            \
-            COLL_ENV_PARAMS_ULSCALAR_INVALID,      /* fcollect_ll_threshold */  \
+#define NVSHMEMI_GPU_COLL_PARAMS_INITIALIZER                                          \
+    {                                                                                 \
+        (2 << 16) + sizeof(gpu_coll_env_params_t), /* version */                      \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* barrier_dissem_kval */          \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* barrier_tg_dissem_kval */       \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* reduce_recexch_kval */          \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* bcast_tree_kval */              \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* bcast_algo */                   \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* reduce_algo */                  \
+            COLL_ENV_PARAMS_ULSCALAR_INVALID,      /* fcollect_ll_threshold */        \
+            COLL_ENV_PARAMS_ULSCALAR_INVALID,      /* fcollect_nvls_threshold */      \
+            COLL_ENV_PARAMS_ULSCALAR_INVALID,      /* reduce_scratch_size */          \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* fcollect_algo */                \
+            COLL_ENV_PARAMS_ULSCALAR_INVALID,      /* reducescatter_nvls_threshold */ \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* reducescatter_algo */           \
+            COLL_ENV_PARAMS_SCALAR_INVALID,        /* reduce_maxloc_algo */           \
+            COLL_ENV_PARAMS_ULSCALAR_INVALID,      /* fcollect_ll128_threahold */     \
+        {                                                                             \
+            0                                                                         \
+        }                                                                             \
     }
 
 #define NVSHMEMI_TIMEOUT_INITIALIZER                                      \
@@ -151,7 +167,8 @@
             NULL,                                         /* team_pool */                         \
             NULL,                                         /* psync_pool */                        \
             NULL,                                         /* sync_counter */                      \
-            NVSHMEMI_GPU_COLL_PARAMS_INITIALIZER, NULL,   /* proxy_channels_buf */                \
+            NVSHMEMI_GPU_COLL_PARAMS_INITIALIZER,         /* gpu_coll_env_params_var */           \
+            NULL,                                         /* proxy_channels_buf */                \
             NULL,                                         /* proxy_channel_g_buf */               \
             NULL,                                         /* proxy_channel_g_coalescing_buf */    \
             NULL,                                         /* proxy_channel_g_buf_head_ptr */      \
@@ -251,12 +268,41 @@ typedef struct {
     bool is_team_same_mype_node; /* If set to true, 'team_same_mype_node' refers to rsvd
                                     NVSHMEMX_TEAM_SAME_MYPE_NODE */
     nvshmem_team_t team_same_mype_node;
+    void *nvls_rsc;          /* To be cast to nvshmemi_nvls_rsc whenever used */
+    void *nvls_rsc_base_ptr; /* Shared b/w GPU threads of this team */
+    nvshmem_team_t team_dups[128];
+} nvshmemi_team_v2;
+
+typedef struct {
+    int version;
+    int my_pe;
+    int start, stride, size;
+    int team_idx;
+    nvshmem_team_config_t config;
+    long config_mask;
+    void *nccl_comm; /* To be cast to ncclComm_t whenever used */
+    nvshmemi_reduce_recexch_t reduce_recexch;
+    size_t rdxn_count;
+    uint32_t ll_flag;
+    uint64_t alltoall_pwrk[2];
+    uint64_t alltoall_count;
+    uint64_t bcast_count;
+    uint64_t bcast_sync_offset;
+    uint64_t fcollect_count;
+    uint32_t fcollect_ll_flag;
+    bool are_gpus_p2p_connected;
+    bool is_team_node; /* If set to true, 'team_node' refers to rsvd NVSHMEMX_TEAM_NODE */
+    nvshmem_team_t team_node;
+    bool is_team_same_mype_node; /* If set to true, 'team_same_mype_node' refers to rsvd
+                                    NVSHMEMX_TEAM_SAME_MYPE_NODE */
+    nvshmem_team_t team_same_mype_node;
 } nvshmemi_team_v1;
 static_assert(sizeof(nvshmemi_team_v1) == 256, "team_v1 must be 256 bytes.");
+static_assert(sizeof(nvshmemi_team_v2) == 784, "team_v2 must be 784 bytes.");
 
-typedef nvshmemi_team_v1 nvshmemi_team_t;
+typedef nvshmemi_team_v2 nvshmemi_team_t;
 
-typedef struct gpu_coll_env_params {
+typedef struct {
     int version;
     int barrier_dissem_kval;
     int barrier_tg_dissem_kval;
@@ -269,7 +315,27 @@ typedef struct gpu_coll_env_params {
 } gpu_coll_env_params_v1;
 static_assert(sizeof(gpu_coll_env_params_v1) == 512, "gpu_coll_env_params_v1 must be 512 bytes.");
 
-typedef gpu_coll_env_params_v1 gpu_coll_env_params_t;
+typedef struct {
+    int version;
+    int barrier_dissem_kval;
+    int barrier_tg_dissem_kval;
+    int reduce_recexch_kval;
+    int bcast_tree_kval;
+    int bcast_algo;
+    int reduce_algo;
+    size_t fcollect_ll_threshold;
+    size_t fcollect_nvls_threshold;
+    size_t reduce_scratch_size;
+    int fcollect_algo;
+    size_t reducescatter_nvls_threshold;
+    int reducescatter_algo;
+    int reduce_maxloc_algo;
+    size_t fcollect_ll128_threshold;
+    char padding[COLL_ENV_VARS_V2_PADDING];
+} gpu_coll_env_params_v2;
+static_assert(sizeof(gpu_coll_env_params_v2) == 512, "gpu_coll_env_params_v2 must be 512 bytes.");
+
+typedef gpu_coll_env_params_v2 gpu_coll_env_params_t;
 
 typedef struct {
     int version;

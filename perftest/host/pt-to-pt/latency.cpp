@@ -188,8 +188,8 @@ int main(int argc, char *argv[]) {
             i++;
         }
 
-        print_table("Latency", "None", "size (Bytes)", "latency", "us", '-', size_array,
-                    latency_array, i);
+        print_table_v1("Latency", "None", "size (Bytes)", "latency", "us", '-', size_array,
+                       latency_array, i);
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));
 

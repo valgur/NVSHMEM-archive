@@ -25,6 +25,7 @@
 #include "device_host/nvshmem_types.h"                                     // for nvshm...
 #include "device_host/nvshmem_common.cuh"                                  // for nvshm...
 #include "host/nvshmem_api.h"                                              // for nvshm...
+#include "host/nvshmemx_api.h"                                             // for nvshm...
 #include "non_abi/nvshmemx_error.h"                                        // for NVSHM...
 #include "non_abi/nvshmem_build_options.h"                                 // IWYU pragma: keep
 #include "device_host_transport/nvshmem_common_transport.h"                // for g_elem_t
@@ -45,6 +46,7 @@
 #include "bootstrap_host_transport/env_defs_internal.h"                    // for nvshm...
 #include "internal/host_transport/nvshmemi_transport_defines.h"            // for nvshm...
 #include "internal/host_transport/transport.h"                             // for nvshm..
+#include "internal/host/nvshmemi_nvls_rsc.hpp"
 
 #ifdef NVSHMEM_USE_DLMALLOC
 #include "dlmalloc.h"
@@ -122,14 +124,12 @@ int nvshmemi_symmetric_heap::is_symmetric(T value) {
     int status = 0;
     nvshmemi_state_t *state = get_state();
     T *scratch;
-
     /* TODO: need to handle multi-threaded scenarios */
     if (!nvshmemi_options.ENABLE_ERROR_CHECKS) return 0;
 
     scratch = (T *)std::calloc(state->npes, sizeof(T));
     NVSHMEMI_NULL_ERROR_JMP(scratch, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                             "Failed to allocate scratch space for heap symmetry check \n");
-
     status = nvshmemi_boot_handle.allgather((void *)&value, (void *)scratch, sizeof(T),
                                             &nvshmemi_boot_handle);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
@@ -163,7 +163,6 @@ void *nvshmemi_symmetric_heap::heap_allocate(size_t size, size_t count, size_t a
     void *ptr = NULL;
 
     assert(get_state() != nullptr);
-
     status = is_symmetric(size);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out,
                           "symmetry check for size failed\n");
@@ -175,13 +174,6 @@ void *nvshmemi_symmetric_heap::heap_allocate(size_t size, size_t count, size_t a
          get_state()->mype, typeid(decltype(*this)).name(), size, count, alignment, ptr);
 
 out:
-    if (status) {
-        if (ptr) {
-            heap_mspace_->deallocate(ptr);
-            ptr = NULL;
-        }
-    }
-
     return ptr;
 }
 
@@ -257,6 +249,7 @@ nvshmemi_symmetric_heap::~nvshmemi_symmetric_heap() {
                 NVSHMEMU_IS_BIT_SET(state->transport_bitmap, j) &&
                 (NVSHMEMI_TRANSPORT_IS_CAP(state->transports[j], i, NVSHMEM_TRANSPORT_CAP_MAP));
             if (!is_p2p_transport) continue;
+
             NVSHMEMU_FOR_EACH(k, handles_.size()) {
                 close(*(int *)&handles_[k][i * state->num_initialized_transports + j]);
             }
@@ -327,6 +320,7 @@ int nvshmemi_symmetric_heap_vidmem_static_pinned::allocate_heap_memory() {
     status = cudaMalloc(&heap_base_, heap_size_);
     NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                           "cuMemAlloc failed \n");
+    reserved_heap_size_ = heap_size_;
 out:
     return status;
 }
@@ -362,6 +356,7 @@ int nvshmemi_symmetric_heap_sysmem_static_shm::allocate_heap_memory() {
     CUDA_RUNTIME_CHECK(cudaHostRegister(heap_info_.addr, shm_size, cudaHostRegisterDefault));
     CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&global_heap_base_, heap_info_.addr, 0));
     heap_base_ = (char *)global_heap_base_ + nvshmemi_boot_handle.mype_node * heap_size_;
+    reserved_heap_size_ = shm_size;
 
     return status;
 }
@@ -376,14 +371,6 @@ int nvshmemi_symmetric_heap_sysmem_static_shm::free_heap_memory(void *unused_add
     CUDA_RUNTIME_CHECK(cudaHostUnregister(heap_info_.addr));
     shared_memory_close(heap_name_, &heap_info_);
     return (NVSHMEMI_SUCCESS);
-}
-
-size_t nvshmemi_symmetric_heap_vidmem_static_pinned::get_registration_chunk_size(void) {
-    return NVSHMEMI_MAX_HANDLE_LENGTH;
-}
-
-size_t nvshmemi_symmetric_heap_sysmem_static_shm::get_registration_chunk_size(void) {
-    return (NVSHMEMI_MAX_HANDLE_LENGTH);
 }
 
 int nvshmemi_symmetric_heap_static::setup_mspace() {
@@ -413,14 +400,15 @@ nvshmemi_symmetric_heap_dynamic::nvshmemi_symmetric_heap_dynamic(nvshmemi_state_
         In the future, we can return a bitmap of allocation handle type and use that to decide how
        to allocate multiple heaps by type
         */
-    set_mem_handle_type((CUmemAllocationHandleType)(get_p2pref()->get_mem_handle_type()));
+    set_remote_transport(nvshmemi_mem_remote_transport::get_instance());
+    set_mem_handle_type((get_p2pref()->get_mem_handle_type()));
     state->p2p_transport = get_p2pref();
 }
 
 int nvshmemi_symmetric_heap_static::reserve_heap(void) {
     int status;
     size_t heapextra = 0, alignbytes = 0;
-    mem_granularity_ = get_registration_chunk_size();
+    mem_granularity_ = NVSHMEMI_MAX_HANDLE_LENGTH;
     set_heap_size_attr(mem_granularity_, &heapextra, &alignbytes, &(log2_mem_granularity_));
     heap_size_ = NVSHMEMU_ROUND_UP(nvshmemi_options.SYMMETRIC_SIZE + heapextra, mem_granularity_);
     physical_heap_size_ = 0;
@@ -448,6 +436,7 @@ int nvshmemi_symmetric_heap_static::reserve_heap(void) {
 
     INFO(NVSHMEM_MEM, "[%d] heap type: %s cumem_granularity: %zu, log2_mem_granularity: %zu\n",
          state_->mype, typeid(decltype(*this)).name(), mem_granularity_, log2_mem_granularity_);
+
 out:
     if (status) {
         free_heap_memory(heap_base_);
@@ -460,7 +449,7 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::reserve_heap() {
     int status;
     size_t alignbytes = 0, heapextra = 0;
     CUmemAllocationProp prop = {};
-    set_cuda_mem_prop((void *)&prop, (CUmemAllocationHandleType)get_mem_handle_type());
+    set_cuda_mem_prop((void *)&prop, get_mem_handle_type());
 
     status = CUPFN(nvshmemi_cuda_syms,
                    cuMemGetAllocationGranularity(&mem_granularity_, &prop,
@@ -492,7 +481,7 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::reserve_heap() {
          "[%d] heap type: %s heap base: %p NVSHMEM_SYMMETRIC_SIZE %lu total %lu heapextra %lu",
          state_->mype, typeid(decltype(this)).name(), heap_base_, nvshmemi_options.SYMMETRIC_SIZE,
          heap_size_, heapextra);
-
+    reserved_heap_size_ = nvshmemi_options.MAX_P2P_GPUS * heap_size_;
 out:
     return status;
 }
@@ -506,7 +495,6 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::cleanup_symmetric_heap() {
     nvshmemi_mem_remote_transport &remote_tran = *(get_remoteref());
     INFO(NVSHMEM_MEM, "[%d] Entering %s::cleanup_symmetric_heap\n", state->mype,
          typeid(decltype(this)).name());
-
     NVSHMEMU_FOR_EACH_IF(
         i, state->npes, (((int)i == state->mype) && (heap_base_ != NULL)),
         {NVSHMEMU_FOR_EACH_IF(
@@ -520,9 +508,9 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::cleanup_symmetric_heap() {
                                cuMemUnmap((CUdeviceptr)heap_base_, physical_heap_size_));
                 NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                                       "release memory failed for p2p on heap dynamic (my PE)\n");
-
                 NVSHMEMU_FOR_EACH(i, cumem_handles_.size()) {
-                    status = CUPFN(nvshmemi_cuda_syms, cuMemRelease(cumem_handles_[i]));
+                    status =
+                        CUPFN(nvshmemi_cuda_syms, cuMemRelease(std::get<0>(cumem_handles_[i])));
                     NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                                           "cuMemRelease failed \n");
                 }
@@ -570,9 +558,11 @@ int nvshmemi_symmetric_heap_static::cleanup_symmetric_heap() {
             }
         }
 
-        status = free_heap_memory(peer_heap_base_p2p_[i]);
-        NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
-                              "free_heap_memory failed \n");
+        if (peer_heap_base_p2p_ != nullptr) {
+            status = free_heap_memory(peer_heap_base_p2p_[i]);
+            NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "free_heap_memory failed \n");
+        }
     })
 
     NVSHMEMU_FOR_EACH_IF(
@@ -706,11 +696,21 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::exchange_heap_memory_handle(
     pid_t pid = getpid();
 
     // Assuming handles can be used for intra-node GPU comms
-    if (!is_cuda_mem_handle_type_ipc((CUmemAllocationHandleType)get_mem_handle_type())) return 0;
+    if (!is_cuda_mem_handle_type_ipc()) return 0;
 
     auto p2p_processes = get_p2pref()->get_proc_map();
 
     NVSHMEMI_IPC_CHECK(ipcOpenSocket(myIpcHandle, pid, pid));
+    /**
+     * myIpcHandle PE0: /tmp/socket-100-100
+     * myIpcHandle PE1: /tmp/socket-101-101
+     *
+     * recvIpcHandle PE0: /tmp/socket-101-100
+     * recvIpcHandle PE1: /tmp/socket-100-101
+     *
+     * sendFd PE0: myIpcHandle from 100 to 101
+     * sendFd PE1: myIpcHandle from 101 to 100
+     */
 
     /* Open all sockets */
     for (std::map<pid_t, int>::iterator it1 = p2p_processes.begin(); it1 != p2p_processes.end();
@@ -873,15 +873,13 @@ int nvshmemi_symmetric_heap_static::register_heap_chunk(nvshmem_mem_handle_t *me
                           "allgather of mem handles failed \n");
 
     if (nvshmemi_device_state.enable_rail_opt == 1) {
-        status = remotetran.gather_mem_handles(local_handles,
-                                               *(dynamic_cast<nvshmemi_symmetric_heap *>(this)), 0,
+        status = remotetran.gather_mem_handles(*(dynamic_cast<nvshmemi_symmetric_heap *>(this)), 0,
                                                heap_size_ * state->npes_node);
         NVSHMEMI_NZ_ERROR_JMP(
             status, NVSHMEMX_ERROR_INTERNAL, out,
             "allgather of mem handles for remotetransport failed (on rail optimized networks) \n");
     } else {
-        status = remotetran.gather_mem_handles(local_handles,
-                                               *(dynamic_cast<nvshmemi_symmetric_heap *>(this)),
+        status = remotetran.gather_mem_handles(*(dynamic_cast<nvshmemi_symmetric_heap *>(this)),
                                                physical_heap_size_, size);
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "allgather of mem handles for remotetransport failed \n");
@@ -944,8 +942,8 @@ int nvshmemi_symmetric_heap_dynamic::register_heap_chunk(nvshmem_mem_handle_t *m
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "allgather of mem handles failed \n");
 
-    status = remotetran.gather_mem_handles(
-        local_handles, *(dynamic_cast<nvshmemi_symmetric_heap *>(this)), physical_heap_size_, size);
+    status = remotetran.gather_mem_handles(*(dynamic_cast<nvshmemi_symmetric_heap *>(this)),
+                                           physical_heap_size_, size);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "allgather of mem handles failed for remotetransport\n");
 
@@ -985,9 +983,8 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::export_memory(nvshmem_mem_handle
     CUmemGenericAllocationHandle *handle_in =
         reinterpret_cast<CUmemGenericAllocationHandle *>(mem_handle_in);
     INFO(NVSHMEM_MEM, "calling cuMemExportToShareableHandle on handle: %p", handle_in);
-    status = CUPFN(nvshmemi_cuda_syms, cuMemExportToShareableHandle(
-                                           (void *)mem_handle, *handle_in,
-                                           (CUmemAllocationHandleType)get_mem_handle_type(), 0));
+    status = CUPFN(nvshmemi_cuda_syms, cuMemExportToShareableHandle((void *)mem_handle, *handle_in,
+                                                                    get_mem_handle_type(), 0));
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "cuMemExportToShareableHandle failed \n");
 out:
@@ -1013,16 +1010,15 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::import_memory(nvshmem_mem_handle
         goto out;
     }
 
-    if ((CUmemAllocationHandleType)get_mem_handle_type() ==
-        CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+    if (get_mem_handle_type() == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
         int fd = *(int *)mem_handle;
-        status = CUPFN(nvshmemi_cuda_syms, cuMemImportFromShareableHandle(
-                                               &peer_handle, (void *)(uintptr_t)fd,
-                                               (CUmemAllocationHandleType)get_mem_handle_type()));
+        status = CUPFN(nvshmemi_cuda_syms,
+                       cuMemImportFromShareableHandle(&peer_handle, (void *)(uintptr_t)fd,
+                                                      get_mem_handle_type()));
     } else {
-        status = CUPFN(nvshmemi_cuda_syms, cuMemImportFromShareableHandle(
-                                               &peer_handle, (void *)mem_handle,
-                                               (CUmemAllocationHandleType)get_mem_handle_type()));
+        status =
+            CUPFN(nvshmemi_cuda_syms, cuMemImportFromShareableHandle(
+                                          &peer_handle, (void *)mem_handle, get_mem_handle_type()));
     }
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "cuMemImportFromShareableHandle failed state->device_id : %d \n",
@@ -1113,6 +1109,364 @@ out:
     return status;
 }
 
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_broadcast_heap_handle_ipc(
+    char *shareable_handle, int root, nvshmemi_team_t *team) {
+    pid_t pid = getpid();
+    ipcHandle *myIpcHandle = NULL;
+    ipcHandle *recvIpcHandle = NULL;
+    auto p2p_processes = get_p2pref()->get_proc_map();
+    pid_t root_process;
+    int fd = -1;
+    /**
+     * myIpcHandle PE0: /tmp/socket-100-100
+     * recvIpcHandle PE1: /tmp/socket-100-101
+     *
+     * sendFd PE0: myIpcHandle from 100 to 101
+     * recvFd PE1: recvIpcHandle from 100 to 101
+     */
+
+    if (team->my_pe == root) {
+        /* Open socket to send to all processes */
+        NVSHMEMI_IPC_CHECK(ipcOpenSocket(myIpcHandle, pid, pid));
+        root_process = pid;
+    } else {
+        /* Open socket to recv from root process */
+        for (auto it = p2p_processes.begin(); it != p2p_processes.end(); ++it) {
+            if (it->second == nvshmemi_team_pe(team, root)) {
+                root_process = it->first;
+                NVSHMEMI_IPC_CHECK(ipcOpenSocket(recvIpcHandle, root_process, pid));
+                break;
+            }
+        }
+    }
+
+    /* Wait for all processes in the team to open their sockets */
+    nvshmem_barrier(team->team_idx);
+
+    if (root == team->my_pe) {
+        /* Send fd from root to all */
+        for (std::map<pid_t, int>::iterator it1 = p2p_processes.begin(); it1 != p2p_processes.end();
+             ++it1) {
+            pid_t receiving_process = it1->first;
+            if (pid != receiving_process &&
+                nvshmemi_team_translate_pe(nvshmemi_team_pool[NVSHMEM_TEAM_WORLD], it1->second,
+                                           team) !=
+                    NVSHMEM_TEAM_INVALID) { /* Don't send to yourself or don't send it to a PE not
+                                               in the team */
+                NVSHMEMI_IPC_CHECK(
+                    ipcSendFd(myIpcHandle, *(int *)shareable_handle, pid, receiving_process));
+            }
+        }
+
+        INFO(NVSHMEM_INIT, "Sending shareable handle from PID %d over IPC Socket Handle %p\n", pid,
+             myIpcHandle);
+    } else {
+        /* Recv fd at all from root */
+        NVSHMEMI_IPC_CHECK(ipcRecvFd(recvIpcHandle, &fd));
+        INFO(NVSHMEM_INIT,
+             "Receiving shareable handle to PID %d over IPC Socket Handle %p => converted fd "
+             "%d\n",
+             pid, recvIpcHandle, fd);
+    }
+
+    /* Wait for all processes to finish send/recv */
+    nvshmem_barrier(team->team_idx);
+    if (team->my_pe == root) {
+        NVSHMEMI_IPC_CHECK(ipcCloseSocket(myIpcHandle));
+        fd = *(int *)shareable_handle;
+        close(fd);
+    } else {
+        NVSHMEMI_IPC_CHECK(ipcCloseSocket(recvIpcHandle));
+        memcpy(shareable_handle, &fd, sizeof(int));
+    }
+
+    return 0;
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_broadcast_heap_handle_fabric(
+    char *buffer, size_t length, int root, nvshmemi_team_t *team) {
+    /* This is technical debt where we are using the REDUCE op psync as scratchpad for src/dst of
+     * broadcast broadcast's psync is used for LL8 and other algorithms, making it non-trivial to
+     * share when issued from the host as a src or dest buffer.
+     *
+     * When reduce coll supports LL8 algorithm, we need to clean this up as a independent scratch
+     * space
+     */
+    long *pWrk = nvshmemi_team_get_psync(team, REDUCE);
+    if (team->my_pe == root) {
+        CUDA_RUNTIME_CHECK(cudaMemcpy(pWrk, buffer, length, cudaMemcpyHostToDevice));
+        CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
+        for (int i = 0; i < team->size; i++) {
+            nvshmemx_char_put_nbi_on_stream((char *)pWrk, (const char *)pWrk, length,
+                                            team->start + i * team->stride, (cudaStream_t)0);
+        }
+        nvshmem_barrier(team->team_idx);
+    } else {
+        nvshmem_barrier(team->team_idx);
+        CUDA_RUNTIME_CHECK(cudaMemcpy(buffer, pWrk, length, cudaMemcpyDeviceToHost));
+        CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
+    }
+    return (0);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_broadcast_heap_handle_by_team(
+    char *buffer, size_t length, nvshmemi_team_t *team) {
+    int status = NVSHMEMX_ERROR_INTERNAL;
+    int root = 0; /* every team's PE0 */
+    if (is_cuda_mem_handle_type_fabric()) {
+        status = nvls_broadcast_heap_handle_fabric(buffer, length, root, team);
+    } else {
+        status = nvls_broadcast_heap_handle_ipc(buffer, root, team);
+    }
+
+    return (status);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_create_heap_memory_by_size(
+    nvshmemi_team_t *team, uint64_t mem_size) {
+    int status = -1;
+    char shareable_handle[64] = {0};
+    CUmemGenericAllocationHandle *my_handle;
+    CUmemGenericAllocationHandle peer_handle;
+    nvls::nvshmemi_nvls_rsc *nvls_obj = reinterpret_cast<nvls::nvshmemi_nvls_rsc *>(team->nvls_rsc);
+    // Prune for duplicate teams that inherit the rsc, but own the resource
+    if (!nvls_obj->is_owner(team)) return 0;
+
+    /* team PE0 will export MC group */
+    if (team->my_pe == 0) {
+        status = nvls_obj->export_group(mem_size, &shareable_handle[0]);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                              "Exporting multicast group failed for pe %d\n", team->my_pe);
+
+        /* Get the most recently allocated mc_handle */
+        my_handle = nvls_obj->get_mc_handle_ptr(nvls_obj->get_mc_handle_size() - 1);
+        NVSHMEMI_NULL_ERROR_JMP(my_handle, status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                                "No active multicast group for pe %d\n", team->my_pe);
+
+        status = nvls_broadcast_heap_handle_by_team(&shareable_handle[0], sizeof(shareable_handle),
+                                                    team);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                              "Broadcasting exported multicast group for pe %d failed\n",
+                              team->my_pe);
+
+        status = nvls_obj->subscribe_group(my_handle);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                              "Subscribing multicast group failed for pe %d\n", team->my_pe);
+
+    } else {
+        status = nvls_broadcast_heap_handle_by_team(&shareable_handle[0], sizeof(shareable_handle),
+                                                    team);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                              "Broadcasting exported multicast group for pe %d failed\n",
+                              team->my_pe);
+
+        status = nvls_obj->import_group(&shareable_handle[0], &peer_handle, mem_size);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                              "Importing multicast group failed for pe %d\n", team->my_pe);
+
+        status = nvls_obj->subscribe_group(&peer_handle);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                              "Subscribing multicast group failed for pe %d\n", team->my_pe);
+    }
+
+    nvshmem_barrier(team->team_idx);
+cleanup:
+    return (status);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_create_heap_memory(uint64_t mem_size) {
+    nvshmemi_team_t *team = NULL;
+    int status = 0; /* Passthrough for the case where no teams have NVLS resource */
+
+    if (!get_state()->is_platform_nvls) return (status);
+
+    NVSHMEMU_FOR_EACH_IF(
+        i, nvshmemi_max_teams,
+        nvshmemi_team_pool != NULL && nvshmemi_team_pool[i] != NULL &&
+            nvshmemi_team_support_nvls(nvshmemi_team_pool[i]),
+        {
+            team = nvshmemi_team_pool[i];
+            status = nvls_create_heap_memory_by_size(team, mem_size);
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                                  "Creating mc handle for team ID: %d failed\n", team->team_idx);
+            INFO(NVSHMEM_INIT, "Setting up mcHandle for team ID: %d\n", team->team_idx);
+        })
+
+cleanup:
+    return (status);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_bind_heap_memory_by_size(
+    nvshmemi_team_t *team, nvshmem_mem_handle_t *mem_handle, off_t mc_offset, off_t mmap_offset,
+    size_t mmap_size) {
+    int status = -1;
+    CUmemGenericAllocationHandle *mc_handle = NULL;
+    nvls::nvshmemi_nvls_rsc *nvls_obj = reinterpret_cast<nvls::nvshmemi_nvls_rsc *>(team->nvls_rsc);
+    // Prune for duplicate teams that inherit the rsc, but own the resource
+    if (!nvls_obj->is_owner(team)) return 0;
+
+    /* Get the most recently allocated mc_handle */
+    mc_handle = nvls_obj->get_mc_handle_ptr(nvls_obj->get_mc_handle_size() - 1);
+    NVSHMEMI_NULL_ERROR_JMP(mc_handle, status, NVSHMEMX_ERROR_INTERNAL, out,
+                            "No active MC group for team idx %d\n", team->team_idx);
+
+    INFO(NVSHMEM_MEM,
+         "type: %s binding multicast group %ld to memory handle %p mmap size %zu, mc "
+         "offset "
+         "%lx mmap offset %lx\n",
+         typeid(decltype(this)).name(), *mc_handle, mem_handle, mmap_size, mc_offset, mmap_offset);
+    status = nvls_obj->bind_group_mem(mc_handle, mem_handle, mmap_size, mmap_offset, mc_offset);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "Binding mem_handle %p to MC group %lld failed \n", mem_handle,
+                          *mc_handle);
+out:
+    if (status) {
+        print_cumem_handles();
+    }
+    return (status);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_bind_heap_memory(
+    nvshmem_mem_handle_t *mem_handle, off_t mc_offset, off_t mmap_offset, size_t mmap_size) {
+    int status = 0; /* Passthrough for the case where no teams have NVLS resource */
+    if (!get_state()->is_platform_nvls) return (status);
+    NVSHMEMU_FOR_EACH_IF(i, nvshmemi_max_teams,
+                         nvshmemi_team_pool != NULL && nvshmemi_team_pool[i] != NULL &&
+                             nvshmemi_team_support_nvls(nvshmemi_team_pool[i]),
+                         {
+                             status =
+                                 nvls_bind_heap_memory_by_size(nvshmemi_team_pool[i], mem_handle,
+                                                               mc_offset, mmap_offset, mmap_size);
+                             NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                                   "Binding MC handle for team ID: %d failed\n",
+                                                   nvshmemi_team_pool[i]->team_idx);
+                             INFO(NVSHMEM_INIT, "Binding mc handle for team ID: %d\n",
+                                  nvshmemi_team_pool[i]->team_idx);
+                         })
+
+out:
+    return (status);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_map_heap_memory_by_size(nvshmemi_team_t *team,
+                                                                             uint64_t size,
+                                                                             off_t mmap_offset,
+                                                                             off_t mc_offset) {
+    int status = -1;
+    CUmemGenericAllocationHandle *mc_handle = NULL;
+
+    nvls::nvshmemi_nvls_rsc *nvls_obj = reinterpret_cast<nvls::nvshmemi_nvls_rsc *>(team->nvls_rsc);
+    // Prune for duplicate teams that inherit the rsc, but own the resource
+    if (!nvls_obj->is_owner(team)) return 0;
+
+    /* Get the most recently allocated mc_handle */
+    mc_handle = nvls_obj->get_mc_handle_ptr(nvls_obj->get_mc_handle_size() - 1);
+    NVSHMEMI_NULL_ERROR_JMP(mc_handle, status, NVSHMEMX_ERROR_INTERNAL, out,
+                            "No active MC group for team idx %d\n", team->team_idx);
+    INFO(NVSHMEM_MEM,
+         "type: %s mapping multicast group %ld of size %zu, mc "
+         "offset "
+         "%lx mmap offset %lx\n",
+         typeid(decltype(this)).name(), *mc_handle, size, mc_offset, mmap_offset);
+
+    status = nvls_obj->map_group_mem(mc_handle, size, mmap_offset, mc_offset);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                          "Mapping mem size %zu to MC group %lld failed \n", size, *mc_handle);
+out:
+    if (status) {
+        print_cumem_handles();
+    }
+    return (status);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_map_heap_memory(uint64_t size,
+                                                                     off_t mmap_offset,
+                                                                     off_t mc_offset) {
+    int status = 0; /* Passthrough for the case where no teams have NVLS resource */
+    if (!get_state()->is_platform_nvls) return (status);
+    NVSHMEMU_FOR_EACH_IF(i, nvshmemi_max_teams,
+                         nvshmemi_team_pool != NULL && nvshmemi_team_pool[i] != NULL &&
+                             nvshmemi_team_support_nvls(nvshmemi_team_pool[i]),
+                         {
+                             status = nvls_map_heap_memory_by_size(nvshmemi_team_pool[i], size,
+                                                                   mmap_offset, mc_offset);
+                             NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                                   "Mapping MC handle for team ID: %d failed\n",
+                                                   nvshmemi_team_pool[i]->team_idx);
+                             INFO(NVSHMEM_INIT, "Mapping mc handle for team ID: %d\n",
+                                  nvshmemi_team_pool[i]->team_idx);
+                         })
+out:
+    return (status);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_create_heap_memory_by_team(
+    nvshmemi_team_t *team) {
+    return nvls_create_heap_memory_by_size(team, physical_heap_size_);
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_bind_heap_memory_by_team(
+    nvshmemi_team_t *team) {
+    int status = -1;
+    CUmemGenericAllocationHandle mem_handle;
+    off_t mc_offset, mmap_offset;
+    size_t mmap_size;
+    /* Iterate over heap's list of tuple <mem_handle, mc_offset, mmap_offset, mmap_size> */
+    NVSHMEMU_FOR_EACH(i, get_cumem_handle_size()) {
+        mem_handle = get_cumem_handle_ptr(i);
+        mc_offset = get_cumem_handle_alloc_offset(i);
+        mmap_offset = get_cumem_handle_mmap_offset(i);
+        mmap_size = get_cumem_handle_mmap_size(i);
+        /* Bind UC handles to MC handle at heap_offset */
+        status = nvls_bind_heap_memory_by_size(team, (nvshmem_mem_handle_t *)&mem_handle, mc_offset,
+                                               mmap_offset, mmap_size);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, cleanup,
+                              "Binding multicast groups to UC mem handle %lld, mmap size %zu, mc "
+                              "offset %ld, mmap offset %ld failed for pe %d team ID %d\n",
+                              mem_handle, mmap_size, mc_offset, mmap_offset, team->my_pe,
+                              team->team_idx);
+    }
+
+cleanup:
+    return (status);
+}
+
+void nvshmemi_symmetric_heap_vidmem_dynamic_vmm::print_cumem_handles(void) {
+    NVSHMEMU_FOR_EACH(i, get_cumem_handle_size()) {
+        INFO(NVSHMEM_MEM,
+             "[%d] UC mem_handle: %lld mc_offset: %ld mmap_offset: %ld mmap_size: %zu\n",
+             get_state()->mype, get_cumem_handle_ptr(i), get_cumem_handle_alloc_offset(i),
+             get_cumem_handle_mmap_offset(i), get_cumem_handle_mmap_size(i));
+    }
+    return;
+}
+
+int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_map_heap_memory_by_team(
+    nvshmemi_team_t *team) {
+    /* Map MC handle + mmap_offset = 0 to mc base + mc_offset=0 */
+    return nvls_map_heap_memory_by_size(team, physical_heap_size_, 0, 0);
+}
+
+void nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_unmap_heap_memory_by_team(
+    nvshmemi_team_t *team) {
+    nvls::nvshmemi_nvls_rsc *nvls_obj = reinterpret_cast<nvls::nvshmemi_nvls_rsc *>(team->nvls_rsc);
+    if (nvls_obj == nullptr || !nvls_obj->is_owner(team)) return;
+    nvls_obj->unmap_group_mem(0, physical_heap_size_);
+    return;
+}
+
+void nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_unbind_heap_memory_by_team(
+    nvshmemi_team_t *team) {
+    nvls::nvshmemi_nvls_rsc *nvls_obj = reinterpret_cast<nvls::nvshmemi_nvls_rsc *>(team->nvls_rsc);
+    if (nvls_obj == nullptr || !nvls_obj->is_owner(team)) return;
+    NVSHMEMU_FOR_EACH(i, nvls_obj->get_mc_handle_size()) {
+        nvls_obj->unbind_group_mem(nvls_obj->get_mc_handle_ptr(i), 0,
+                                   nvls_obj->get_mc_handle_ptr_size(i));
+    }
+
+    return;
+}
+
 int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::allocate_physical_memory_to_heap(size_t size) {
     size = ((size + mem_granularity_ - 1) / mem_granularity_) * mem_granularity_;
     INFO(NVSHMEM_MEM, "type: %s adding new physical backing of size %zu bytes",
@@ -1121,13 +1475,16 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::allocate_physical_memory_to_heap
     CUmemGenericAllocationHandle cumem_handle;
     CUmemAllocationProp prop = {};
     CUmemAccessDesc access;
-    char *buf_calc;
+    char *buf_end, *buf_start;
+    off_t heap_offset = 0;
     size_t remaining_size;
     size_t register_size;
     size_t adjusted_max_handle_len;
+    off_t mmap_offset =
+        0; /* CUDA doesn't support non-zero mem_offset of a UC mem handle, so force to 0 */
     int status;
     nvshmemi_state_t *state = get_state();
-    set_cuda_mem_prop((void *)&prop, (CUmemAllocationHandleType)get_mem_handle_type());
+    set_cuda_mem_prop((void *)&prop, get_mem_handle_type());
 
     access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     access.location.id = state->device_id;
@@ -1138,10 +1495,12 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::allocate_physical_memory_to_heap
 
     /* Round Down */
     adjusted_max_handle_len = mem_granularity_ * (NVSHMEMI_MAX_HANDLE_LENGTH / mem_granularity_);
-
+    status = nvls_create_heap_memory(size);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "create heap MC memory failed\n");
     remaining_size = size;
+    buf_start = (char *)heap_base_ + physical_heap_size_;
     do {
-        buf_calc = (char *)heap_base_ + physical_heap_size_;
+        buf_end = (char *)heap_base_ + physical_heap_size_;
         register_size =
             remaining_size > adjusted_max_handle_len ? adjusted_max_handle_len : remaining_size;
 
@@ -1149,33 +1508,49 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::allocate_physical_memory_to_heap
                                                        (const CUmemAllocationProp *)&prop, 0));
         NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                               "cuMemCreate failed \n");
-        cumem_handles_.push_back(cumem_handle);
+
+        /* Global offset in the heap */
+        heap_offset = (off_t)(physical_heap_size_);
+        cumem_handles_.push_back(
+            std::make_tuple(cumem_handle, heap_offset /*mc_offset*/, mmap_offset, register_size));
 
         status = CUPFN(nvshmemi_cuda_syms,
-                       cuMemMap((CUdeviceptr)buf_calc, register_size, 0, cumem_handle, 0));
+                       cuMemMap((CUdeviceptr)buf_end, register_size, mmap_offset, cumem_handle, 0));
         NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                               "cuMemMap failed \n");
 
-        status = CUPFN(nvshmemi_cuda_syms, cuMemSetAccess((CUdeviceptr)buf_calc, register_size,
+        status = CUPFN(nvshmemi_cuda_syms, cuMemSetAccess((CUdeviceptr)buf_end, register_size,
                                                           (const CUmemAccessDesc *)&access, 1));
         NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                               "cuMemSetAccess failed \n");
-
+        status = nvls_bind_heap_memory(
+            (nvshmem_mem_handle_t *)&cumem_handle,
+            (off_t)(buf_end - buf_start) /*mc_offset or local offset per request */, mmap_offset,
+            register_size);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bind heap MC memory failed\n");
         status =
-            register_heap_memory((nvshmem_mem_handle_t *)&cumem_handle, buf_calc, register_size);
-        NVSHMEMI_NE_ERROR_JMP(status, 0, NVSHMEMX_ERROR_INTERNAL, out,
-                              "register heap handle failed \n");
-
+            register_heap_memory((nvshmem_mem_handle_t *)&cumem_handle, buf_end, register_size);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "register heap UC memory failed \n");
         remaining_size -= register_size;
     } while (remaining_size > 0);
 
     /* The above loop works iff remaining_size and adjusted_max_handle_len are both multiples of
      * mem_granularity_ */
 
+    /* Request is layout as follows
+     * Alloc start -> buf_start
+     * ........................
+     * Alloc end   -> buf_end + register_size
+     */
+    heap_offset = (off_t)(buf_start - (char *)heap_base_);
+    status = nvls_map_heap_memory(size, 0 /*mem_offset=0*/, heap_offset /*mc_offset*/);
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "map heap MC memory failed\n");
     status = nvshmemi_boot_handle.barrier(
         &nvshmemi_boot_handle); /* Wait for all PEs to setup the new memory */
 out:
     if (status) {
+        print_cumem_handles();
         cleanup_symmetric_heap();
     }
 
@@ -1219,14 +1594,6 @@ void *nvshmemi_symmetric_heap_vidmem_dynamic_vmm::allocate_symmetric_memory(size
         status = nvshmemi_update_device_state();
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "nvshmemi_update_device_state failed\n");
-    } else {
-        if ((count > 0 && type == NVSHMEMX_CALLOC) && (size > 0) && (ptr == NULL)) {
-            NVSHMEMI_ERROR_EXIT(
-                "nvshmem malloc failed (hint: check if total allocation has exceeded NVSHMEM "
-                "symmetric size = %zu, NVSHMEM symmetric size can be increased using "
-                "NVSHMEM_SYMMETRIC_SIZE environment variable) \n",
-                nvshmemi_options.SYMMETRIC_SIZE);
-        }
     }
 
 out:
@@ -1358,4 +1725,17 @@ void *nvshmem_ptr(const void *ptr, int pe) {
     }
 
     return NULL;
+}
+
+void *nvshmemx_mc_ptr(nvshmem_team_t team, const void *ptr) {
+    uintptr_t offset = (char *)ptr - (char *)nvshmemi_device_state.heap_base;
+    if (ptr >= nvshmemi_device_state.heap_base && offset < nvshmemi_device_state.heap_size) {
+        nvls::nvshmemi_nvls_rsc *nvls =
+            reinterpret_cast<nvls::nvshmemi_nvls_rsc *>(nvshmemi_team_pool[team]->nvls_rsc);
+        void *mc_addr = nvls->get_mc_base();
+        if (mc_addr != NULL) mc_addr = (void *)((char *)mc_addr + offset);
+        return mc_addr;
+    } else {
+        return NULL;
+    }
 }

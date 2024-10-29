@@ -36,7 +36,7 @@ void nvshmem_debug_log(nvshmem_debug_log_level level, unsigned long flags, const
     char hostname[1024];
     nvshmemu_gethostname(hostname, 1024);
     int cudaDev = -1;
-    cudaGetDevice(&cudaDev);
+    CUDA_RUNTIME_CHECK(cudaGetDevice(&cudaDev));
 
     char buffer[1024];
     size_t len = 0;

@@ -69,6 +69,10 @@ typedef struct nvshmemi_state_dec {
         same_gpu_other_pe_mps_events[MAX_PES_PER_GPU - 1]; /* CUDA IPC mapped mps_events from the
                                                               PEs sharing the same GPU */
     nvshmemi_shared_memory_info_t shm_info;
+    /* NVLS */
+    bool is_platform_nvls;
+    bool is_platform_nvl;
+    bool are_nics_ll128_compliant;
 } nvshmemi_state_t;
 
 extern nvshmemi_state_t *nvshmemi_state;

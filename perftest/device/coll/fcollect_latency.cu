@@ -145,12 +145,12 @@ int fcollect_calling_kernel(nvshmem_team_t team, void *dest, const void *source,
     }
 
     if (!mype) {
-        print_table("fcollect_device", "32-bit-thread", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_thread_lat, i);
-        print_table("fcollect_device", "32-bit-warp", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_warp_lat, i);
-        print_table("fcollect_device", "32-bit-block", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_block_lat, i);
+        print_table_v1("fcollect_device", "32-bit-thread", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_thread_lat, i);
+        print_table_v1("fcollect_device", "32-bit-warp", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_warp_lat, i);
+        print_table_v1("fcollect_device", "32-bit-block", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_block_lat, i);
     }
 
     i = 0;
@@ -245,12 +245,12 @@ int fcollect_calling_kernel(nvshmem_team_t team, void *dest, const void *source,
     }
 
     if (!mype) {
-        print_table("fcollect_device", "64-bit-thread", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_thread_lat, i);
-        print_table("fcollect_device", "64-bit-warp", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_warp_lat, i);
-        print_table("fcollect_device", "64-bit-block", "size (Bytes)", "latency", "us", '-',
-                    h_size_array, h_block_lat, i);
+        print_table_v1("fcollect_device", "64-bit-thread", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_thread_lat, i);
+        print_table_v1("fcollect_device", "64-bit-warp", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_warp_lat, i);
+        print_table_v1("fcollect_device", "64-bit-block", "size (Bytes)", "latency", "us", '-',
+                       h_size_array, h_block_lat, i);
     }
 
     return status;

@@ -215,118 +215,118 @@ void atomic_usage(void) {
         }                                                                                       \
     } while (0)
 
-#define RUN_TEST_WITHOUT_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat, h_size_arr,    \
-                             flag_init)                                                            \
-    do {                                                                                           \
-        int size = sizeof(TYPE);                                                                   \
-                                                                                                   \
-        int status = 0;                                                                            \
-        h_size_arr[0] = size;                                                                      \
-        void *args_1[] = {&flag_d, &mype, &skip};                                                  \
-        void *args_2[] = {&flag_d, &mype, &iter};                                                  \
-                                                                                                   \
-        float milliseconds;                                                                        \
-        cudaEvent_t start, stop;                                                                   \
-        cudaEventCreate(&start);                                                                   \
-        cudaEventCreate(&stop);                                                                    \
-                                                                                                   \
-        TYPE flag_init_var = flag_init;                                                            \
-        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
-        CUDA_CHECK(cudaDeviceSynchronize());                                                       \
-        nvshmem_barrier_all();                                                                     \
-                                                                                                   \
-        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_1,   \
-                                            0, stream);                                            \
-        if (status != NVSHMEMX_SUCCESS) {                                                          \
-            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                     \
-            exit(-1);                                                                              \
-        }                                                                                          \
-                                                                                                   \
-        cudaStreamSynchronize(stream);                                                             \
-                                                                                                   \
-        nvshmem_barrier_all();                                                                     \
-        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
-        cudaEventRecord(start, stream);                                                            \
-        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_2,   \
-                                            0, stream);                                            \
-        if (status != NVSHMEMX_SUCCESS) {                                                          \
-            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                     \
-            exit(-1);                                                                              \
-        }                                                                                          \
-        cudaEventRecord(stop, stream);                                                             \
-        cudaStreamSynchronize(stream);                                                             \
-        /* give latency in us */                                                                   \
-        cudaEventElapsedTime(&milliseconds, start, stop);                                          \
-        h_lat[0] = (milliseconds * 1000) / iter;                                                   \
-                                                                                                   \
-        nvshmem_barrier_all();                                                                     \
-                                                                                                   \
-        if (mype == 0) {                                                                           \
-            print_table("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)", "latency", \
-                        "us", '-', h_size_arr, h_lat, 1);                                          \
-        }                                                                                          \
-                                                                                                   \
-        CUDA_CHECK(cudaDeviceSynchronize());                                                       \
-                                                                                                   \
+#define RUN_TEST_WITHOUT_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat, h_size_arr,  \
+                             flag_init)                                                          \
+    do {                                                                                         \
+        int size = sizeof(TYPE);                                                                 \
+                                                                                                 \
+        int status = 0;                                                                          \
+        h_size_arr[0] = size;                                                                    \
+        void *args_1[] = {&flag_d, &mype, &skip};                                                \
+        void *args_2[] = {&flag_d, &mype, &iter};                                                \
+                                                                                                 \
+        float milliseconds;                                                                      \
+        cudaEvent_t start, stop;                                                                 \
+        cudaEventCreate(&start);                                                                 \
+        cudaEventCreate(&stop);                                                                  \
+                                                                                                 \
+        TYPE flag_init_var = flag_init;                                                          \
+        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));    \
+        CUDA_CHECK(cudaDeviceSynchronize());                                                     \
+        nvshmem_barrier_all();                                                                   \
+                                                                                                 \
+        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_1, \
+                                            0, stream);                                          \
+        if (status != NVSHMEMX_SUCCESS) {                                                        \
+            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                   \
+            exit(-1);                                                                            \
+        }                                                                                        \
+                                                                                                 \
+        cudaStreamSynchronize(stream);                                                           \
+                                                                                                 \
+        nvshmem_barrier_all();                                                                   \
+        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));    \
+        cudaEventRecord(start, stream);                                                          \
+        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_2, \
+                                            0, stream);                                          \
+        if (status != NVSHMEMX_SUCCESS) {                                                        \
+            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                   \
+            exit(-1);                                                                            \
+        }                                                                                        \
+        cudaEventRecord(stop, stream);                                                           \
+        cudaStreamSynchronize(stream);                                                           \
+        /* give latency in us */                                                                 \
+        cudaEventElapsedTime(&milliseconds, start, stop);                                        \
+        h_lat[0] = (milliseconds * 1000) / iter;                                                 \
+                                                                                                 \
+        nvshmem_barrier_all();                                                                   \
+                                                                                                 \
+        if (mype == 0) {                                                                         \
+            print_table_v1("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)",       \
+                           "latency", "us", '-', h_size_arr, h_lat, 1);                          \
+        }                                                                                        \
+                                                                                                 \
+        CUDA_CHECK(cudaDeviceSynchronize());                                                     \
+                                                                                                 \
     } while (0)
 
-#define RUN_TEST_WITH_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat, h_size_arr, val,  \
-                          cmp, flag_init)                                                          \
-    do {                                                                                           \
-        int size = sizeof(TYPE);                                                                   \
-        TYPE compare, value, flag_init_var;                                                        \
-                                                                                                   \
-        int status = 0;                                                                            \
-        h_size_arr[0] = size;                                                                      \
-        void *args_1[] = {&flag_d, &mype, &skip, &value, &compare};                                \
-        void *args_2[] = {&flag_d, &mype, &iter, &value, &compare};                                \
-                                                                                                   \
-        float milliseconds;                                                                        \
-        cudaEvent_t start, stop;                                                                   \
-        cudaEventCreate(&start);                                                                   \
-        cudaEventCreate(&stop);                                                                    \
-                                                                                                   \
-        compare = cmp;                                                                             \
-        value = val;                                                                               \
-        flag_init_var = flag_init;                                                                 \
-                                                                                                   \
-        CUDA_CHECK(cudaDeviceSynchronize());                                                       \
-        nvshmem_barrier_all();                                                                     \
-        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
-                                                                                                   \
-        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_1,   \
-                                            0, stream);                                            \
-        if (status != NVSHMEMX_SUCCESS) {                                                          \
-            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                     \
-            exit(-1);                                                                              \
-        }                                                                                          \
-                                                                                                   \
-        cudaStreamSynchronize(stream);                                                             \
-                                                                                                   \
-        nvshmem_barrier_all();                                                                     \
-        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));      \
-        cudaEventRecord(start, stream);                                                            \
-        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_2,   \
-                                            0, stream);                                            \
-        if (status != NVSHMEMX_SUCCESS) {                                                          \
-            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                     \
-            exit(-1);                                                                              \
-        }                                                                                          \
-        cudaEventRecord(stop, stream);                                                             \
-        cudaStreamSynchronize(stream);                                                             \
-        /* give latency in us */                                                                   \
-        cudaEventElapsedTime(&milliseconds, start, stop);                                          \
-        h_lat[0] = (milliseconds * 1000) / iter;                                                   \
-                                                                                                   \
-        nvshmem_barrier_all();                                                                     \
-                                                                                                   \
-        if (mype == 0) {                                                                           \
-            print_table("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)", "latency", \
-                        "us", '-', h_size_arr, h_lat, 1);                                          \
-        }                                                                                          \
-                                                                                                   \
-        CUDA_CHECK(cudaDeviceSynchronize());                                                       \
-                                                                                                   \
+#define RUN_TEST_WITH_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat, h_size_arr, val, \
+                          cmp, flag_init)                                                         \
+    do {                                                                                          \
+        int size = sizeof(TYPE);                                                                  \
+        TYPE compare, value, flag_init_var;                                                       \
+                                                                                                  \
+        int status = 0;                                                                           \
+        h_size_arr[0] = size;                                                                     \
+        void *args_1[] = {&flag_d, &mype, &skip, &value, &compare};                               \
+        void *args_2[] = {&flag_d, &mype, &iter, &value, &compare};                               \
+                                                                                                  \
+        float milliseconds;                                                                       \
+        cudaEvent_t start, stop;                                                                  \
+        cudaEventCreate(&start);                                                                  \
+        cudaEventCreate(&stop);                                                                   \
+                                                                                                  \
+        compare = cmp;                                                                            \
+        value = val;                                                                              \
+        flag_init_var = flag_init;                                                                \
+                                                                                                  \
+        CUDA_CHECK(cudaDeviceSynchronize());                                                      \
+        nvshmem_barrier_all();                                                                    \
+        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));     \
+                                                                                                  \
+        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_1,  \
+                                            0, stream);                                           \
+        if (status != NVSHMEMX_SUCCESS) {                                                         \
+            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                    \
+            exit(-1);                                                                             \
+        }                                                                                         \
+                                                                                                  \
+        cudaStreamSynchronize(stream);                                                            \
+                                                                                                  \
+        nvshmem_barrier_all();                                                                    \
+        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));     \
+        cudaEventRecord(start, stream);                                                           \
+        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_2,  \
+                                            0, stream);                                           \
+        if (status != NVSHMEMX_SUCCESS) {                                                         \
+            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                    \
+            exit(-1);                                                                             \
+        }                                                                                         \
+        cudaEventRecord(stop, stream);                                                            \
+        cudaStreamSynchronize(stream);                                                            \
+        /* give latency in us */                                                                  \
+        cudaEventElapsedTime(&milliseconds, start, stop);                                         \
+        h_lat[0] = (milliseconds * 1000) / iter;                                                  \
+                                                                                                  \
+        nvshmem_barrier_all();                                                                    \
+                                                                                                  \
+        if (mype == 0) {                                                                          \
+            print_table_v1("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)",        \
+                           "latency", "us", '-', h_size_arr, h_lat, 1);                           \
+        }                                                                                         \
+                                                                                                  \
+        CUDA_CHECK(cudaDeviceSynchronize());                                                      \
+                                                                                                  \
     } while (0)
 
 #define MAIN_CLEANUP(flag_d, stream, h_tables) \

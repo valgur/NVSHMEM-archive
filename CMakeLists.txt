@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 
+enable_testing()
+
 set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
 if (DEFINED ENV{NVSHMEM_USE_GDRCOPY})
@@ -12,6 +14,19 @@ if (DEFINED ENV{NVSHMEM_DISABLE_COLL_POLL})
   set(NVSHMEM_DISABLE_COLL_POLL_DEFAULT $ENV{NVSHMEM_DISABLE_COLL_POLL})
 else()
   set(NVSHMEM_DISABLE_COLL_POLL_DEFAULT ON)
+endif()
+
+# only use TGZ if NVSHMEM_BUILD_TGZ_PACKAGE is set to ON
+if (DEFINED ENV{NVSHMEM_BUILD_TGZ_PACKAGE})
+  set(NVSHMEM_BUILD_TGZ_PACKAGE_DEFAULT $ENV{NVSHMEM_BUILD_TGZ_PACKAGE})
+else()
+  set(NVSHMEM_BUILD_TGZ_PACKAGE_DEFAULT OFF)
+endif()
+
+if (DEFINED ENV{NVSHMEM_BUILD_TXZ_PACKAGE})
+  set(NVSHMEM_BUILD_TXZ_PACKAGE_DEFAULT $ENV{NVSHMEM_BUILD_TXZ_PACKAGE})
+else()
+  set(NVSHMEM_BUILD_TXZ_PACKAGE_DEFAULT ON)
 endif()
 
 if (DEFINED ENV{NVSHMEM_BUILD_RPM_PACKAGE})
@@ -42,6 +57,14 @@ if (DEFINED ENV{NVSHMEM_NVTX})
   set(NVSHMEM_NVTX_DEFAULT $ENV{NVSHMEM_NVTX})
 else()
   set(NVSHMEM_NVTX_DEFAULT ON)
+endif()
+
+if (DEFINED ENV{NVSHMEM_DEVICELIB_CUDA_HOME})
+  set(NVSHMEM_DEVICELIB_CUDA_HOME_DEFAULT $ENV{NVSHMEM_DEVICELIB_CUDA_HOME})
+elseif(DEFINED ENV{CUDA_HOME})
+  set(NVSHMEM_DEVICELIB_CUDA_HOME_DEFAULT $ENV{CUDA_HOME})
+else()
+  set(NVSHMEM_DEVICELIB_CUDA_HOME_DEFAULT "/usr/local/cuda")
 endif()
 
 if (DEFINED ENV{CUDA_HOME})
@@ -125,10 +148,14 @@ option(NVSHMEM_USE_NCCL "Enable compilation of NVSHMEM NCCL dependent code" $ENV
 option(NVSHMEM_USE_GDRCOPY "Enable compilation of GDRCopy offload paths for atomics in remote transports" ${NVSHMEM_USE_GDRCOPY_DEFAULT})
 option(NVSHMEM_VERBOSE "Enable the ptxas verbose compilation option" $ENV{NVSHMEM_VERBOSE})
 option(NVSHMEM_BUILD_TESTS "Build tests" ON)
+option(NVSHMEM_INSTALL_FUNCTIONAL_TESTS "Install functional tests" OFF)
 option(NVSHMEM_BUILD_EXAMPLES "Build examples" ON)
 option(NVSHMEM_BUILD_PACKAGES "Build package dependencies" $ENV{NVSHMEM_BUILD_PACKAGES})
+option(NVSHMEM_BUILD_TGZ_PACKAGE "Build package dependencies" ${NVSHMEM_BUILD_TGZ_PACKAGE_DEFAULT})
+option(NVSHMEM_BUILD_TXZ_PACKAGE "Build package dependencies" ${NVSHMEM_BUILD_TXZ_PACKAGE_DEFAULT})
 option(NVSHMEM_BUILD_RPM_PACKAGE "Build package dependencies" ${NVSHMEM_BUILD_RPM_PACKAGE_DEFAULT})
 option(NVSHMEM_BUILD_DEB_PACKAGE "Build package dependencies" ${NVSHMEM_BUILD_DEB_PACKAGE_DEFAULT})
+set(NVSHMEM_DEVICELIB_CUDA_HOME ${NVSHMEM_DEVICELIB_CUDA_HOME_DEFAULT} CACHE PATH "path to CUDA installation")
 set(CUDA_HOME ${CUDA_HOME_DEFAULT} CACHE PATH "path to CUDA installation")
 set(GDRCOPY_HOME ${GDRCOPY_HOME_DEFAULT} CACHE PATH "path to GDRCOPY installation")
 set(LIBFABRIC_HOME ${LIBFABRIC_HOME_DEFAULT} CACHE PATH "path to libfabric installation")
@@ -189,19 +216,18 @@ message(STATUS "NVSHMEM_VERBOSE: ${NVSHMEM_VERBOSE}")
 
 if (NVSHMEM_DEBUG)
 	message(STATUS "Setting build type to Debug as requested by the environment.")
-  set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
+  set(CMAKE_BUILD_TYPE "debug" CACHE STRING "Choose the type of build." FORCE)
 endif()
+
+set(default_build_type "release")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "Setting build type to '${default_build_type}' as none was specified.")
   set(CMAKE_BUILD_TYPE "${default_build_type}" CACHE STRING "Choose the type of build." FORCE)
 endif()
 
-# Set a default build type if none was specified
-set(default_build_type "Release")
-
 # Set the possible values of build type
-set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release"
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "debug" "release"
              "MinSizeRel" "RelWithDebInfo")
 
 # Allow users to set the CUDA toolkit through the env.
@@ -216,8 +242,6 @@ set(CMAKE_SKIP_BUILD_RPATH  FALSE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 set(CMAKE_INSTALL_RPATH "$\{ORIGIN\}")
 set(CMAKE_EXE_LINKER_FLAGS "-Wl,--enable-new-dtags")
-
-set(CMAKE_INSTALL_PREFIX "${NVSHMEM_PREFIX}" CACHE PATH "..." FORCE)
 
 # Save value of CMAKE_CUDA_ARCHITECTURES before calling project()
 # This is to solve a chicken-egg problem. It seems FIND_CUDA doesn't
@@ -235,8 +259,12 @@ endif()
 project(
   NVSHMEM
   LANGUAGES CUDA CXX C
-  VERSION 3.0.6.4
+  VERSION 3.1.7.0
 )
+
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+  set_property(CACHE CMAKE_INSTALL_PREFIX PROPERTY VALUE "${NVSHMEM_PREFIX}")
+endif()
 
 find_package(CUDAToolkit)
 
@@ -245,11 +273,11 @@ if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
     set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCHITECTURES} CACHE STRING "CUDA ARCHITECTURES" FORCE)
   else()
     if(CUDAToolkit_VERSION_MAJOR LESS 11)
-      set(CMAKE_CUDA_ARCHITECTURES 70 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      set(CMAKE_CUDA_ARCHITECTURES "70" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 AND CUDAToolkit_VERSION_MINOR LESS 8)
-      set(CMAKE_CUDA_ARCHITECTURES 70 80 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      set(CMAKE_CUDA_ARCHITECTURES "70;80" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     else()
-      set(CMAKE_CUDA_ARCHITECTURES 70 80 90 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      set(CMAKE_CUDA_ARCHITECTURES "70;80;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     endif()
   endif()
 endif()
@@ -343,18 +371,8 @@ endif()
 cmake_policy(SET CMP0105 NEW)
 set(CMAKE_CUDA_DEVICE_COMPILER_WRAPPER_FLAG "")
 add_subdirectory(src)
-if(NVSHMEM_BUILD_EXAMPLES)
-  add_subdirectory(examples)
-endif()
-if(NVSHMEM_BUILD_TESTS)
-  add_subdirectory(perftest)
-  if(EXISTS ${CMAKE_SOURCE_DIR}/test) 
-    add_subdirectory(test)
-  endif()
-endif()
 
-configure_file(NVSHMEM-SLA.txt NVSHMEM-SLA.txt COPYONLY)
-configure_file(COPYRIGHT.txt COPYRIGHT.txt COPYONLY)
+configure_file(License.txt License.txt COPYONLY)
 
 set(INCLUDE_INSTALL_DIR include/)
 set(LIB_INSTALL_DIR lib/)
