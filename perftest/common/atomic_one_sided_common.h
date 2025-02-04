@@ -20,59 +20,15 @@
 #include <unistd.h>
 #include "utils.h"
 
-void atomic_op_parse(char *v[], nvshmemi_amo_t *atomic_op) {
-    char *amo = v[1];
-    size_t string_length = strnlen(amo, 20);
-
-    if (strncmp(amo, "inc", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_INC;
-    } else if (strncmp(amo, "fetch_inc", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_INC;
-    } else if (strncmp(amo, "set", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_SET;
-    } else if (strncmp(amo, "add", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_ADD;
-    } else if (strncmp(amo, "fetch_add", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_ADD;
-    } else if (strncmp(amo, "and", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_AND;
-    } else if (strncmp(amo, "fetch_and", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_AND;
-    } else if (strncmp(amo, "or", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_OR;
-    } else if (strncmp(amo, "fetch_or", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_OR;
-    } else if (strncmp(amo, "xor", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_XOR;
-    } else if (strncmp(amo, "fetch_xor", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_XOR;
-    } else if (strncmp(amo, "swap", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_SWAP;
-    } else if (strncmp(amo, "compare_swap", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_COMPARE_SWAP;
-    } else {
-        *atomic_op = NVSHMEMI_AMO_ACK;
+#define DEFINE_ATOMIC_LATENCY_CALL_KERNEL(AMO, TYPE_NAME)                                      \
+    void test_lat_##TYPE_NAME##_##AMO##_cubin(cudaStream_t stream, void **arglist) {           \
+        CUfunction test_cubin;                                                                 \
+        init_test_case_kernel(&test_cubin, NVSHMEMI_TEST_STRINGIFY(lat_##TYPE_NAME##_##AMO));  \
+        CU_CHECK(cuLaunchCooperativeKernel(test_cubin, 1, 1, 1, 1, 1, 1, 0, stream, arglist)); \
     }
-}
-
-void atomic_usage(void) {
-    fprintf(stderr, "Please supply an atomic operation to perform. Valid options are: \n");
-    fprintf(stderr, "inc\n");
-    fprintf(stderr, "fetch_inc\n");
-    fprintf(stderr, "set\n");
-    fprintf(stderr, "add\n");
-    fprintf(stderr, "fetch_add\n");
-    fprintf(stderr, "and\n");
-    fprintf(stderr, "fetch_and\n");
-    fprintf(stderr, "or\n");
-    fprintf(stderr, "fetch_or\n");
-    fprintf(stderr, "xor\n");
-    fprintf(stderr, "fetch_xor\n");
-    fprintf(stderr, "swap\n");
-    fprintf(stderr, "compare_swap\n");
-}
 
 #define DEFINE_LAT_NON_FETCH_TEST_FOR_AMO_NO_ARG(TYPE, TYPE_NAME, AMO)                         \
+    DEFINE_ATOMIC_LATENCY_CALL_KERNEL(AMO, TYPE_NAME)                                          \
     __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter) {                  \
         int i, tid, peer;                                                                      \
                                                                                                \
@@ -89,6 +45,7 @@ void atomic_usage(void) {
     }
 
 #define DEFINE_LAT_FETCH_TEST_FOR_AMO_NO_ARG(TYPE, TYPE_NAME, AMO)                             \
+    DEFINE_ATOMIC_LATENCY_CALL_KERNEL(AMO, TYPE_NAME)                                          \
     __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter) {                  \
         int i, tid, peer;                                                                      \
                                                                                                \
@@ -105,6 +62,7 @@ void atomic_usage(void) {
     }
 
 #define DEFINE_LAT_NON_FETCH_TEST_FOR_AMO_ONE_ARG(TYPE, TYPE_NAME, AMO, COMPARE_EXPR, SET_EXPR) \
+    DEFINE_ATOMIC_LATENCY_CALL_KERNEL(AMO, TYPE_NAME)                                           \
     __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, TYPE value,         \
                                             TYPE cmp) {                                         \
         int i, tid, peer;                                                                       \
@@ -122,6 +80,7 @@ void atomic_usage(void) {
     }
 
 #define DEFINE_LAT_FETCH_TEST_FOR_AMO_ONE_ARG(TYPE, TYPE_NAME, AMO, COMPARE_EXPR, SET_EXPR)    \
+    DEFINE_ATOMIC_LATENCY_CALL_KERNEL(AMO, TYPE_NAME)                                          \
     __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, TYPE value,        \
                                             TYPE cmp) {                                        \
         int i, tid, peer;                                                                      \
@@ -139,6 +98,7 @@ void atomic_usage(void) {
     }
 
 #define DEFINE_LAT_NON_FETCH_TEST_FOR_AMO_TWO_ARG(TYPE, TYPE_NAME, AMO, COMPARE_EXPR, SET_EXPR) \
+    DEFINE_ATOMIC_LATENCY_CALL_KERNEL(AMO, TYPE_NAME)                                           \
     __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, TYPE value,         \
                                             TYPE cmp) {                                         \
         int i, tid, peer;                                                                       \
@@ -155,6 +115,7 @@ void atomic_usage(void) {
     }
 
 #define DEFINE_LAT_FETCH_TEST_FOR_AMO_TWO_ARG(TYPE, TYPE_NAME, AMO, COMPARE_EXPR, SET_EXPR)     \
+    DEFINE_ATOMIC_LATENCY_CALL_KERNEL(AMO, TYPE_NAME)                                           \
     __global__ void lat_##TYPE_NAME##_##AMO(TYPE *flag_d, int pe, int iter, TYPE value,         \
                                             TYPE cmp) {                                         \
         int i, tid, peer;                                                                       \
@@ -171,103 +132,100 @@ void atomic_usage(void) {
         }                                                                                       \
     }
 
-#define MAIN_SETUP(c, v, mype, npes, flag_d, stream, h_size_arr, h_tables, h_lat, atomic_op)    \
+#define MAIN_SETUP(c, v, mype, npes, flag_d, stream, h_size_arr, h_tables, h_lat) \
+    do {                                                                          \
+        init_wrapper(&c, &v);                                                     \
+                                                                                  \
+        if (use_cubin) {                                                          \
+            init_cumodule(CUMODULE_NAME);                                         \
+        }                                                                         \
+                                                                                  \
+        mype = nvshmem_my_pe();                                                   \
+        npes = nvshmem_n_pes();                                                   \
+                                                                                  \
+        if (npes != 2) {                                                          \
+            fprintf(stderr, "This test requires exactly two processes  \n");      \
+            finalize_wrapper();                                                   \
+            exit(-1);                                                             \
+        }                                                                         \
+                                                                                  \
+        alloc_tables(&h_tables, 2, 1);                                            \
+        h_size_arr = (uint64_t *)h_tables[0];                                     \
+        h_lat = (double *)h_tables[1];                                            \
+                                                                                  \
+        flag_d = nvshmem_malloc(sizeof(uint64_t));                                \
+        CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));                      \
+                                                                                  \
+        CUDA_CHECK(cudaStreamCreate(&stream));                                    \
+                                                                                  \
+        nvshmem_barrier_all();                                                    \
+                                                                                  \
+        CUDA_CHECK(cudaDeviceSynchronize());                                      \
+                                                                                  \
+        if (mype == 0) {                                                          \
+            printf("Note: This test measures full round-trip latency\n");         \
+        }                                                                         \
+    } while (0)
+
+#define LAUNCH_KERNEL(TYPE_NAME, AMO, ARGLIST, STREAM)                                            \
+    if (use_cubin) {                                                                              \
+        test_lat_##TYPE_NAME##_##AMO##_cubin(STREAM, ARGLIST);                                    \
+    } else {                                                                                      \
+        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, ARGLIST, \
+                                            0, STREAM);                                           \
+        if (status != NVSHMEMX_SUCCESS) {                                                         \
+            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                    \
+            exit(-1);                                                                             \
+        }                                                                                         \
+    }
+
+#define RUN_TEST_WITHOUT_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat, h_size_arr, \
+                             flag_init)                                                         \
     do {                                                                                        \
-        if (c == 1) {                                                                           \
-            fprintf(stderr, "You must pass a valid atomic operation name to the exeutable.\n"); \
-            atomic_usage();                                                                     \
-        } else {                                                                                \
-            *atomic_op = NVSHMEMI_AMO_ACK;                                                      \
-            atomic_op_parse(v, atomic_op);                                                      \
-            if (*atomic_op == NVSHMEMI_AMO_ACK) {                                               \
-                fprintf(stderr, "Error, No valid atomic supplied, exiting.\n");                 \
-            }                                                                                   \
-        }                                                                                       \
-        /* Ignore the initial atomic argument if they pass MPI args. */                         \
-        c--;                                                                                    \
-        v++;                                                                                    \
-        init_wrapper(&c, &v);                                                                   \
+        int size = sizeof(TYPE);                                                                \
                                                                                                 \
-        mype = nvshmem_my_pe();                                                                 \
-        npes = nvshmem_n_pes();                                                                 \
+        int status = 0;                                                                         \
+        h_size_arr[0] = size;                                                                   \
+        void *args_1[] = {&flag_d, &mype, &skip};                                               \
+        void *args_2[] = {&flag_d, &mype, &iter};                                               \
                                                                                                 \
-        if (npes != 2) {                                                                        \
-            fprintf(stderr, "This test requires exactly two processes  \n");                    \
-            finalize_wrapper();                                                                 \
+        float milliseconds;                                                                     \
+        cudaEvent_t start, stop;                                                                \
+        cudaEventCreate(&start);                                                                \
+        cudaEventCreate(&stop);                                                                 \
+                                                                                                \
+        TYPE flag_init_var = flag_init;                                                         \
+        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));   \
+        CUDA_CHECK(cudaDeviceSynchronize());                                                    \
+        nvshmem_barrier_all();                                                                  \
+                                                                                                \
+        LAUNCH_KERNEL(TYPE_NAME, AMO, args_1, stream);                                          \
+        if (status != NVSHMEMX_SUCCESS) {                                                       \
+            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                  \
             exit(-1);                                                                           \
         }                                                                                       \
                                                                                                 \
-        alloc_tables(&h_tables, 2, 1);                                                          \
-        h_size_arr = (uint64_t *)h_tables[0];                                                   \
-        h_lat = (double *)h_tables[1];                                                          \
+        cudaStreamSynchronize(stream);                                                          \
                                                                                                 \
-        flag_d = nvshmem_malloc(sizeof(uint64_t));                                              \
-        CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));                                    \
-                                                                                                \
-        CUDA_CHECK(cudaStreamCreate(&stream));                                                  \
+        nvshmem_barrier_all();                                                                  \
+        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));   \
+        cudaEventRecord(start, stream);                                                         \
+        LAUNCH_KERNEL(TYPE_NAME, AMO, args_2, stream)                                           \
+        cudaEventRecord(stop, stream);                                                          \
+        cudaStreamSynchronize(stream);                                                          \
+        /* give latency in us */                                                                \
+        cudaEventElapsedTime(&milliseconds, start, stop);                                       \
+        h_lat[0] = (milliseconds * 1000) / iter;                                                \
                                                                                                 \
         nvshmem_barrier_all();                                                                  \
                                                                                                 \
+        if (mype == 0) {                                                                        \
+            print_table_basic("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)",   \
+                              "latency", "us", '-', h_size_arr, h_lat, 1);                      \
+        }                                                                                       \
+                                                                                                \
         CUDA_CHECK(cudaDeviceSynchronize());                                                    \
                                                                                                 \
-        if (mype == 0) {                                                                        \
-            printf("Note: This test measures full round-trip latency\n");                       \
-        }                                                                                       \
-    } while (0)
-
-#define RUN_TEST_WITHOUT_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat, h_size_arr,  \
-                             flag_init)                                                          \
-    do {                                                                                         \
-        int size = sizeof(TYPE);                                                                 \
-                                                                                                 \
-        int status = 0;                                                                          \
-        h_size_arr[0] = size;                                                                    \
-        void *args_1[] = {&flag_d, &mype, &skip};                                                \
-        void *args_2[] = {&flag_d, &mype, &iter};                                                \
-                                                                                                 \
-        float milliseconds;                                                                      \
-        cudaEvent_t start, stop;                                                                 \
-        cudaEventCreate(&start);                                                                 \
-        cudaEventCreate(&stop);                                                                  \
-                                                                                                 \
-        TYPE flag_init_var = flag_init;                                                          \
-        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));    \
-        CUDA_CHECK(cudaDeviceSynchronize());                                                     \
-        nvshmem_barrier_all();                                                                   \
-                                                                                                 \
-        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_1, \
-                                            0, stream);                                          \
-        if (status != NVSHMEMX_SUCCESS) {                                                        \
-            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                   \
-            exit(-1);                                                                            \
-        }                                                                                        \
-                                                                                                 \
-        cudaStreamSynchronize(stream);                                                           \
-                                                                                                 \
-        nvshmem_barrier_all();                                                                   \
-        CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));    \
-        cudaEventRecord(start, stream);                                                          \
-        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_2, \
-                                            0, stream);                                          \
-        if (status != NVSHMEMX_SUCCESS) {                                                        \
-            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                   \
-            exit(-1);                                                                            \
-        }                                                                                        \
-        cudaEventRecord(stop, stream);                                                           \
-        cudaStreamSynchronize(stream);                                                           \
-        /* give latency in us */                                                                 \
-        cudaEventElapsedTime(&milliseconds, start, stop);                                        \
-        h_lat[0] = (milliseconds * 1000) / iter;                                                 \
-                                                                                                 \
-        nvshmem_barrier_all();                                                                   \
-                                                                                                 \
-        if (mype == 0) {                                                                         \
-            print_table_v1("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)",       \
-                           "latency", "us", '-', h_size_arr, h_lat, 1);                          \
-        }                                                                                        \
-                                                                                                 \
-        CUDA_CHECK(cudaDeviceSynchronize());                                                     \
-                                                                                                 \
     } while (0)
 
 #define RUN_TEST_WITH_ARG(TYPE, TYPE_NAME, AMO, flag_d, mype, iter, skip, h_lat, h_size_arr, val, \
@@ -294,24 +252,14 @@ void atomic_usage(void) {
         nvshmem_barrier_all();                                                                    \
         CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));     \
                                                                                                   \
-        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_1,  \
-                                            0, stream);                                           \
-        if (status != NVSHMEMX_SUCCESS) {                                                         \
-            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                    \
-            exit(-1);                                                                             \
-        }                                                                                         \
+        LAUNCH_KERNEL(TYPE_NAME, AMO, args_1, stream)                                             \
                                                                                                   \
         cudaStreamSynchronize(stream);                                                            \
                                                                                                   \
         nvshmem_barrier_all();                                                                    \
         CUDA_CHECK(cudaMemcpy(flag_d, &flag_init_var, sizeof(TYPE), cudaMemcpyHostToDevice));     \
         cudaEventRecord(start, stream);                                                           \
-        status = nvshmemx_collective_launch((const void *)lat_##TYPE_NAME##_##AMO, 1, 1, args_2,  \
-                                            0, stream);                                           \
-        if (status != NVSHMEMX_SUCCESS) {                                                         \
-            fprintf(stderr, "shmemx_collective_launch failed %d  \n", status);                    \
-            exit(-1);                                                                             \
-        }                                                                                         \
+        LAUNCH_KERNEL(TYPE_NAME, AMO, args_2, stream)                                             \
         cudaEventRecord(stop, stream);                                                            \
         cudaStreamSynchronize(stream);                                                            \
         /* give latency in us */                                                                  \
@@ -321,8 +269,8 @@ void atomic_usage(void) {
         nvshmem_barrier_all();                                                                    \
                                                                                                   \
         if (mype == 0) {                                                                          \
-            print_table_v1("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)",        \
-                           "latency", "us", '-', h_size_arr, h_lat, 1);                           \
+            print_table_basic("shmem_at_" #TYPE "_" #AMO "_ping_lat", "None", "size (Bytes)",     \
+                              "latency", "us", '-', h_size_arr, h_lat, 1);                        \
         }                                                                                         \
                                                                                                   \
         CUDA_CHECK(cudaDeviceSynchronize());                                                      \

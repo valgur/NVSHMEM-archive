@@ -8,7 +8,7 @@
 #define _NVSHMEMI_DEVICE_COLL_UTILS_H_
 
 #include <cuda_runtime.h>
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <type_traits>
 #else
 #include <cuda/std/type_traits>
@@ -35,7 +35,8 @@ And hence the data may not be visible after the barrier operation.
 */
 #ifdef __CUDA_ARCH__
 template <typename T>
-__device__ inline void nvshmemi_signal_for_barrier(T *dest, const T value, int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_signal_for_barrier(T *dest, const T value,
+                                                                          int pe) {
     const void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
     if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST) {

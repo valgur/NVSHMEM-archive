@@ -6,7 +6,8 @@
 
 #ifdef __CUDA_ARCH__
 
-__device__ static inline int nvshmemi_team_my_pe(nvshmem_team_t team) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_team_my_pe(
+    nvshmem_team_t team) {
     if (team == NVSHMEM_TEAM_INVALID)
         return -1;
     else if (team == NVSHMEM_TEAM_WORLD)
@@ -17,7 +18,7 @@ __device__ static inline int nvshmemi_team_my_pe(nvshmem_team_t team) {
         return nvshmemi_device_state_d.team_pool[team]->my_pe;
 }
 
-__device__ inline int nvshmemi_team_n_pes(nvshmem_team_t team) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_team_n_pes(nvshmem_team_t team) {
     if (team == NVSHMEM_TEAM_INVALID)
         return -1;
     else if (team == NVSHMEM_TEAM_WORLD)
@@ -28,7 +29,7 @@ __device__ inline int nvshmemi_team_n_pes(nvshmem_team_t team) {
         return nvshmemi_device_state_d.team_pool[team]->size;
 }
 
-static inline __device__ size_t get_fcollect_psync_len_per_team() {
+NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE __device__ size_t get_fcollect_psync_len_per_team() {
     size_t fcollect_ll_threshold =
         nvshmemi_device_state_d.gpu_coll_env_params_var.fcollect_ll_threshold;
     size_t fcollect_sync_size =
@@ -37,7 +38,8 @@ static inline __device__ size_t get_fcollect_psync_len_per_team() {
     return fcollect_sync_size;
 }
 
-static inline __device__ size_t get_fcollect_ll128_psync_len_per_team() {
+NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE __device__ size_t
+get_fcollect_ll128_psync_len_per_team() {
     size_t fcollect_ll128_threshold =
         nvshmemi_device_state_d.gpu_coll_env_params_var.fcollect_ll128_threshold;
     size_t fcollect_ll128_sync_size =
@@ -50,7 +52,7 @@ static inline __device__ size_t get_fcollect_ll128_psync_len_per_team() {
     return fcollect_ll128_sync_size;
 }
 
-static inline __device__ size_t get_psync_len_per_team() {
+NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE __device__ size_t get_psync_len_per_team() {
     size_t fcollect_sync_size = get_fcollect_psync_len_per_team();
     size_t fcollect_ll128_sync_size = get_fcollect_ll128_psync_len_per_team();
     /* sync: Two buffers are used - one for sync/barrier collective ops, the second one during team
@@ -67,8 +69,8 @@ static inline __device__ size_t get_psync_len_per_team() {
             fcollect_ll128_sync_size);
 }
 
-__device__ static inline int nvshmemi_pe_in_active_set(int global_pe, int PE_start, int PE_stride,
-                                                       int PE_size) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_pe_in_active_set(
+    int global_pe, int PE_start, int PE_stride, int PE_size) {
     int n = (global_pe - PE_start) / PE_stride;
     if (global_pe < PE_start || (global_pe - PE_start) % PE_stride || n >= PE_size)
         return -1;
@@ -77,8 +79,9 @@ __device__ static inline int nvshmemi_pe_in_active_set(int global_pe, int PE_sta
     }
 }
 
-__device__ inline int nvshmemi_team_translate_pe(nvshmem_team_t src_team, int src_pe,
-                                                 nvshmem_team_t dest_team) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_team_translate_pe(nvshmem_team_t src_team,
+                                                                        int src_pe,
+                                                                        nvshmem_team_t dest_team) {
     if (src_team == NVSHMEM_TEAM_INVALID || dest_team == NVSHMEM_TEAM_INVALID) return -1;
     nvshmemi_team_t *src_teami, *dest_teami;
 
@@ -97,7 +100,8 @@ __device__ inline int nvshmemi_team_translate_pe(nvshmem_team_t src_team, int sr
     return dest_pe;
 }
 
-__device__ inline long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_team_op_t op) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE long *nvshmemi_team_get_psync(nvshmemi_team_t *team,
+                                                                       nvshmemi_team_op_t op) {
     long *team_psync;
     size_t psync_fcollect_len;
     psync_fcollect_len = get_fcollect_psync_len_per_team();
@@ -138,7 +142,8 @@ __device__ inline long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_
     }
 }
 
-__device__ inline long *nvshmemi_team_get_sync_counter(nvshmemi_team_t *team) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE long *nvshmemi_team_get_sync_counter(
+    nvshmemi_team_t *team) {
     return &nvshmemi_device_state_d.sync_counter[2 * team->team_idx];
 }
 #endif

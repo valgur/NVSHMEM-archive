@@ -22,7 +22,7 @@
 #define DEFAULT_MIN_MSG_SIZE 1
 #define DEFAULT_MAX_MSG_SIZE 128 * 1024 * 1024
 
-typedef enum { PUSH = 0, PULL = 1 } dir_t;
+typedef enum { PUSH = 0, PULL = 1 } putget_dir_t;
 
 __global__ void test_kernel(void *data_d_local, long long int ncycles) {
     long long int sclk = clock64();
@@ -33,7 +33,7 @@ __global__ void test_kernel(void *data_d_local, long long int ncycles) {
     *(long long int *)data_d_local = cyc;
 }
 
-int lat(void *data_d, void *data_d_local, int sizeBytes, int pe, int iter, dir_t dir,
+int lat(void *data_d, void *data_d_local, int sizeBytes, int pe, int iter, putget_dir_t dir,
         cudaStream_t strm, cudaEvent_t sev, cudaEvent_t eev, float *ms1, float *ms2, int ng, int nb,
         long long int ncycles) {
     int status = 0;
@@ -92,7 +92,7 @@ int main(int argc, char *argv[]) {
     int num_entries;
     int i;
 
-    dir_t dir = PUSH;
+    putget_dir_t dir = PUSH;
     int iter = DEFAULT_ITERS;
     int min_msg_size = DEFAULT_MIN_MSG_SIZE;
     int max_msg_size = DEFAULT_MAX_MSG_SIZE;
@@ -127,7 +127,7 @@ int main(int argc, char *argv[]) {
                 iter = strtol(optarg, NULL, 0);
                 break;
             case 'd':
-                dir = (dir_t)strtol(optarg, NULL, 0);
+                dir = (putget_dir_t)strtol(optarg, NULL, 0);
                 break;
             case 'b':
                 nb = strtol(optarg, NULL, 0);
@@ -192,10 +192,10 @@ int main(int argc, char *argv[]) {
             i++;
         }
 
-        print_table_v1("Stream_Latency", "with _on_stream", "size (Bytes)", "latency", "us", '-',
-                       size_array, ons_latency_array, i);
-        print_table_v1("Stream_Latency", "without _on_stream", "size (Bytes)", "latency", "us", '-',
-                       size_array, offs_latency_array, i);
+        print_table_basic("Stream_Latency", "with _on_stream", "size (Bytes)", "latency", "us", '-',
+                          size_array, ons_latency_array, i);
+        print_table_basic("Stream_Latency", "without _on_stream", "size (Bytes)", "latency", "us",
+                          '-', size_array, offs_latency_array, i);
 
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));

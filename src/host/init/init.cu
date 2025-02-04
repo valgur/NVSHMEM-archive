@@ -44,8 +44,6 @@
 #include "internal/host/shared_memory.h"
 #include "internal/host/nvshmemi_symmetric_heap.hpp"
 
-using namespace std;
-
 extern __constant__ nvshmemi_device_host_state_t nvshmemi_device_state_d;
 static std::map<void *, int> registered_device_states;
 static std::set<nvshmemx_device_lib_init_cb> registered_device_state_cb;
@@ -74,7 +72,7 @@ int nvshmemi_can_flush_remote_writes = false;
 FILE *nvshmem_debug_file = stdout;
 static char shm_name[100];
 nvshmemi_version_t nvshmemi_host_lib_version = {
-    NVSHMEM_INTERLIB_MAJOR_VERSION, NVSHMEM_INTERLIB_MINOR_VERSION, NVSHMEM_INTERLIB_PATCH_VERSION};
+    NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
 
 #ifdef NVSHMEM_TRACE
 std::chrono::high_resolution_clock::time_point nvshmem_epoch;
@@ -671,7 +669,7 @@ static bool mpsServerRunning(int *serverPID) {
     }
 
     if (serverPID) {
-        stringstream ss(line);
+        std::stringstream ss(line);
         int result;
         ss >> result;
         *serverPID = result;
@@ -687,7 +685,7 @@ static bool get_mps_server_active_thread_percentage(float *percentage) {
     int ret;
     char *retstr = NULL;
     bool status = false;
-    stringstream cmd;
+    std::stringstream cmd;
     int serverPID;
     /* one PE per node queries the control daemon */
     if (nvshmemi_state->mype == nvshmemi_team_node.start) {
@@ -716,7 +714,7 @@ static bool get_mps_server_active_thread_percentage(float *percentage) {
 
         if (percentage) {
             int result;
-            stringstream ss(line);
+            std::stringstream ss(line);
             ss >> result;
             *percentage = result;
         }
@@ -725,7 +723,11 @@ static bool get_mps_server_active_thread_percentage(float *percentage) {
     /* for lack of a better available bootstrap collective, using allagther */
     status = nvshmemi_boot_handle.allgather((void *)percentage, (void *)scratch, sizeof(float),
                                             &nvshmemi_boot_handle);
-    *percentage = scratch[nvshmemi_team_node.start];
+
+    if (percentage) {
+        *percentage = scratch[nvshmemi_team_node.start];
+    }
+
     free(scratch);
 
     return true;
@@ -954,16 +956,20 @@ int nvshmemi_common_init(nvshmemi_state_t *state) {
         INFO(NVSHMEM_INIT, "CUDA 64-bit stream memops support is not available");
     }
 
-    /* Set max teams before reserving heap */
-    status = nvshmemi_set_max_teams();
-    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Requested too many teams.\n");
-
     /* Context needs to be retrieved and memops flag need to be applied before heap is initialized
      */
     nvshmemi_init_symmetric_heap(state, nvshmemi_use_cuda_vmm,
                                  nvshmemi_device_state.symmetric_heap_kind);
 
+    /* Detect NVLS support before increasing max teams count for NVLS capable platform
+     * Depends on heap type being discovered aprior
+     */
     nvshmemi_detect_nvls_support(state);
+
+    /* Set max teams before reserving heap */
+    status = nvshmemi_set_max_teams();
+    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "Requested too many teams.\n");
+
     nvshmemi_get_mem_handle(&dev_state_ptr, &transport_dev_state_ptr);
     NVSHMEMI_NULL_ERROR_JMP(dev_state_ptr, status, NVSHMEMX_ERROR_INVALID_VALUE, out,
                             "Unable to query pointer information.\n");
@@ -1675,9 +1681,8 @@ int nvshmemx_cumodule_init(CUmodule module) {
     CUCHECKGOTO(nvshmemi_cuda_syms,
                 cuModuleGetGlobal(&dptr, &size, module, "nvshmemi_device_state_d"), status, out);
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    CUCHECKGOTO(nvshmemi_cuda_syms,
-                cuModuleGetGlobal(&transport_dptr, &size, module, "nvshmemi_ibgda_device_state_d"),
-                status, out);
+    CUCHECKIGNORE(nvshmemi_cuda_syms, cuModuleGetGlobal(&transport_dptr, &size, module,
+                                                        "nvshmemi_ibgda_device_state_d"));
 #endif
     status = register_state_ptr((void *)dptr, (void *)transport_dptr);
     NVSHMEMI_NE_ERROR_JMP(status, NVSHMEMX_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
@@ -1702,9 +1707,8 @@ int nvshmemx_cumodule_finalize(CUmodule module) {
     CUCHECKGOTO(nvshmemi_cuda_syms,
                 cuModuleGetGlobal(&dptr, &size, module, "nvshmemi_device_state_d"), status, out);
 #ifdef NVSHMEM_IBGDA_SUPPORT
-    CUCHECKGOTO(nvshmemi_cuda_syms,
-                cuModuleGetGlobal(&transport_dptr, &size, module, "nvshmemi_ibgda_device_state_d"),
-                status, out);
+    CUCHECKIGNORE(nvshmemi_cuda_syms, cuModuleGetGlobal(&transport_dptr, &size, module,
+                                                        "nvshmemi_ibgda_device_state_d"));
 #endif
     status = unregister_state_ptr((void *)dptr, (void *)transport_dptr);
     NVSHMEMI_NE_ERROR_JMP(status, NVSHMEMX_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,

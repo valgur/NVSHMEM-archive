@@ -17,11 +17,6 @@
 #include <getopt.h>
 #include "utils.h"
 
-#define MAX_ITERS 10
-#define MAX_SKIP 10
-#define THREADS 1024
-#define BLOCKS 4
-#define MAX_MSG_SIZE 32 * 1024 * 1024
 #define UNROLL 2
 
 __global__ void bw(double *data_d, double *remote_d, volatile unsigned int *counter_d, int len,
@@ -82,11 +77,12 @@ int main(int argc, char *argv[]) {
     int mype, npes;
     double *data_d = NULL, *remote_d;
     unsigned int *counter_d;
-    int max_blocks = BLOCKS, max_threads = THREADS;
 
-    int iter = MAX_ITERS;
-    int skip = MAX_SKIP;
-    int max_msg_size = MAX_MSG_SIZE;
+    read_args(argc, argv);
+    int max_blocks = num_blocks, max_threads = threads_per_block;
+
+    int iter = iters;
+    int skip = warmup_iters;
 
     int array_size, i;
     void **h_tables;
@@ -109,32 +105,13 @@ int main(int argc, char *argv[]) {
         goto finalize;
     }
 
-    while (1) {
-        int c;
-        c = getopt(argc, argv, "c:t:h");
-        if (c == -1) break;
-
-        switch (c) {
-            case 'c':
-                max_blocks = strtol(optarg, NULL, 0);
-                break;
-            case 't':
-                max_threads = strtol(optarg, NULL, 0);
-                break;
-            default:
-            case 'h':
-                printf("-c [CTAs] -t [THREADS] \n");
-                goto finalize;
-        }
-    }
-
-    array_size = floor(std::log2((float)max_msg_size)) + 1;
+    array_size = max_size_log;
     alloc_tables(&h_tables, 2, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_bw = (double *)h_tables[1];
 
-    data_d = (double *)nvshmem_malloc(max_msg_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    data_d = (double *)nvshmem_malloc(max_size);
+    CUDA_CHECK(cudaMemset(data_d, 0, max_size));
 
     remote_d = (double *)nvshmem_ptr((void *)data_d, !mype);
     if (remote_d == NULL) {
@@ -155,7 +132,7 @@ int main(int argc, char *argv[]) {
     int size;
     i = 0;
     if (mype == 0) {
-        for (size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
+        for (size = min_size; size <= max_size; size *= step_factor) {
             int blocks = max_blocks, threads = max_threads;
             h_size_arr[i] = size;
 
@@ -178,14 +155,14 @@ int main(int argc, char *argv[]) {
             i++;
         }
     } else {
-        for (size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
+        for (size = min_size; size <= max_size; size *= step_factor) {
             nvshmem_barrier_all();
         }
     }
 
     if (mype == 0) {
-        print_table_v1("shmem_st_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
-                       i);
+        print_table_basic("shmem_st_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr,
+                          h_bw, i);
     }
 
 finalize:

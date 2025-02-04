@@ -217,8 +217,8 @@ transport_init:
         dlclose(transport_lib);
         transport_lib = NULL;
         /* non-fatal error, so changing to a warning */
-        NVSHMEMI_WARN_PRINT("init failed for remote transport: %s",
-                            nvshmemi_options.REMOTE_TRANSPORT);
+        INFO(NVSHMEM_TRANSPORT, "init failed for remote transport: %s",
+             nvshmemi_options.REMOTE_TRANSPORT);
         status = 0;
     }
 transport_fail:

@@ -52,8 +52,6 @@
 #include "dlmalloc.h"
 #endif
 
-using namespace std;
-
 static_assert(sizeof(CUmemGenericAllocationHandle) <= NVSHMEM_MEM_HANDLE_SIZE,
               "sizeof(CUmemGenericAllocationHandle) <= NVSHMEM_MEM_HANDLE_SIZE");
 
@@ -449,6 +447,9 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::reserve_heap() {
     int status;
     size_t alignbytes = 0, heapextra = 0;
     CUmemAllocationProp prop = {};
+    nvshmemi_state_t *state = get_state();
+    int p2p_npes = state->p2p_transport->get_num_p2p_connected_pes(*this);
+
     set_cuda_mem_prop((void *)&prop, get_mem_handle_type());
 
     status = CUPFN(nvshmemi_cuda_syms,
@@ -465,11 +466,9 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::reserve_heap() {
     heap_size_ = std::max(nvshmemi_options.MAX_MEMORY_PER_GPU, heapextra);
     heap_size_ = NVSHMEMU_ROUND_UP(heap_size_, mem_granularity_);
     physical_heap_size_ = 0;
-
-    status =
-        CUPFN(nvshmemi_cuda_syms, cuMemAddressReserve((CUdeviceptr *)&global_heap_base_,
-                                                      nvshmemi_options.MAX_P2P_GPUS * heap_size_,
-                                                      alignbytes, (CUdeviceptr)NULL, 0));
+    status = CUPFN(nvshmemi_cuda_syms,
+                   cuMemAddressReserve((CUdeviceptr *)&global_heap_base_, p2p_npes * heap_size_,
+                                       alignbytes, (CUdeviceptr)NULL, 0));
     NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                           "cuMemAddressReserve failed \n");
     heap_base_ = (void *)((uintptr_t)global_heap_base_);
@@ -481,7 +480,7 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::reserve_heap() {
          "[%d] heap type: %s heap base: %p NVSHMEM_SYMMETRIC_SIZE %lu total %lu heapextra %lu",
          state_->mype, typeid(decltype(this)).name(), heap_base_, nvshmemi_options.SYMMETRIC_SIZE,
          heap_size_, heapextra);
-    reserved_heap_size_ = nvshmemi_options.MAX_P2P_GPUS * heap_size_;
+    reserved_heap_size_ = p2p_npes * heap_size_;
 out:
     return status;
 }
@@ -528,9 +527,8 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::cleanup_symmetric_heap() {
                                   "release memory failed for p2p on heap dynamic (peer PE)\n");
         })
 
-    status =
-        CUPFN(nvshmemi_cuda_syms, cuMemAddressFree((CUdeviceptr)global_heap_base_,
-                                                   nvshmemi_options.MAX_P2P_GPUS * heap_size_));
+    status = CUPFN(nvshmemi_cuda_syms,
+                   cuMemAddressFree((CUdeviceptr)global_heap_base_, reserved_heap_size_));
     NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                           "cuMemAddressFree failed \n");
 
@@ -692,7 +690,7 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::exchange_heap_memory_handle(
     int status = 0;
     ipcHandle *myIpcHandle = NULL;
     nvshmemi_state_t *state = get_state();
-    map<pid_t, ipcHandle *> recvIpcHandles;
+    std::map<pid_t, ipcHandle *> recvIpcHandles;
     pid_t pid = getpid();
 
     // Assuming handles can be used for intra-node GPU comms
@@ -863,7 +861,7 @@ int nvshmemi_symmetric_heap_static::register_heap_chunk(nvshmem_mem_handle_t *me
 
     // Allgather memory handle for all PEs in the team
     handles_.push_back(
-        vector<nvshmem_mem_handle_t>(state->num_initialized_transports * state->npes));
+        std::vector<nvshmem_mem_handle_t>(state->num_initialized_transports * state->npes));
 
     status = nvshmemi_boot_handle.allgather(
         (void *)local_handles, (void *)(handles_.back().data()),
@@ -934,7 +932,7 @@ int nvshmemi_symmetric_heap_dynamic::register_heap_chunk(nvshmem_mem_handle_t *m
 
     // Allgather memory handle for remote connected PEs
     handles_.push_back(
-        vector<nvshmem_mem_handle_t>(state->num_initialized_transports * state->npes));
+        std::vector<nvshmem_mem_handle_t>(state->num_initialized_transports * state->npes));
 
     status = nvshmemi_boot_handle.allgather(
         (void *)local_handles, (void *)(handles_.back().data()),
@@ -1200,6 +1198,7 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_broadcast_heap_handle_fabri
             nvshmemx_char_put_nbi_on_stream((char *)pWrk, (const char *)pWrk, length,
                                             team->start + i * team->stride, (cudaStream_t)0);
         }
+        CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
         nvshmem_barrier(team->team_idx);
     } else {
         nvshmem_barrier(team->team_idx);
@@ -1322,6 +1321,7 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::nvls_bind_heap_memory_by_size(
 out:
     if (status) {
         print_cumem_handles();
+        exit(1); /* Treating bind errors as a fatal error */
     }
     return (status);
 }

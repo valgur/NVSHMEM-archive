@@ -7,7 +7,7 @@
 #define _NVSHMEM_COMMON_DEVICE_CUH_
 
 #include <cuda_runtime.h>
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stdint.h>
 #include <stddef.h>
 #include <type_traits>
@@ -53,13 +53,61 @@
 typedef enum { _LL_PSYNC_NON_VOLATILE = 0, _LL_PSYNC_VOLATILE } nvshmemi_psync_volatile_t;
 
 #ifdef __CUDA_ARCH__
+
+/* This is used to create custom floating type traits such fp16, fp8, and native float types etc
+ */
+#if !defined __CUDACC_RTC__
+template <typename T>
+struct is_float : std::false_type {};
+template <>
+struct is_float<float> : std::true_type {};
+
+template <typename T>
+struct is_half : std::false_type {};
+template <>
+struct is_half<half> : std::true_type {};
+
+template <typename T>
+struct is_bfloat : std::false_type {};
+template <>
+struct is_bfloat<__nv_bfloat16> : std::true_type {};
+
+template <typename T>
+struct is_double : std::false_type {};
+template <>
+struct is_double<double> : std::true_type {};
+
+#else
+
+template <typename T>
+struct is_float : cuda::std::false_type {};
+template <>
+struct is_float<float> : cuda::std::true_type {};
+
+template <typename T>
+struct is_double : cuda::std::false_type {};
+template <>
+struct is_double<double> : cuda::std::true_type {};
+
+template <typename T>
+struct is_half : cuda::std::false_type {};
+template <>
+struct is_half<half> : cuda::std::true_type {};
+
+template <typename T>
+struct is_bfloat : cuda::std::false_type {};
+template <>
+struct is_bfloat<__nv_bfloat16> : cuda::std::true_type {};
+
+#endif
+
 __device__ int nvshmemi_team_translate_pe(nvshmemi_team_t *src_team, int src_pe,
                                           nvshmemi_team_t *dest_team);
 __device__ long *nvshmemi_team_get_psync(nvshmemi_team_t *team, nvshmemi_team_op_t op);
 __device__ long *nvshmemi_team_get_sync_counter(nvshmemi_team_t *team);
 
 template <threadgroup_t SCOPE>
-__device__ inline void nvshmemi_quiet() {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_quiet() {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     if ((nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST)) {
         nvshmemi_transfer_quiet<SCOPE>(true);
@@ -75,7 +123,7 @@ template __device__ void nvshmemi_quiet<NVSHMEMI_THREADGROUP_THREAD>();
 template __device__ void nvshmemi_quiet<NVSHMEMI_THREADGROUP_WARP>();
 template __device__ void nvshmemi_quiet<NVSHMEMI_THREADGROUP_BLOCK>();
 
-__device__ inline void nvshmemi_fence() {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_fence() {
     if (nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST) {
         nvshmemi_transfer_fence<NVSHMEMI_THREADGROUP_THREAD>();
     }
@@ -84,7 +132,7 @@ __device__ inline void nvshmemi_fence() {
 }
 
 template <typename T>
-__device__ inline int nvshmemi_test(volatile T *ivar, int cmp, T cmp_value) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_test(volatile T *ivar, int cmp, T cmp_value) {
     int return_value = 0;
     if (NVSHMEM_CMP_GE == cmp) {
         if (*ivar >= cmp_value) return_value = 1;
@@ -102,7 +150,7 @@ __device__ inline int nvshmemi_test(volatile T *ivar, int cmp, T cmp_value) {
     return return_value;
 }
 
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #define TYPE_IS_FLOAT(T) std::is_floating_point<T>::value
 #else
 #define TYPE_IS_FLOAT(T) cuda::std::is_floating_point<T>::value
@@ -110,8 +158,9 @@ __device__ inline int nvshmemi_test(volatile T *ivar, int cmp, T cmp_value) {
 
 // mcast store of 16B
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_mcast16_store_threadgroup(int4 *dest, const int4 *source,
-                                                          size_t len) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_mcast16_store_threadgroup(int4 *dest,
+                                                                                 const int4 *source,
+                                                                                 size_t len) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
     for (size_t j = myIdx * 4; j < (len / sizeof(uint32_t)); j += groupSize * 4) {
@@ -127,8 +176,8 @@ __device__ inline void nvshmemi_mcast16_store_threadgroup(int4 *dest, const int4
 
 // mcast store of 8B
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_mcast8_store_threadgroup(uint64_t *dest, const uint64_t *source,
-                                                         size_t len) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_mcast8_store_threadgroup(
+    uint64_t *dest, const uint64_t *source, size_t len) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
     for (size_t j = myIdx; j < (len / sizeof(uint64_t)); j += groupSize) {
@@ -140,8 +189,8 @@ __device__ inline void nvshmemi_mcast8_store_threadgroup(uint64_t *dest, const u
 
 // mcast store of 4B
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_mcast4_store_threadgroup(uint32_t *dest, const uint32_t *source,
-                                                         size_t len) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_mcast4_store_threadgroup(
+    uint32_t *dest, const uint32_t *source, size_t len) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
     for (size_t j = myIdx; j < (len / sizeof(uint32_t)); j += groupSize) {
@@ -155,8 +204,8 @@ __device__ inline void nvshmemi_mcast4_store_threadgroup(uint32_t *dest, const u
  * This function returns non-zero unaligned bytes that require a unicast store
  */
 template <typename T, threadgroup_t SCOPE>
-__device__ inline size_t nvshmemi_mcast_memcpy_threadgroup(T *__restrict__ dst,
-                                                           const T *__restrict__ src, size_t len) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE size_t
+nvshmemi_mcast_memcpy_threadgroup(T *__restrict__ dst, const T *__restrict__ src, size_t len) {
     /*
      * If src and dst are 16B aligned copy as much as possible using 16B chunks
      */
@@ -207,20 +256,30 @@ __device__ inline size_t nvshmemi_mcast_memcpy_threadgroup(T *__restrict__ dst,
 }
 
 template <threadgroup_t SCOPE>
-__device__ inline void nvshmemi_memcpy_threadgroup(void *__restrict__ dst,
-                                                   const void *__restrict__ src, size_t len) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_memcpy_threadgroup(
+    void *__restrict__ dst, const void *__restrict__ src, size_t len) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
     /*
      * If src and dst are 16B aligned copy as much as possible using 16B chunks
      */
     if ((uintptr_t)dst % 16 == 0 && (uintptr_t)src % 16 == 0) {
-        int4 *__restrict__ dst_p = (int4 *)dst;
-        const int4 *__restrict__ src_p = (const int4 *)src;
         const size_t nelems = len / 16;
 
+        /* TODO: Remove guards for LLVM Bitcode Library in 3.3 */
+#ifdef __clang_llvm_bitcode_lib__
+        uint32_t *__restrict__ dst_p = (uint32_t *)dst;
+        const uint32_t *__restrict__ src_p = (const uint32_t *)src;
+        for (size_t i = myIdx * 4; i < nelems * 4; i += groupSize * 4) {
+            asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"((dst_p + i)),
+                         "r"(*(src_p + i)), "r"(*(src_p + i + 1)), "r"(*(src_p + i + 2)),
+                         "r"(*(src_p + i + 3)));
+        }
+#else
+        int4 *__restrict__ dst_p = (int4 *)dst;
+        const int4 *__restrict__ src_p = (const int4 *)src;
         for (size_t i = myIdx; i < nelems; i += groupSize) dst_p[i] = src_p[i];
-
+#endif
         len -= nelems * 16;
 
         if (0 == len) return;
@@ -290,7 +349,7 @@ __device__ inline void nvshmemi_memcpy_threadgroup(void *__restrict__ dst,
 }
 
 template <typename T>
-__device__ inline void nvshmemi_p(T *dest, const T value, int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_p(T *dest, const T value, int pe) {
     const void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
     if (peer_base_addr) {
@@ -303,7 +362,7 @@ __device__ inline void nvshmemi_p(T *dest, const T value, int pe) {
 }
 
 template <typename T>
-__device__ inline T nvshmemi_g(const T *source, int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE T nvshmemi_g(const T *source, int pe) {
     const void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
     if (peer_base_addr) {
@@ -316,7 +375,8 @@ __device__ inline T nvshmemi_g(const T *source, int pe) {
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_put_threadgroup(T *dest, const T *source, size_t nelems, int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_put_threadgroup(T *dest, const T *source,
+                                                                       size_t nelems, int pe) {
     nvshmemi_threadgroup_sync<SCOPE>();
     void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
@@ -332,7 +392,9 @@ __device__ inline void nvshmemi_put_threadgroup(T *dest, const T *source, size_t
     nvshmemi_threadgroup_sync<SCOPE>();
 }
 
-__device__ inline void nvshmemi_signal_op(uint64_t *sig_addr, uint64_t signal, int sig_op, int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_signal_op(uint64_t *sig_addr,
+                                                                 uint64_t signal, int sig_op,
+                                                                 int pe) {
     const void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
     if (sig_op == NVSHMEMI_AMO_SIGNAL_SET && peer_base_addr != NULL) {
@@ -353,9 +415,9 @@ __device__ inline void nvshmemi_signal_op(uint64_t *sig_addr, uint64_t signal, i
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemii_put_signal_threadgroup(T *dest, const T *source, size_t nelems,
-                                                        uint64_t *sig_addr, uint64_t signal,
-                                                        int sig_op, int pe, bool is_nbi) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemii_put_signal_threadgroup(
+    T *dest, const T *source, size_t nelems, uint64_t *sig_addr, uint64_t signal, int sig_op,
+    int pe, bool is_nbi) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
@@ -377,9 +439,9 @@ __device__ inline void nvshmemii_put_signal_threadgroup(T *dest, const T *source
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_put_signal_threadgroup(T *dest, const T *source, size_t nelems,
-                                                       uint64_t *sig_addr, uint64_t signal,
-                                                       int sig_op, int pe, bool is_nbi) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_put_signal_threadgroup(
+    T *dest, const T *source, size_t nelems, uint64_t *sig_addr, uint64_t signal, int sig_op,
+    int pe, bool is_nbi) {
     nvshmemi_threadgroup_sync<SCOPE>();
     nvshmemii_put_signal_threadgroup<T, SCOPE>(dest, source, nelems, sig_addr, signal, sig_op, pe,
                                                is_nbi);
@@ -387,7 +449,8 @@ __device__ inline void nvshmemi_put_signal_threadgroup(T *dest, const T *source,
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_get_threadgroup(T *dest, const T *source, size_t nelems, int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_get_threadgroup(T *dest, const T *source,
+                                                                       size_t nelems, int pe) {
     nvshmemi_threadgroup_sync<SCOPE>();
     void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
@@ -404,8 +467,9 @@ __device__ inline void nvshmemi_get_threadgroup(T *dest, const T *source, size_t
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemii_put_nbi_threadgroup(T *dest, const T *source, size_t nelems,
-                                                     int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemii_put_nbi_threadgroup(T *dest,
+                                                                            const T *source,
+                                                                            size_t nelems, int pe) {
     void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
     if (peer_base_addr) {
@@ -420,16 +484,16 @@ __device__ inline void nvshmemii_put_nbi_threadgroup(T *dest, const T *source, s
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_put_nbi_threadgroup(T *dest, const T *source, size_t nelems,
-                                                    int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_put_nbi_threadgroup(T *dest, const T *source,
+                                                                           size_t nelems, int pe) {
     nvshmemi_threadgroup_sync<SCOPE>();
     nvshmemii_put_nbi_threadgroup<T, SCOPE>(dest, source, nelems, pe);
     nvshmemi_threadgroup_sync<SCOPE>();
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_get_nbi_threadgroup(T *dest, const T *source, size_t nelems,
-                                                    int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_get_nbi_threadgroup(T *dest, const T *source,
+                                                                           size_t nelems, int pe) {
     nvshmemi_threadgroup_sync<SCOPE>();
     void *peer_base_addr =
         (void *)__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + pe);
@@ -445,7 +509,8 @@ __device__ inline void nvshmemi_get_nbi_threadgroup(T *dest, const T *source, si
     nvshmemi_threadgroup_sync<SCOPE>();
 }
 
-__device__ inline void *nvshmemi_mc_ptr(nvshmemi_team_t *team, const void *ptr) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void *nvshmemi_mc_ptr(nvshmemi_team_t *team,
+                                                               const void *ptr) {
     ptrdiff_t offset = (char *)ptr - (char *)nvshmemi_device_state_d.heap_base;
     if (ptr >= nvshmemi_device_state_d.heap_base && offset < nvshmemi_device_state_d.heap_size &&
         team->nvls_rsc_base_ptr != NULL) {
@@ -456,7 +521,7 @@ __device__ inline void *nvshmemi_mc_ptr(nvshmemi_team_t *team, const void *ptr) 
         return NULL;
 }
 
-__device__ inline void *nvshmemi_ptr(const void *ptr, int pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void *nvshmemi_ptr(const void *ptr, int pe) {
     ptrdiff_t offset = (char *)ptr - (char *)nvshmemi_device_state_d.heap_base;
 
     if (ptr >= nvshmemi_device_state_d.heap_base && offset < nvshmemi_device_state_d.heap_size) {
@@ -469,9 +534,9 @@ __device__ inline void *nvshmemi_ptr(const void *ptr, int pe) {
 }
 
 template <typename T, int UNROLL>
-__device__ inline void nvshmemi_store_128b_register(uint64_t dest_regs[2 * UNROLL],
-                                                    uint64_t ll_flag, uint64_t ll_flag_mask, T *src,
-                                                    uint8_t unroll_stride) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_store_128b_register(
+    uint64_t dest_regs[2 * UNROLL], uint64_t ll_flag, uint64_t ll_flag_mask, T *src,
+    uint8_t unroll_stride) {
     union {
         uint64_t regs8[2];
         uint32_t regs4[4];
@@ -528,9 +593,8 @@ __device__ inline void nvshmemi_store_128b_register(uint64_t dest_regs[2 * UNROL
 }
 
 template <typename T>
-__device__ inline void nvshmemi_store_varlen_register(uint64_t dest_regs[2], uint64_t ll_flag,
-                                                      uint64_t ll_flag_mask, void *src,
-                                                      uint8_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_store_varlen_register(
+    uint64_t dest_regs[2], uint64_t ll_flag, uint64_t ll_flag_mask, void *src, uint8_t nelems) {
     uint8_t i;
     union {
         uint64_t regs8[2];
@@ -576,9 +640,11 @@ __device__ inline void nvshmemi_store_varlen_register(uint64_t dest_regs[2], uin
 }
 
 template <typename T, threadgroup_t SCOPE, int UNROLL>
-__device__ inline void nvshmemi_packLL128(T *psync, const T *source, size_t nelems,
-                                          uint64_t ll_flag, nvshmemi_team_t *teami, int pe_count,
-                                          int team_offset, int pe_group_offset) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_packLL128(T *psync, const T *source,
+                                                                 size_t nelems, uint64_t ll_flag,
+                                                                 nvshmemi_team_t *teami,
+                                                                 int pe_count, int team_offset,
+                                                                 int pe_group_offset) {
     const int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     const uint32_t warp_mask = 0x000000FF << (8 * (myIdx / 8));
     const int num_warps = nvshmemi_threadgroup_size<SCOPE>() / NVSHMEMI_WARP_SIZE;
@@ -689,9 +755,11 @@ __device__ inline void nvshmemi_packLL128(T *psync, const T *source, size_t nele
 }
 
 template <int UNROLL>
-__device__ inline void nvshmemi_ll128_load_psync(uint64_t reg[UNROLL * 2], uint64_t *src,
-                                                 uint64_t ll_flag, uint32_t warp_mask,
-                                                 bool is_flag_thread) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ll128_load_psync(uint64_t reg[UNROLL * 2],
+                                                                        uint64_t *src,
+                                                                        uint64_t ll_flag,
+                                                                        uint32_t warp_mask,
+                                                                        bool is_flag_thread) {
     uint64_t *offset_src;
     int i;
     bool flag_arrived;
@@ -711,7 +779,8 @@ __device__ inline void nvshmemi_ll128_load_psync(uint64_t reg[UNROLL * 2], uint6
 }
 
 template <typename T, int UNROLL>
-__device__ inline void nvshmemi_recvLL128(T *dest, const T *psync, size_t nelems, uint64_t flag) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_recvLL128(T *dest, const T *psync,
+                                                                 size_t nelems, uint64_t flag) {
     const int myIdx = nvshmemi_thread_id_in_threadgroup<NVSHMEMI_THREADGROUP_WARP>();
     const uint32_t warp_mask = 0x000000FF << (8 * (myIdx / 8));
     /* max 127 */
@@ -796,8 +865,8 @@ __device__ inline void nvshmemi_recvLL128(T *dest, const T *psync, size_t nelems
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_mcast_recvLL(T *dest, const uint64_t *src, size_t nelems,
-                                             uint32_t flag) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_mcast_recvLL(T *dest, const uint64_t *src,
+                                                                    size_t nelems, uint32_t flag) {
     // Assumptions: sizeof(T) >= 4 bytes, num_subelems is a multiple of 2
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
@@ -829,8 +898,9 @@ __device__ inline void nvshmemi_mcast_recvLL(T *dest, const uint64_t *src, size_
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_mcast_packLL(uint64_t *dest, const T *source, size_t nelems,
-                                             uint32_t ll_flag) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_mcast_packLL(uint64_t *dest, const T *source,
+                                                                    size_t nelems,
+                                                                    uint32_t ll_flag) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
     const size_t num_subelems = nelems * (sizeof(T) / sizeof(float));
@@ -854,7 +924,8 @@ __device__ inline void nvshmemi_mcast_packLL(uint64_t *dest, const T *source, si
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_recvLL(T *dest, const uint64_t *src, size_t nelems, uint32_t flag) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_recvLL(T *dest, const uint64_t *src,
+                                                              size_t nelems, uint32_t flag) {
     // Assumptions: sizeof(T) >= 4 bytes, num_subelems is a multiple of 2
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
@@ -873,8 +944,9 @@ __device__ inline void nvshmemi_recvLL(T *dest, const uint64_t *src, size_t nele
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_packLL_naive(uint64_t *dest, const T *source, size_t nelems,
-                                             uint32_t ll_flag) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_packLL_naive(uint64_t *dest, const T *source,
+                                                                    size_t nelems,
+                                                                    uint32_t ll_flag) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
     size_t num_subelems = nelems * (sizeof(T) / sizeof(uint32_t));
@@ -890,8 +962,10 @@ __device__ inline void nvshmemi_packLL_naive(uint64_t *dest, const T *source, si
 }
 
 template <typename T, threadgroup_t SCOPE, int UNROLL>
-__device__ inline void nvshmemi_packLL(T *psync, const T *source, size_t nelems, uint32_t ll_flag,
-                                       nvshmemi_team_t *teami, int pe_count, int team_offset) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_packLL(T *psync, const T *source,
+                                                              size_t nelems, uint32_t ll_flag,
+                                                              nvshmemi_team_t *teami, int pe_count,
+                                                              int team_offset) {
     const size_t num_subelems = nelems * (sizeof(T) / sizeof(uint32_t));
     const int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     const int groupSize = nvshmemi_threadgroup_size<SCOPE>();

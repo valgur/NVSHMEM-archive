@@ -7,7 +7,7 @@
 #ifndef __NVSHMEM_TRANSPORT_COMMON_H
 #define __NVSHMEM_TRANSPORT_COMMON_H
 
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stdint.h>
 #include <limits.h>
 #else

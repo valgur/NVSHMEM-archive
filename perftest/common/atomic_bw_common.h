@@ -26,58 +26,16 @@
 #define BLOCKS 4
 #define MAX_MSG_SIZE 64 * 1024
 
-void atomic_op_parse(char *amo, nvshmemi_amo_t *atomic_op) {
-    size_t string_length = strnlen(amo, 20);
-
-    if (strncmp(amo, "inc", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_INC;
-    } else if (strncmp(amo, "fetch_inc", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_INC;
-    } else if (strncmp(amo, "set", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_SET;
-    } else if (strncmp(amo, "add", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_ADD;
-    } else if (strncmp(amo, "fetch_add", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_ADD;
-    } else if (strncmp(amo, "and", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_AND;
-    } else if (strncmp(amo, "fetch_and", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_AND;
-    } else if (strncmp(amo, "or", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_OR;
-    } else if (strncmp(amo, "fetch_or", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_OR;
-    } else if (strncmp(amo, "xor", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_XOR;
-    } else if (strncmp(amo, "fetch_xor", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_FETCH_XOR;
-    } else if (strncmp(amo, "swap", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_SWAP;
-    } else if (strncmp(amo, "compare_swap", string_length) == 0) {
-        *atomic_op = NVSHMEMI_AMO_COMPARE_SWAP;
-    } else {
-        *atomic_op = NVSHMEMI_AMO_ACK;
+#define DEFINE_ATOMIC_BW_CALL_KERNEL(AMO)                                                     \
+    void test_atomic_##AMO##_bw_cubin(int num_blocks, int num_tpb, void **arglist) {          \
+        CUfunction test_cubin;                                                                \
+        init_test_case_kernel(&test_cubin, NVSHMEMI_TEST_STRINGIFY(atomic_##AMO##_bw));       \
+        CU_CHECK(cuLaunchCooperativeKernel(test_cubin, num_blocks, 1, 1, num_tpb, 1, 1, 0, 0, \
+                                           arglist));                                         \
     }
-}
-
-void atomic_usage(void) {
-    fprintf(stderr, "Please supply an atomic operation to perform. Valid options are:   \n");
-    fprintf(stderr, "inc\n");
-    fprintf(stderr, "fetch_inc\n");
-    fprintf(stderr, "set\n");
-    fprintf(stderr, "add\n");
-    fprintf(stderr, "fetch_add\n");
-    fprintf(stderr, "and\n");
-    fprintf(stderr, "fetch_and\n");
-    fprintf(stderr, "or\n");
-    fprintf(stderr, "fetch_or\n");
-    fprintf(stderr, "xor\n");
-    fprintf(stderr, "fetch_xor\n");
-    fprintf(stderr, "swap\n");
-    fprintf(stderr, "compare_swap\n");
-}
 
 #define DEFINE_ATOMIC_BW_FN_NO_ARG(AMO)                                                            \
+    DEFINE_ATOMIC_BW_CALL_KERNEL(AMO)                                                              \
     __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
                                       int pe, int iter) {                                          \
         int i, j, peer, tid, slice;                                                                \
@@ -130,6 +88,7 @@ void atomic_usage(void) {
     }
 
 #define DEFINE_ATOMIC_BW_FN_ONE_ARG(AMO, SET_EXPR)                                                 \
+    DEFINE_ATOMIC_BW_CALL_KERNEL(AMO)                                                              \
     __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
                                       int pe, int iter) {                                          \
         int i, j, peer, tid, slice;                                                                \
@@ -184,6 +143,7 @@ void atomic_usage(void) {
     }
 
 #define DEFINE_ATOMIC_BW_FN_TWO_ARG(AMO, COMPARE_EXPR, SET_EXPR)                                   \
+    DEFINE_ATOMIC_BW_CALL_KERNEL(AMO)                                                              \
     __global__ void atomic_##AMO##_bw(uint64_t *data_d, volatile unsigned int *counter_d, int len, \
                                       int pe, int iter) {                                          \
         int i, j, peer, tid, slice;                                                                \
@@ -235,6 +195,13 @@ void atomic_usage(void) {
             while (*(counter_d + 1) != i + 1)                                                      \
                 ;                                                                                  \
         }                                                                                          \
+    }
+
+#define CALL_ATOMIC_BW_KERNEL(AMO, BLOCKS, THREADS, DATA, COUNTER, SIZE, PE, ITER, ARGS) \
+    if (use_cubin) {                                                                     \
+        test_atomic_##AMO##_bw_cubin(BLOCKS, THREADS, ARGS);                             \
+    } else {                                                                             \
+        atomic_##AMO##_bw<<<BLOCKS, THREADS>>>(DATA, COUNTER, SIZE, PE, ITER);           \
     }
 
 #endif /* _ATOMIC_BW_COMMON_H_ */

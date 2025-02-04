@@ -46,6 +46,40 @@ struct nvshmemt_ib_gid_info {
     int32_t local_gid_index;
 };
 
+int nvshmemt_ib_iface_get_mlx_path(const char *ib_name, char **path);
+
+struct nvshmemt_ibv_function_table {
+    int (*fork_init)(void);
+    struct ibv_ah *(*create_ah)(struct ibv_pd *pd, struct ibv_ah_attr *ah_attr);
+    struct ibv_device **(*get_device_list)(int *num_devices);
+    const char *(*get_device_name)(struct ibv_device *device);
+    struct ibv_context *(*open_device)(struct ibv_device *device);
+    int (*close_device)(struct ibv_context *context);
+    int (*query_device)(struct ibv_context *context, struct ibv_device_attr *device_attr);
+    int (*query_port)(struct ibv_context *context, uint8_t port_num,
+                      struct ibv_port_attr *port_attr);
+    struct ibv_pd *(*alloc_pd)(struct ibv_context *context);
+    struct ibv_mr *(*reg_mr)(struct ibv_pd *pd, void *addr, size_t length, int access);
+    struct ibv_mr *(*reg_dmabuf_mr)(struct ibv_pd *pd, uint64_t offset, size_t length,
+                                    uint64_t iova, int fd, int access);
+    int (*dereg_mr)(struct ibv_mr *mr);
+    struct ibv_cq *(*create_cq)(struct ibv_context *context, int cqe, void *cq_context,
+                                struct ibv_comp_channel *channel, int comp_vector);
+    struct ibv_qp *(*create_qp)(struct ibv_pd *pd, struct ibv_qp_init_attr *qp_init_attr);
+    struct ibv_srq *(*create_srq)(struct ibv_pd *pd, struct ibv_srq_init_attr *srq_init_attr);
+    int (*dealloc_pd)(struct ibv_pd *pd);
+    int (*modify_qp)(struct ibv_qp *qp, struct ibv_qp_attr *attr, int attr_mask);
+    int (*query_gid)(struct ibv_context *context, uint8_t port_num, int index, union ibv_gid *gid);
+    int (*destroy_qp)(struct ibv_qp *qp);
+    int (*destroy_cq)(struct ibv_cq *cq);
+    int (*destroy_srq)(struct ibv_srq *srq);
+    int (*destroy_ah)(struct ibv_ah *ah);
+};
+
+int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable,
+                             int log_level);
+void nvshmemt_ibv_ftable_fini(void **ibv_handle);
+
 int nvshmemt_ib_common_nv_peer_mem_available();
 
 int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable, struct ibv_pd *pd,

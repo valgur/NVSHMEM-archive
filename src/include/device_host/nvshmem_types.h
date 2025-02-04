@@ -6,7 +6,7 @@
 #define REDUCE_PADDING 32
 #define TIMEOUT_PADDING 16
 #define COLL_ENV_VARS_PADDING 472
-#define COLL_ENV_VARS_V2_PADDING 424
+#define COLL_ENV_VARS_V2_PADDING 416
 
 #define RED_REC_INVALID_SCALAR -1
 #define TEAM_CONFIG_SCALAR_INVALID -1
@@ -27,7 +27,7 @@
 
 #define NVSHMEM_INIT_ATTR_VER 1
 
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stddef.h>
 #include <stdint.h>
 #include <limits.h>
@@ -124,6 +124,7 @@
             COLL_ENV_PARAMS_SCALAR_INVALID,        /* reducescatter_algo */           \
             COLL_ENV_PARAMS_SCALAR_INVALID,        /* reduce_maxloc_algo */           \
             COLL_ENV_PARAMS_ULSCALAR_INVALID,      /* fcollect_ll128_threahold */     \
+            COLL_ENV_PARAMS_ULSCALAR_INVALID,      /* reduce_nvls_threshold */        \
         {                                                                             \
             0                                                                         \
         }                                                                             \
@@ -331,6 +332,7 @@ typedef struct {
     int reducescatter_algo;
     int reduce_maxloc_algo;
     size_t fcollect_ll128_threshold;
+    size_t reduce_nvls_threshold;
     char padding[COLL_ENV_VARS_V2_PADDING];
 } gpu_coll_env_params_v2;
 static_assert(sizeof(gpu_coll_env_params_v2) == 512, "gpu_coll_env_params_v2 must be 512 bytes.");

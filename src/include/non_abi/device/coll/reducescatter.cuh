@@ -33,9 +33,8 @@ namespace cg = cooperative_groups;
 #ifdef __CUDA_ARCH__
 
 template <typename TYPE, rdxn_ops_t OP, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_reducescatter_allpush_threadgroup(nvshmem_team_t team, TYPE *dest,
-                                                                  const TYPE *source,
-                                                                  size_t nreduce) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_reducescatter_allpush_threadgroup(
+    nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     TYPE *pWrk = (TYPE *)nvshmemi_team_get_psync(teami, REDUCE);
 
@@ -90,15 +89,29 @@ __device__ inline void nvshmemi_reducescatter_allpush_threadgroup(nvshmem_team_t
 }
 
 template <typename TYPE, rdxn_ops_t OP, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_reducescatter_nvls_allpush_threadgroup(nvshmem_team_t team,
-                                                                       TYPE *dest,
-                                                                       const TYPE *source,
-                                                                       size_t nreduce) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_reducescatter_nvls_allpush_threadgroup(
+    nvshmem_team_t team, TYPE *dest, const TYPE *source, int source_offset, size_t nreduce) {
+#if defined __clang_llvm_bitcode_lib__
+    if (__nvvm_reflect("__CUDA_ARCH") >= 900) {
+        nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
+        TYPE *src_ptr = (TYPE *)nvshmemi_mc_ptr(teami, (void *)(source + source_offset));
+        nvshmemi_threadgroup_sync<SCOPE>();
+        nvshmemi_local_reduce_mcast_threadgroup<TYPE, OP, SCOPE>(dest, src_ptr, nreduce);
+        /* Since ld.red is done atomically on the NVSwitch, the value obtained into local dest
+         * ref for a given PE would be ready, right away. We can still have a case that after
+         * returning from this kernel, source buffer can be mutated on one PE, while another PE is
+         * still performing ld.red, causing data correctness issue. We don't however need to add
+         * threadfence_system for ordering since the subsequent load to source buffer will be
+         * ordered already to prior ld.reduce (RAR) by HW.
+         */
+        nvshmemi_sync_threadgroup<SCOPE>(team);
+    } else {
+        assert(0 && "Unsupported NVLS algo on this platform");
+    }
+#else
 #if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
-    int my_idx_in_active_set = (nvshmemi_device_state_d.mype - teami->start) / (teami->stride);
-    int offset = nreduce * my_idx_in_active_set;
-    TYPE *src_ptr = (TYPE *)nvshmemi_mc_ptr(teami, (void *)(source + offset));
+    TYPE *src_ptr = (TYPE *)nvshmemi_mc_ptr(teami, (void *)(source + source_offset));
     nvshmemi_threadgroup_sync<SCOPE>();
     nvshmemi_local_reduce_mcast_threadgroup<TYPE, OP, SCOPE>(dest, src_ptr, nreduce);
     /* Since ld.red is done atomically on the NVSwitch, the value obtained into local dest
@@ -112,11 +125,12 @@ __device__ inline void nvshmemi_reducescatter_nvls_allpush_threadgroup(nvshmem_t
 #else
     assert(0 && "Unsupported NVLS algo on this platform");
 #endif
+#endif
 }
 
 template <typename TYPE, rdxn_ops_t OP, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_reducescatter_threadgroup(nvshmem_team_t team, TYPE *dest,
-                                                          const TYPE *source, size_t nreduce) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_reducescatter_threadgroup(
+    nvshmem_team_t team, TYPE *dest, const TYPE *source, int source_offset, size_t nreduce) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
 
@@ -167,8 +181,8 @@ __device__ inline void nvshmemi_reducescatter_threadgroup(nvshmem_team_t team, T
                                                                         nreduce);
             break;
         case 3:
-            nvshmemi_reducescatter_nvls_allpush_threadgroup<TYPE, OP, SCOPE>(team, dest, source,
-                                                                             nreduce);
+            nvshmemi_reducescatter_nvls_allpush_threadgroup<TYPE, OP, SCOPE>(
+                team, dest, source, source_offset, nreduce);
             break;
         default:
             assert(0);

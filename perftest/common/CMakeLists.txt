@@ -20,13 +20,13 @@ endif()
 target_compile_features(nvshmem_perftest_helper PUBLIC cxx_std_11 cuda_std_11)
 
 if(NVSHMEM_SHMEM_SUPPORT)
-  target_link_libraries(nvshmem_perftest_helper PUBLIC shmem)
   target_compile_definitions(nvshmem_perftest_helper PUBLIC NVSHMEMTEST_SHMEM_SUPPORT)
+  target_include_directories(nvshmem_perftest_helper PUBLIC SHMEM_INCLUDE)
 endif()
 
 if(NVSHMEM_MPI_SUPPORT)
-   target_link_libraries(nvshmem_perftest_helper PUBLIC MPI::MPI_CXX)
    target_compile_definitions(nvshmem_perftest_helper PUBLIC NVSHMEMTEST_MPI_SUPPORT)
+   target_include_directories(nvshmem_perftest_helper PUBLIC $<BUILD_INTERFACE:${MPI_CXX_INCLUDE_DIRS}>)
 endif()
 
 target_compile_options(nvshmem_perftest_helper

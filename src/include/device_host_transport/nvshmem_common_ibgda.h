@@ -17,7 +17,7 @@
 
 #include <infiniband/mlx5dv.h>  // for mlx5_wqe_av
 #include <linux/types.h>        // for __be32
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stddef.h>  // for size_t
 #include <stdint.h>  // for uint64_t, uint32_t, uint16_t, uint8_t
 #include <limits.h>

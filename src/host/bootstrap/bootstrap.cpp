@@ -20,6 +20,13 @@
 #include "internal/host/util.h"
 #include "non_abi/nvshmemx_error.h"
 
+#define LEGACY_BOOTSTRAP_MODULE_MPI "nvshmem_bootstrap_mpi.so"
+#define LEGACY_BOOTSTRAP_MODULE_PMI "nvshmem_bootstrap_pmi.so"
+#define LEGACY_BOOTSTRAP_MODULE_PMI2 "nvshmem_bootstrap_pmi2.so"
+#define LEGACY_BOOTSTRAP_MODULE_PMIX "nvshmem_bootstrap_pmix.so"
+#define LEGACY_BOOTSTRAP_MODULE_SHMEM "nvshmem_bootstrap_shmem.so"
+#define LEGACY_BOOTSTRAP_MODULE_UID "nvshmem_bootstrap_uid.so"
+
 static std::unordered_map<int, std::string> bootstrap_modes = {{BOOTSTRAP_MPI, "MPI"},
                                                                {BOOTSTRAP_SHMEM, "SHMEM"},
                                                                {BOOTSTRAP_PMI, "PMI"},
@@ -147,6 +154,10 @@ int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle
 
             status =
                 bootstrap_loader_init(plugin_name, (attr != NULL) ? attr->mpi_comm : NULL, handle);
+            if (status && !nvshmemi_options.BOOTSTRAP_MPI_PLUGIN_provided) {
+                status = bootstrap_loader_init(LEGACY_BOOTSTRAP_MODULE_MPI,
+                                               (attr != NULL) ? attr->mpi_comm : NULL, handle);
+            }
             NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                   "bootstrap_loader_init returned error for mode %s\n",
                                   bootstrap_modes[mode].c_str());
@@ -156,6 +167,11 @@ int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle
 
             status = bootstrap_loader_init(plugin_name,
                                            (attr != NULL) ? &attr->initialize_shmem : NULL, handle);
+            if (status && !nvshmemi_options.BOOTSTRAP_SHMEM_PLUGIN_provided) {
+                status =
+                    bootstrap_loader_init(LEGACY_BOOTSTRAP_MODULE_SHMEM,
+                                          (attr != NULL) ? &attr->initialize_shmem : NULL, handle);
+            }
             NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                   "bootstrap_loader_init returned error for mode %s\n",
                                   bootstrap_modes[mode].c_str());
@@ -164,6 +180,9 @@ int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle
             if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP_PMI, "PMIX") == 0) {
                 plugin_name = nvshmemi_options.BOOTSTRAP_PMIX_PLUGIN;
                 status = bootstrap_loader_init(plugin_name, NULL, handle);
+                if (status && !nvshmemi_options.BOOTSTRAP_PMIX_PLUGIN_provided) {
+                    status = bootstrap_loader_init(LEGACY_BOOTSTRAP_MODULE_PMIX, NULL, handle);
+                }
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "bootstrap_loader_init returned error for mode %s\n",
                                       bootstrap_modes[mode].c_str());
@@ -171,12 +190,18 @@ int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle
                        strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP_PMI, "PMI2") == 0) {
                 plugin_name = nvshmemi_options.BOOTSTRAP_PMI2_PLUGIN;
                 status = bootstrap_loader_init(plugin_name, NULL, handle);
+                if (status && !nvshmemi_options.BOOTSTRAP_PMI_PLUGIN_provided) {
+                    status = bootstrap_loader_init(LEGACY_BOOTSTRAP_MODULE_PMI2, NULL, handle);
+                }
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "bootstrap_pmi_init returned error for mode %s\n",
                                       bootstrap_modes[mode].c_str());
             } else if (strcmp_case_insensitive(nvshmemi_options.BOOTSTRAP_PMI, "PMI") == 0) {
                 plugin_name = nvshmemi_options.BOOTSTRAP_PMI_PLUGIN;
                 status = bootstrap_loader_init(plugin_name, NULL, handle);
+                if (status && !nvshmemi_options.BOOTSTRAP_UID_PLUGIN_provided) {
+                    status = bootstrap_loader_init(LEGACY_BOOTSTRAP_MODULE_PMI, NULL, handle);
+                }
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                       "bootstrap_pmi_init returned error for mode %s\n",
                                       bootstrap_modes[mode].c_str());
@@ -206,6 +231,10 @@ int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle
             plugin_name = nvshmemi_options.BOOTSTRAP_UID_PLUGIN;
 
             status = bootstrap_loader_init(plugin_name, (attr->uid_args), handle);
+            if (status && !nvshmemi_options.BOOTSTRAP_PMI_PLUGIN_provided) {
+                status =
+                    bootstrap_loader_init(LEGACY_BOOTSTRAP_MODULE_UID, (attr->uid_args), handle);
+            }
             NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                                   "bootstrap_loader_init returned error for mode %s\n",
                                   bootstrap_modes[mode].c_str());

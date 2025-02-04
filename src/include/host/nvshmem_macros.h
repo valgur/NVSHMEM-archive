@@ -8,13 +8,15 @@
 #ifdef NVSHMEMI_HOST_ONLY
 #define NVSHMEMI_HOSTDEVICE_PREFIX __host__
 #else
-#ifdef NVSHMEMI_DEVICE_ONLY
-#define NVSHMEMI_HOSTDEVICE_PREFIX __device__
-#else
 #define NVSHMEMI_HOSTDEVICE_PREFIX __host__ __device__
-#endif
 #endif
 #else
 #define NVSHMEMI_HOSTDEVICE_PREFIX
 #endif
+
+#if defined NVSHMEM_BITCODE_APPLICATION
+#undef NVSHMEMI_HOSTDEVICE_PREFIX
+#define NVSHMEMI_HOSTDEVICE_PREFIX __host__ __device__ __attribute__((always_inline))
+#endif
+
 #endif

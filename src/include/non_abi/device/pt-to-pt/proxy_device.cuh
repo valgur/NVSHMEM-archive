@@ -42,7 +42,8 @@
 #include "device_host/nvshmem_proxy_channel.h"  // IWYU pragma: keep
 
 #ifdef __CUDA_ARCH__
-static __forceinline__ __device__ void check_channel_availability(uint64_t tail_idx) {
+NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE __device__ void check_channel_availability(
+    uint64_t tail_idx) {
     uint64_t complete;
     complete = *((volatile uint64_t *)nvshmemi_device_state_d.proxy_channels_complete_local_ptr);
     if ((complete + nvshmemi_device_state_d.proxy_channel_buf_size - 1) < tail_idx) {
@@ -58,7 +59,8 @@ static __forceinline__ __device__ void check_channel_availability(uint64_t tail_
     }
 }
 
-static __device__ inline void nvshmemi_proxy_quiet(bool use_membar) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_proxy_quiet(
+    bool use_membar) {
     uint64_t quiet_issue;
     quiet_issue = (*(volatile uint64_t *)nvshmemi_device_state_d.proxy_channels_issue);
     atomicMax((unsigned long long int *)nvshmemi_device_state_d.proxy_channels_quiet_issue,
@@ -73,7 +75,8 @@ static __device__ inline void nvshmemi_proxy_quiet(bool use_membar) {
     }
 }
 
-static __device__ inline void nvshmemi_proxy_global_exit(int status) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_proxy_global_exit(
+    int status) {
     int rc;
 
     rc = atomicCAS(nvshmemi_device_state_d.global_exit_request_state,
@@ -88,13 +91,14 @@ static __device__ inline void nvshmemi_proxy_global_exit(int status) {
     /* Note, this will block indefinitely, but that is fine as nvshmemi_global_exit should never
      * return. */
     long long int now, later;
-    asm volatile("mov.u64  %0, %globaltimer;" : "=l"(now));
+    asm volatile("mov.u64  %0, %%globaltimer;" : "=l"(now));
     do {
-        asm volatile("mov.u64  %0, %globaltimer;" : "=l"(later));
+        asm volatile("mov.u64  %0, %%globaltimer;" : "=l"(later));
     } while (later >= now);
 }
 
-static __device__ inline void nvshmemi_proxy_enforce_consistency_at_target(bool use_membar) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void
+nvshmemi_proxy_enforce_consistency_at_target(bool use_membar) {
     uint64_t cst_issue;
     cst_issue = (*(volatile uint64_t *)nvshmemi_device_state_d.proxy_channels_issue);
     atomicMax((unsigned long long int *)nvshmemi_device_state_d.proxy_channels_cst_issue,
@@ -109,7 +113,8 @@ static __device__ inline void nvshmemi_proxy_enforce_consistency_at_target(bool 
     }
 }
 
-static __device__ inline void copy_to_channel(void *ptr, uint32_t size) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void copy_to_channel(void *ptr,
+                                                                              uint32_t size) {
     channel_bounce_buffer_t bounce;
     uint64_t idx, tail_idx;
     volatile uint64_t *channel_ptr;
@@ -149,8 +154,8 @@ static __device__ inline void copy_to_channel(void *ptr, uint32_t size) {
     *channel_ptr = bounce.whole_buffer;
 }
 
-static __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size_t bytes, int pe,
-                                                    int channel_op) {
+NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE __device__ void transfer_dma(
+    void *rptr, void *lptr, size_t bytes, int pe, int channel_op) {
     uint64_t idx, tail_idx, *req;
     int size = PROXY_DMA_REQ_BYTES;
     int group_size = 1;
@@ -218,19 +223,24 @@ static __forceinline__ __device__ void transfer_dma(void *rptr, void *lptr, size
 
 /*XXX : Only no const version is used*/
 template <nvshmemi_op_t channel_op>
-static __device__ inline void nvshmemi_proxy_rma(void *rptr, void *lptr, size_t bytes, int pe) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_proxy_rma(void *rptr,
+                                                                                 void *lptr,
+                                                                                 size_t bytes,
+                                                                                 int pe) {
     assert(0);
-    /*XXX:to be used for 1) inline 2) DMA with ack 3) DMA by staging in another buffer*/
+    /*XXX:to be used for 1) NVSHMEMI_DEVICE_ALWAYS_INLINE 2) DMA with ack 3) DMA by staging in
+     * another buffer*/
 }
 
-static __device__ __forceinline__ void nvshmemi_proxy_rma_nbi(void *rptr, void *lptr, size_t bytes,
-                                                              int pe, nvshmemi_op_t op) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE void nvshmemi_proxy_rma_nbi(
+    void *rptr, void *lptr, size_t bytes, int pe, nvshmemi_op_t op) {
     if (!bytes) return;
     transfer_dma(rptr, lptr, bytes, pe, op);
 }
 
 template <typename T>
-static __device__ inline T nvshmemi_proxy_rma_g(void *source, int pe) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE T nvshmemi_proxy_rma_g(void *source,
+                                                                                int pe) {
 // check for CC >= 7.0 because the code depends on __match_all_sync
 #if __CUDA_ARCH__ >= 700
     constexpr unsigned int full_warp = 0xffffffffu;
@@ -310,8 +320,8 @@ static __device__ inline T nvshmemi_proxy_rma_g(void *source, int pe) {
     }
 }
 
-static __forceinline__ __device__ void convert_val_to_uint64(uint64_t *dest, void *value,
-                                                             size_t size) {
+NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE __device__ void convert_val_to_uint64(
+    uint64_t *dest, void *value, size_t size) {
     uint8_t byte_buffer_1;
     uint16_t byte_buffer_2;
     uint32_t byte_buffer_4;
@@ -340,8 +350,8 @@ static __forceinline__ __device__ void convert_val_to_uint64(uint64_t *dest, voi
 }
 
 template <typename T>
-static __forceinline__ __device__ void transfer_inline(void *rptr, T value, int pe,
-                                                       nvshmemi_op_t optype) {
+NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE __device__ void transfer_inline(
+    void *rptr, T value, int pe, nvshmemi_op_t optype) {
     uint64_t idx, tail_idx, *req;
     int size = PROXY_INLINE_REQ_BYTES;
     int group_size = 1;
@@ -393,14 +403,16 @@ static __forceinline__ __device__ void transfer_inline(void *rptr, T value, int 
 }
 
 template <typename T>
-static __device__ inline void nvshmemi_proxy_rma_p(void *rptr, const T value, int pe) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_proxy_rma_p(void *rptr,
+                                                                                   const T value,
+                                                                                   int pe) {
     transfer_inline<T>(rptr, value, pe, NVSHMEMI_OP_P);
 }
 
 template <typename T>
-static __device__ inline void amo(void *rptr,
-                                  uint64_t g_buf_counter /* used only for fetch atomics */,
-                                  T swap_add, T compare, int pe, nvshmemi_amo_t amo_op) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void amo(
+    void *rptr, uint64_t g_buf_counter /* used only for fetch atomics */, T swap_add, T compare,
+    int pe, nvshmemi_amo_t amo_op) {
     uint64_t idx, tail_idx, *req;
     int size = PROXY_AMO_REQ_BYTES;
     int group_size = 1;
@@ -477,14 +489,14 @@ static __device__ inline void amo(void *rptr,
 }
 
 template <typename T>
-static __device__ inline void nvshmemi_proxy_amo_nonfetch(void *rptr, T swap_add, int pe,
-                                                          nvshmemi_amo_t op) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_proxy_amo_nonfetch(
+    void *rptr, T swap_add, int pe, nvshmemi_amo_t op) {
     amo<T>(rptr, 0 /* dummy value */, swap_add, 0, pe, op);
 }
 
 template <typename T>
-static __device__ inline void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T swap_add,
-                                                       T compare, int pe, nvshmemi_amo_t op) {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_proxy_amo_fetch(
+    void *rptr, void *lptr, T swap_add, T compare, int pe, nvshmemi_amo_t op) {
     uint64_t counter = atomicAdd(
         (unsigned long long int *)nvshmemi_device_state_d.proxy_channel_g_buf_head_ptr, 1);
     uint64_t idx = counter * sizeof(g_elem_t);
@@ -532,7 +544,7 @@ static __device__ inline void nvshmemi_proxy_amo_fetch(void *rptr, void *lptr, T
     *((T *)lptr) = return_val;
 }
 
-static __device__ inline void nvshmemi_proxy_fence() {
+NVSHMEMI_STATIC __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_proxy_fence() {
     // making it a no-op as it is a no-op for IB RC, the only transport
     uint64_t idx, tail_idx, *req;
     int size = sizeof(uint64_t);

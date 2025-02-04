@@ -36,6 +36,8 @@ if(NOT SubBuild)
     set(CUDA_HOME_DEFAULT "/usr/local/cuda")
   endif()
 
+  option(NVSHMEM_BUILD_BITCODE_LIBRARY "Build the nvshmem_device bitcode library and tests" $ENV{NVSHMEM_BUILD_BITCODE_LIBRARY})
+  set(NVSHMEM_CLANG_DIR $ENV{NVSHMEM_CLANG_DIR} CACHE PATH "path to force cmake to look for clang when compiling the bitcode library.")
   option(NVSHMEM_DEBUG "Toggles NVSHMEM debug compilation settings" $ENV{NVSHMEM_DEBUG})
   option(NVSHMEM_DEVEL "Toggles NVSHMEM devel compilation settings" $ENV{NVSHMEM_DEVEL})
   option(NVSHMEM_MPI_SUPPORT "Enable compilation of the MPI bootstrap and MPI-specific code" ${NVSHMEM_MPI_SUPPORT_DEFAULT})
@@ -67,23 +69,30 @@ if(NOT SubBuild)
 
   find_package(CUDAToolkit)
 
+  #TODO: consolidate cuda architecture detection code in a single file.
   if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
     if(NOT DEFINED CUDA_ARCHITECTURES_UNDEFINED)
       set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCHITECTURES} CACHE STRING "CUDA ARCHITECTURES" FORCE)
     else()
       if(CUDAToolkit_VERSION_MAJOR LESS 11)
-        set(CMAKE_CUDA_ARCHITECTURES 70 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+        set(CMAKE_CUDA_ARCHITECTURES "70" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 AND CUDAToolkit_VERSION_MINOR LESS 8)
-        set(CMAKE_CUDA_ARCHITECTURES 70 80 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+        set(CMAKE_CUDA_ARCHITECTURES "70;80" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 OR (CUDAToolkit_VERSION_MAJOR EQUAL 12 AND CUDAToolkit_VERSION_MINOR LESS 8))
+        set(CMAKE_CUDA_ARCHITECTURES "70;80;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       else()
-        set(CMAKE_CUDA_ARCHITECTURES 70 80 90 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+        set(CMAKE_CUDA_ARCHITECTURES "70;80;90;100" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       endif()
     endif()
   endif()
-  foreach(ARCH ${CMAKE_CUDA_ARCHITECTURES})
-    set(NVCC_GENCODE "${NVCC_GENCODE}-gencode=arch=compute_${ARCH},code=sm_${ARCH};-gencode=arch=compute_${ARCH},code=compute_${ARCH};")
-  endforeach()
-  mark_as_advanced(NVCC_GENCODE CMAKE_CUDA_ARCHITECTURES_UNDEFINED CUDA_ARCHITECTURES_UNDEFINED)
+
+  if(NVSHMEM_BUILD_BITCODE_LIBRARY)
+    if(NVSHMEM_CLANG_DIR)
+      find_package(Clang CONFIG PATHS ${NVSHMEM_CLANG_DIR} NO_DEFAULT_PATH REQUIRED)
+    else()
+      find_package(Clang CONFIG REQUIRED)
+    endif()
+  endif()
 
   include(CheckCompilerFlag)
   check_compiler_flag(CUDA -t4 NVCC_THREADS)
@@ -120,6 +129,19 @@ endif()
 
 add_subdirectory(common)
 
+if(CUDAToolkit_VERSION_MAJOR LESS 12)
+  set(NVSHMEM_CLANG_ARCH "sm_70")
+  set(NVSHMEM_PTX_ARCH "ptx78")
+else()
+  set(NVSHMEM_CLANG_ARCH "sm_90")
+  set(NVSHMEM_PTX_ARCH "ptx82")
+endif()
+
+if (NOT SubBuild)
+  configure_file(${NVSHMEM_PERFTEST_TLD}/../src/include/non_abi/device/pt-to-pt/transfer_device.cuh.in
+  ${NVSHMEM_PERFTEST_TLD}/common/include/non_abi/device/pt-to-pt/transfer_device.cuh COPYONLY)
+endif()
+
 macro(nvshmem_add_perftest_prefix SOURCE PREFIX)
   get_filename_component(NAME_ ${SOURCE} NAME_WE)
   get_filename_component(DIR_ ${SOURCE} ABSOLUTE)
@@ -151,6 +173,60 @@ macro(nvshmem_add_perftest_prefix SOURCE PREFIX)
     install(TARGETS ${NAME} RUNTIME DESTINATION "${NVSHMEM_PERFTEST_RELEASE_PREFIX}/${DIR}")
   endif()
 
+endmacro()
+
+macro(nvshmem_add_cubin_perftest_prefix SOURCE PREFIX)
+  get_filename_component(NAME_ ${SOURCE} NAME_WE)
+  get_filename_component(DIR_ ${SOURCE} ABSOLUTE)
+  string(REPLACE ${NVSHMEM_PERFTEST_TLD} "" DIR ${DIR_})
+  string(REPLACE ${SOURCE} "" DIR ${DIR})
+  set(CUBIN_UNLINKED_NAME "${NAME_}_UNLINKED.cubin")
+  set(CUBIN_NAME "${NAME_}.cubin")
+  set(INCLUDE_DIRECTORIES "-I${NVSHMEM_PERFTEST_TLD}/common" "-I${NVSHMEM_PERFTEST_TLD}/../src/include/" "-I${NVSHMEM_PREFIX}/include")
+  if (NOT SubBuild)
+    set(BITCODE_LIB_PATH ${NVSHMEM_PREFIX}/lib/libnvshmem_device.bc)
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${CUBIN_NAME}
+                      COMMAND clang -c -emit-llvm -std=c++11 -x cuda --cuda-path=${CUDA_HOME} --cuda-device-only
+                              --cuda-gpu-arch=${NVSHMEM_CLANG_ARCH} ${INCLUDE_DIRECTORIES} -DNVSHMEM_BITCODE_APPLICATION ${DIR_} -o ${NAME_}.bc.unoptimized
+                      COMMAND llvm-link --only-needed ${NAME_}.bc.unoptimized ${BITCODE_LIB_PATH} -o ${NAME_}.bc.unoptimized.linked
+                      COMMAND opt -O3 ${NAME_}.bc.unoptimized.linked -o ${NAME_}.bc
+                      COMMAND llc -O3 --disable-tail-calls -mcpu=${NVSHMEM_CLANG_ARCH} -mattr=${NVSHMEM_PTX_ARCH} ${NAME_}.bc -o ${NAME_}.ptx
+                      COMMAND ${CUDA_HOME}/bin/ptxas -c -arch=${NVSHMEM_CLANG_ARCH} ${NAME_}.ptx -o ${CUBIN_UNLINKED_NAME}
+                      COMMAND ${CUDA_HOME}/bin/nvlink -arch=${NVSHMEM_CLANG_ARCH} ${CUBIN_UNLINKED_NAME} -o ${CUBIN_NAME}
+                      COMMAND rm ${NAME_}.bc.unoptimized ${NAME_}.bc.unoptimized.linked  ${NAME_}.bc ${NAME_}.ptx ${CUBIN_UNLINKED_NAME}
+                      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+                      DEPENDS nvshmem_perftest_helper ${BITCODE_LIB_PATH})
+  else()
+    set(BITCODE_LIB_PATH ${CMAKE_BINARY_DIR}/src/lib/libnvshmem_device.bc)
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${CUBIN_NAME}
+                      COMMAND clang -c -emit-llvm -std=c++11 -x cuda --cuda-path=${CUDA_HOME} --cuda-device-only
+                              --cuda-gpu-arch=${NVSHMEM_CLANG_ARCH} ${INCLUDE_DIRECTORIES} -DNVSHMEM_BITCODE_APPLICATION ${DIR_} -o ${NAME_}.bc.unoptimized
+                      COMMAND llvm-link --only-needed ${NAME_}.bc.unoptimized ${BITCODE_LIB_PATH} -o ${NAME_}.bc.unoptimized.linked
+                      COMMAND opt -O3 ${NAME_}.bc.unoptimized.linked -o ${NAME_}.bc
+                      COMMAND llc -O3 --disable-tail-calls -mcpu=${NVSHMEM_CLANG_ARCH} -mattr=${NVSHMEM_PTX_ARCH} ${NAME_}.bc -o ${NAME_}.ptx
+                      COMMAND ${CUDA_HOME}/bin/ptxas -c -arch=${NVSHMEM_CLANG_ARCH} ${NAME_}.ptx -o ${CUBIN_UNLINKED_NAME}
+                      COMMAND ${CUDA_HOME}/bin/nvlink -arch=${NVSHMEM_CLANG_ARCH} ${CUBIN_UNLINKED_NAME} -o ${CUBIN_NAME}
+                      COMMAND rm ${NAME_}.bc.unoptimized ${NAME_}.bc.unoptimized.linked  ${NAME_}.bc ${NAME_}.ptx ${CUBIN_UNLINKED_NAME}
+                      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+                      DEPENDS nvshmem_perftest_helper libnvshmem_device_bitcode)
+  endif()
+
+  add_custom_target(${NAME_}_cubin ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${CUBIN_NAME})
+
+  install(
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/${CUBIN_NAME}
+    DESTINATION "${NVSHMEM_PERFTEST_INSTALL_PREFIX}/${DIR}"
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+  )
+  if (NVSHMEM_PERFTEST_RELEASE_PREFIX)
+    install(
+            FILES ${CMAKE_CURRENT_BINARY_DIR}/${CUBIN_NAME}
+            DESTINATION "${NVSHMEM_PERFTEST_RELEASE_PREFIX}/${DIR}"
+            PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                        GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+  )
+  endif()
 endmacro()
 
 add_subdirectory(device)

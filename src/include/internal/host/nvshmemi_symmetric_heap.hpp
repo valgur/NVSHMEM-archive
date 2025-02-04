@@ -487,7 +487,7 @@ class nvshmemi_symmetric_heap_sysmem_static_shm final
 
    private:
     char heap_name_[NAME_MAX] = {0};
-    nvshmemi_shared_memory_info_t heap_info_;
+    nvshmemi_shared_memory_info_t heap_info_ = {};
     // shared global storage for all objects
     static std::vector<nvshmemi_shared_memory_info_t> infos_;
 };

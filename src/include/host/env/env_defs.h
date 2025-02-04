@@ -26,6 +26,10 @@
 #include "bootstrap_host_transport/env_defs_internal.h"  // IWYU pragma: keep
 #endif
 #include "non_abi/nvshmem_build_options.h"  // for NVSHMEM_IBGDA_SUPPORT
+#include "non_abi/nvshmem_version.h"
+
+#define ENV_DEFS_STRINGIFY(x) #x
+#define ENV_DEFS_TOSTRING(x) ENV_DEFS_STRINGIFY(x)
 
 #ifdef NVSHMEMI_ENV_DEF
 
@@ -94,41 +98,53 @@ NVSHMEMI_ENV_DEF(BOOTSTRAP_PLUGIN, string, "", NVSHMEMI_ENV_CAT_BOOTSTRAP,
                  "Absolute path to or name of the bootstrap plugin file to load "
                  "when NVSHMEM_BOOTSTRAP=plugin is specified")
 
-NVSHMEMI_ENV_DEF(BOOTSTRAP_MPI_PLUGIN, string, "nvshmem_bootstrap_mpi.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Absolute path to or name of the MPI bootstrap "
-                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
-                 "priorities. See `man dlopen`")
+NVSHMEMI_ENV_DEF(
+    BOOTSTRAP_MPI_PLUGIN, string,
+    "nvshmem_bootstrap_mpi.so." ENV_DEFS_TOSTRING(NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION),
+    NVSHMEMI_ENV_CAT_BOOTSTRAP,
+    "Absolute path to or name of the MPI bootstrap "
+    "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+    "priorities. See `man dlopen`")
 
-NVSHMEMI_ENV_DEF(BOOTSTRAP_SHMEM_PLUGIN, string, "nvshmem_bootstrap_shmem.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Absolute path to or name of the SHMEM bootstrap "
-                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
-                 "priorities. See `man dlopen`")
+NVSHMEMI_ENV_DEF(
+    BOOTSTRAP_SHMEM_PLUGIN, string,
+    "nvshmem_bootstrap_shmem.so." ENV_DEFS_TOSTRING(NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION),
+    NVSHMEMI_ENV_CAT_BOOTSTRAP,
+    "Absolute path to or name of the SHMEM bootstrap "
+    "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+    "priorities. See `man dlopen`")
 
-NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI_PLUGIN, string, "nvshmem_bootstrap_pmi.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Absolute path to or name of the PMI bootstrap "
-                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
-                 "priorities. See `man dlopen`")
+NVSHMEMI_ENV_DEF(
+    BOOTSTRAP_PMI_PLUGIN, string,
+    "nvshmem_bootstrap_pmi.so." ENV_DEFS_TOSTRING(NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION),
+    NVSHMEMI_ENV_CAT_BOOTSTRAP,
+    "Absolute path to or name of the PMI bootstrap "
+    "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+    "priorities. See `man dlopen`")
 
-NVSHMEMI_ENV_DEF(BOOTSTRAP_PMI2_PLUGIN, string, "nvshmem_bootstrap_pmi2.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Absolute path to or name of the PMI-2 bootstrap "
-                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
-                 "priorities. See `man dlopen`")
+NVSHMEMI_ENV_DEF(
+    BOOTSTRAP_PMI2_PLUGIN, string,
+    "nvshmem_bootstrap_pmi2.so." ENV_DEFS_TOSTRING(NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION),
+    NVSHMEMI_ENV_CAT_BOOTSTRAP,
+    "Absolute path to or name of the PMI-2 bootstrap "
+    "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+    "priorities. See `man dlopen`")
 
-NVSHMEMI_ENV_DEF(BOOTSTRAP_PMIX_PLUGIN, string, "nvshmem_bootstrap_pmix.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Absolute path to or name of the PMIx bootstrap "
-                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
-                 "priorities. See `man dlopen`")
+NVSHMEMI_ENV_DEF(
+    BOOTSTRAP_PMIX_PLUGIN, string,
+    "nvshmem_bootstrap_pmix.so." ENV_DEFS_TOSTRING(NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION),
+    NVSHMEMI_ENV_CAT_BOOTSTRAP,
+    "Absolute path to or name of the PMIx bootstrap "
+    "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+    "priorities. See `man dlopen`")
 
-NVSHMEMI_ENV_DEF(BOOTSTRAP_UID_PLUGIN, string, "nvshmem_bootstrap_uid.so",
-                 NVSHMEMI_ENV_CAT_BOOTSTRAP,
-                 "Absolute path to or name of the UID bootstrap "
-                 "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
-                 "priorities. See `man dlopen`")
+NVSHMEMI_ENV_DEF(
+    BOOTSTRAP_UID_PLUGIN, string,
+    "nvshmem_bootstrap_uid.so." ENV_DEFS_TOSTRING(NVSHMEM_BOOTSTRAP_PLUGIN_MAJOR_VERSION),
+    NVSHMEMI_ENV_CAT_BOOTSTRAP,
+    "Absolute path to or name of the UID bootstrap "
+    "plugin file. \nNVSHMEM will search for the plugin based on linux linker "
+    "priorities. See `man dlopen`")
 
 NVSHMEMI_ENV_DEF(BOOTSTRAP_TWO_STAGE, bool, false, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Ignore CUDA device setting during initialization,"
@@ -154,7 +170,6 @@ NVSHMEMI_ENV_DEF(ENABLE_ERROR_CHECKS, bool, false, NVSHMEMI_ENV_CAT_HIDDEN, "Ena
 NVSHMEMI_ENV_DEF(MAX_TEAMS, long, 32l, NVSHMEMI_ENV_CAT_OTHER,
                  "Maximum number of simultaneous teams allowed")
 
-NVSHMEMI_ENV_DEF(MAX_P2P_GPUS, int, 128, NVSHMEMI_ENV_CAT_OTHER, "Maximum number of P2P GPUs")
 NVSHMEMI_ENV_DEF(MAX_MEMORY_PER_GPU, size, (size_t)((size_t)128 * (1 << 30)),
                  NVSHMEMI_ENV_CAT_OTHER, "Maximum memory per GPU")
 #if defined(NVSHMEM_PPC64LE)
@@ -255,7 +270,10 @@ NVSHMEMI_ENV_DEF(FCOLLECT_ALGO, int, 0, NVSHMEMI_ENV_CAT_HIDDEN,
 
 NVSHMEMI_ENV_DEF(REDUCE_ALGO, int, 0, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Allreduce algorithm to be used. \n"
-                 "   * 0 - use default algorithm selection strategy\n")
+                 "   * 0/1 - use default algorithm selection strategy\n")
+
+NVSHMEMI_ENV_DEF(REDUCE_NVLS_THRESHOLD, int, (1 << 11), NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Message size threshold up to which allreduce one-shot algo will be used\n")
 
 NVSHMEMI_ENV_DEF(REDMAXLOC_ALGO, int, 1, NVSHMEMI_ENV_CAT_COLLECTIVES,
                  "Reduction algorithm to be used for MAXLOC operation.\n"

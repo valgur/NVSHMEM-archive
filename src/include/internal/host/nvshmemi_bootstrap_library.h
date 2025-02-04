@@ -13,7 +13,7 @@
 enum { BOOTSTRAP_MPI = 0, BOOTSTRAP_SHMEM, BOOTSTRAP_PMI, BOOTSTRAP_PLUGIN, BOOTSTRAP_UID };
 
 typedef struct bootstrap_attr {
-    bootstrap_attr() : initialize_shmem(0), mpi_comm(NULL), uid_args(NULL) {}
+    bootstrap_attr() : initialize_shmem(0), mpi_comm(NULL), meta_data(NULL), uid_args(NULL) {}
     int initialize_shmem;
     void *mpi_comm;
     void *meta_data;

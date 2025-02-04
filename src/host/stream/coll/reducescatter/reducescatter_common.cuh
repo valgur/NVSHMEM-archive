@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2020-2024, NVIDIA CORPORATION. All rights reserved.
  *
  * See COPYRIGHT for license information
  */
@@ -13,17 +13,19 @@
 
 #include "internal/host/util.h"
 #include "internal/non_abi/nvshmemi_h_to_d_coll_defs.cuh"
+#include "host/nvshmem_api.h"
 
-using namespace std;
+#define NVSHMEMI_REDUCESCATTER_CTA_THRESHOLD 1048576
+#define NVSHMEMI_REDUCESCATTER_CTA_COUNT_DEFAULT 16
 
-static map<pair<string, rdxn_ops_t>, size_t> nvshmemi_reducescatter_maxblocksize;
+static std::map<std::pair<std::string, rdxn_ops_t>, size_t> nvshmemi_reducescatter_maxblocksize;
 
 template <typename TYPE, rdxn_ops_t OP>
 void nvshmemi_call_reducescatter_on_stream_kernel(nvshmem_team_t team, TYPE *dest,
                                                   const TYPE *source, size_t nreduce,
                                                   cudaStream_t stream) {
     int tmp;
-    pair<string, rdxn_ops_t> map_pair(string(typeid(TYPE).name()), OP);
+    std::pair<std::string, rdxn_ops_t> map_pair(std::string(typeid(TYPE).name()), OP);
     if (nvshmemi_reducescatter_maxblocksize.find(map_pair) ==
         nvshmemi_reducescatter_maxblocksize.end()) {
         CUDA_RUNTIME_CHECK(cudaOccupancyMaxPotentialBlockSize(
@@ -40,7 +42,43 @@ void nvshmemi_call_reducescatter_on_stream_kernel(nvshmem_team_t team, TYPE *des
         num_threads_per_block = nvshmemi_options.REDUCESCATTER_NTHREADS;
     }
 
+    nvshmemi_team_t *teami = nvshmemi_team_pool[team];
     int num_blocks = 1;
+    /* By default for NVLS sharp based algorithms, Select num of blocks by size heuristic */
+    if (teami->nvls_rsc_base_ptr != NULL) {
+        if (nvshmemi_options.MAX_CTAS_provided &&
+            nreduce * teami->size * sizeof(TYPE) >= NVSHMEMI_REDUCESCATTER_CTA_THRESHOLD) {
+            num_blocks = nvshmemi_options.MAX_CTAS;
+        } else if (nreduce * teami->size * sizeof(TYPE) >= NVSHMEMI_REDUCESCATTER_CTA_THRESHOLD) {
+            num_blocks = NVSHMEMI_REDUCESCATTER_CTA_COUNT_DEFAULT;
+        } else {
+            num_blocks = 1;
+        }
+    }
+
+    if (num_blocks > 1 && teami->team_dups[1] == NVSHMEM_TEAM_INVALID) {
+        CUDA_RUNTIME_CHECK(cudaStreamSynchronize(
+            stream)); /* This is to synchronize with any prior operations submitted on this stream
+                         such as barrier that can deadlock with similar ops in split_strided */
+        NVSHMEMU_FOR_EACH(block_id, num_blocks - 1) {
+            nvshmem_team_split_strided(team, 0, 1, nvshmem_team_n_pes(team), NULL, 0,
+                                       &(teami->team_dups[block_id + 1]));
+            INFO(NVSHMEM_TEAM, "Duplicate team ID: %d of parent team: %d for CTA %zu\n",
+                 teami->team_dups[block_id + 1], teami->team_idx, block_id);
+        }
+
+        off_t team_dups_offset = offsetof(nvshmemi_team_t, team_dups);
+        nvshmemi_team_t *teami_pool_device_addr;
+        CUDA_RUNTIME_CHECK(cudaMemcpy((void **)&teami_pool_device_addr,
+                                      &nvshmemi_device_state.team_pool[team],
+                                      sizeof(nvshmemi_team_t *), cudaMemcpyDeviceToHost));
+        CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
+        off_t team_dups_device_addr = (off_t)((char *)teami_pool_device_addr + team_dups_offset);
+        CUDA_RUNTIME_CHECK(cudaMemcpy((void *)(team_dups_device_addr), &teami->team_dups[0],
+                                      sizeof(nvshmem_team_t) * num_blocks, cudaMemcpyHostToDevice));
+        CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
+    }
+
     reducescatter_on_stream_kernel<TYPE, OP>
         <<<num_blocks, num_threads_per_block, 0, stream>>>(team, dest, source, nreduce);
     CUDA_RUNTIME_CHECK(cudaGetLastError());

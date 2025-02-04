@@ -363,6 +363,12 @@ if __name__ == '__main__':
       required=False, help='Select a bootstrap mode')
 
     parser.add_argument(
+      "--bind-to", nargs='?', dest="bind_to_value",
+      choices=['none', 'socket', 'numa'],
+      default="socket",
+      required=False, help='--bind-to value in command line.')
+
+    parser.add_argument(
       "--cases", dest="cases", 
       required=False, help='case name list. Use comma join them. If use this option, script will ignore the list files in arguments.')
 
@@ -370,6 +376,12 @@ if __name__ == '__main__':
     enable_skip = 0
 
     # Args parser
+    if args.bind_to_value is None:
+      bind_to_value = "socket"
+    else:
+      bind_to_value = args.bind_to_value
+    os.environ["QA_BIND_TO"] = bind_to_value
+
     if args.bootstrap is None:
       bootstrap = "pmi"
     else:

@@ -20,15 +20,6 @@
 #include <cmath>
 #include "utils.h"
 
-#define DEFAULT_SKIP 10
-#define DEFAULT_ITERS 100
-#define DEFAULT_MIN_MSG_SIZE sizeof(int)
-#define DEFAULT_MAX_MSG_SIZE 128 * 1024 * 1024
-
-typedef enum { ON_STREAM = 0, N_ISSUE_TYPES = 1 } putget_issue_t;
-
-typedef enum { PUSH = 0, PULL = 1 } dir_t;
-
 int bw(void *data_d, void *data_d_local, int sizeBytes, int pe, int iter, int skip,
        putget_issue_t iss, dir_t dir, cudaStream_t strm, cudaEvent_t sev, cudaEvent_t eev,
        float *ms, float *us) {
@@ -36,8 +27,8 @@ int bw(void *data_d, void *data_d_local, int sizeBytes, int pe, int iter, int sk
     int peer = !pe;
     struct timeval start, stop;
 
-    if (iss == ON_STREAM) {
-        if (dir == PUSH) {
+    if (iss.type == ON_STREAM) {
+        if (dir.type == WRITE) {
             for (int i = 0; i < (iter + skip); i++) {
                 if (i == skip) {
                     nvshmemx_quiet_on_stream(strm);
@@ -64,14 +55,13 @@ int bw(void *data_d, void *data_d_local, int sizeBytes, int pe, int iter, int sk
         CUDA_CHECK(cudaEventSynchronize(eev));
         CUDA_CHECK(cudaEventElapsedTime(ms, sev, eev));
     } else {
-        if (dir == PUSH) {
+        if (dir.type == WRITE) {
             for (int i = 0; i < (iter + skip); i++) {
                 if (i == skip) {
                     nvshmem_quiet();
                     gettimeofday(&start, NULL);
                 }
-                nvshmem_int_put_nbi((int *)data_d, (int *)data_d_local, sizeBytes / sizeof(int),
-                                    peer);
+                nvshmem_putmem_nbi((void *)data_d, (void *)data_d_local, sizeBytes, peer);
             }
         } else {
             for (int i = 0; i < (iter + skip); i++) {
@@ -79,8 +69,7 @@ int bw(void *data_d, void *data_d_local, int sizeBytes, int pe, int iter, int sk
                     nvshmem_quiet();
                     gettimeofday(&start, NULL);
                 }
-                nvshmem_int_get_nbi((int *)data_d_local, (int *)data_d, sizeBytes / sizeof(int),
-                                    peer);
+                nvshmem_getmem_nbi((void *)data_d_local, (void *)data_d, sizeBytes, peer);
             }
         }
         nvshmem_quiet();
@@ -96,12 +85,10 @@ int main(int argc, char *argv[]) {
     int mype, npes;
     char *data_d = NULL, *data_d_local = NULL;
 
-    putget_issue_t iss = N_ISSUE_TYPES;
-    dir_t dir = PUSH;
-    int iter = DEFAULT_ITERS;
-    int skip = DEFAULT_SKIP;
-    int min_msg_size = DEFAULT_MIN_MSG_SIZE;
-    int max_msg_size = DEFAULT_MAX_MSG_SIZE;
+    read_args(argc, argv);
+
+    int iter = iters;
+    int skip = warmup_iters;
     uint64_t *size_array = NULL;
     double *bandwidth_array = NULL;
     int num_entries;
@@ -118,41 +105,7 @@ int main(int argc, char *argv[]) {
         goto finalize;
     }
 
-    while (1) {
-        int c;
-        c = getopt(argc, argv, "s:S:n:k:i:d:h");
-        if (c == -1) break;
-
-        switch (c) {
-            case 's':
-                min_msg_size = strtol(optarg, NULL, 0);
-                break;
-            case 'S':
-                max_msg_size = strtol(optarg, NULL, 0);
-                break;
-            case 'n':
-                iter = strtol(optarg, NULL, 0);
-                break;
-            case 'k':
-                skip = strtol(optarg, NULL, 0);
-                break;
-            case 'i':
-                iss = (putget_issue_t)strtol(optarg, NULL, 0);
-                break;
-            case 'd':
-                dir = (dir_t)strtol(optarg, NULL, 0);
-                break;
-            default:
-            case 'h':
-                printf(
-                    "-n [Iterations] -k [Iterations to skip before benchmarking] -S [Max message "
-                    "size] -s [Min message size] -i [Put/Get issue type : ON_STREAM(0) otherwise "
-                    "1] -d [Direction of copy : PUSH(0) or PULL(1)]\n");
-                goto finalize;
-        }
-    }
-
-    num_entries = floor(log2((float)max_msg_size)) - floor(log2((float)min_msg_size)) + 1;
+    num_entries = floor(log2((float)max_size)) - floor(log2((float)min_size)) + 1;
     size_array = (uint64_t *)calloc(sizeof(uint64_t), num_entries);
     if (!size_array) {
         status = -1;
@@ -165,11 +118,11 @@ int main(int argc, char *argv[]) {
         goto finalize;
     }
 
-    data_d = (char *)nvshmem_malloc(max_msg_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    data_d = (char *)nvshmem_malloc(max_size);
+    CUDA_CHECK(cudaMemset(data_d, 0, max_size));
 
-    data_d_local = (char *)nvshmem_malloc(max_msg_size);
-    CUDA_CHECK(cudaMemset(data_d_local, 0, max_msg_size));
+    data_d_local = (char *)nvshmem_malloc(max_size);
+    CUDA_CHECK(cudaMemset(data_d_local, 0, max_size));
 
     cudaStream_t strm;
     CUDA_CHECK(cudaStreamCreateWithFlags(&strm, cudaStreamNonBlocking));
@@ -182,22 +135,21 @@ int main(int argc, char *argv[]) {
         CUDA_CHECK(cudaEventCreate(&sev));
         CUDA_CHECK(cudaEventCreate(&eev));
         i = 0;
-        for (int size = min_msg_size; size <= max_msg_size; size *= 2) {
+        for (int size = min_size; size <= max_size; size *= step_factor) {
             size_array[i] = size;
-            bw(data_d, data_d_local, size, mype, iter, skip, iss, dir, strm, sev, eev, &ms, &us);
+            bw(data_d, data_d_local, size, mype, iter, skip, putget_issue, dir, strm, sev, eev, &ms,
+               &us);
 
-            if (iss == ON_STREAM) {
-                bandwidth_array[i] =
-                    ((float)iter * (float)size) / ((ms / 1000) * 1024 * 1024 * 1024);
+            if (putget_issue.type == ON_STREAM) {
+                bandwidth_array[i] = ((float)iter * (float)size) / ((ms / 1000) * B_TO_GB);
             } else {
-                bandwidth_array[i] =
-                    ((float)iter * (float)size) / ((us / 1000000) * 1024 * 1024 * 1024);
+                bandwidth_array[i] = ((float)iter * (float)size) / ((us / 1000000) * B_TO_GB);
             }
             i++;
         }
 
-        print_table_v1("Bandwidth", "None", "size (Bytes)", "Bandwidth", "GB", '+', size_array,
-                       bandwidth_array, i);
+        print_table_basic("Bandwidth", "None", "size (Bytes)", "Bandwidth", "GB", '+', size_array,
+                          bandwidth_array, i);
         CUDA_CHECK(cudaEventDestroy(sev));
         CUDA_CHECK(cudaEventDestroy(eev));
 

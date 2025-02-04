@@ -25,7 +25,7 @@ typedef void* mspace;
 #endif
 #endif
 
-#ifdef __cplusplus
+#if defined __cplusplus
 extern "C" {
 #endif
 
@@ -44,7 +44,7 @@ void mspace_free(mspace msp, void* mem);
 void* mspace_memalign(mspace msp, size_t alignment, size_t bytes);
 void* mspace_realloc(mspace msp, void* ptr, size_t bytes);
 
-#ifdef __cplusplus
+#if defined __cplusplus
 }
 #endif
 #endif

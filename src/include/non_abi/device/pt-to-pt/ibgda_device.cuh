@@ -8,7 +8,7 @@
 #define _NVSHMEMI_IBGDA_DEVICE_H_
 
 #include <cuda_runtime.h>
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <limits.h>
 #else
 #include <cuda/std/climits>
@@ -166,21 +166,24 @@ static_assert(sizeof(ibgda_atomic_64_masked_cs_seg_t) == 16,
 #ifdef __CUDA_ARCH__
 
 #ifdef NVSHMEM_TIMEOUT_DEVICE_POLLING
-__device__ static inline uint64_t ibgda_query_globaltimer() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t ibgda_query_globaltimer() {
     uint64_t ret;
     asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(ret)::"memory");
     return ret;
 }
 #endif /* NVSHMEM_TIMEOUT_DEVICE_POLLING */
 
-__device__ static inline nvshmemi_ibgda_device_state_t *ibgda_get_state() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE nvshmemi_ibgda_device_state_t *
+ibgda_get_state() {
     return &nvshmemi_ibgda_device_state_d;
 }
 
-__device__ static inline bool ibgda_is_rc_enabled() { return ibgda_get_state()->num_rc_per_pe > 0; }
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE bool ibgda_is_rc_enabled() {
+    return ibgda_get_state()->num_rc_per_pe > 0;
+}
 
 // Prevent code reordering from both compiler and GPU
-__device__ static inline void IBGDA_MFENCE() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void IBGDA_MFENCE() {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_MFENCE
     asm volatile("fence.acq_rel.cta;" ::: "memory");
 #else
@@ -188,7 +191,7 @@ __device__ static inline void IBGDA_MFENCE() {
 #endif /* NVSHMEMI_IBGDA_PTX_OPTIMIZATION_MFENCE */
 }
 
-__device__ static inline void IBGDA_MEMBAR_NO_OPTIMIZATION() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void IBGDA_MEMBAR_NO_OPTIMIZATION() {
 #ifdef NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY
     __threadfence();
 #else
@@ -199,7 +202,7 @@ __device__ static inline void IBGDA_MEMBAR_NO_OPTIMIZATION() {
 #endif /* NVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY */
 }
 
-__device__ static inline void IBGDA_MEMBAR() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void IBGDA_MEMBAR() {
 // st.release automatically adds membar in SASS.
 #ifndef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_STORE_RELEASE
 
@@ -215,43 +218,45 @@ __device__ static inline void IBGDA_MEMBAR() {
 #endif /* NVSHMEMI_IBGDA_PTX_OPTIMIZATION_STORE_RELEASE */
 }
 
-__device__ inline int nvshmemi_thread_id_in_warp() {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_thread_id_in_warp() {
     int myIdx;
-    asm volatile("mov.u32  %0, %laneid;" : "=r"(myIdx));
+    asm volatile("mov.u32  %0,  %%laneid;" : "=r"(myIdx));
     return myIdx;
 }
 
-__device__ inline int nvshmemi_warp_size() {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_warp_size() {
     return ((blockDim.x * blockDim.y * blockDim.z) < warpSize)
                ? (blockDim.x * blockDim.y * blockDim.z)
                : warpSize;
 }
 
-__device__ inline void nvshmemi_warp_sync() { __syncwarp(); }
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_warp_sync() { __syncwarp(); }
 
-__device__ inline int nvshmemi_thread_id_in_block() {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_thread_id_in_block() {
     return (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);
 }
 
-__device__ inline int nvshmemi_block_size() { return (blockDim.x * blockDim.y * blockDim.z); }
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE int nvshmemi_block_size() {
+    return (blockDim.x * blockDim.y * blockDim.z);
+}
 
-__device__ static inline uint32_t ibgda_get_smid() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint32_t ibgda_get_smid() {
     uint32_t smid;
     asm("mov.u32  %0, %%smid;" : "=r"(smid));
     return smid;
 }
 
-__device__ static inline uint32_t ibgda_get_ctaid() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint32_t ibgda_get_ctaid() {
     return (blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y);
 }
 
 template <typename T>
-__device__ static inline void ibgda_store_relaxed(T *ptr, T val) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_store_relaxed(T *ptr, T val) {
     WRITE_ONCE(*ptr, val);
 }
 
 template <>
-__device__ inline void ibgda_store_relaxed(uint8_t *ptr, uint8_t val) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_store_relaxed(uint8_t *ptr, uint8_t val) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_STORE_RELEASE
     uint16_t _val = val;
     asm volatile("st.relaxed.gpu.global.L1::no_allocate.b8 [%0], %1;" : : "l"(ptr), "h"(_val));
@@ -261,7 +266,7 @@ __device__ inline void ibgda_store_relaxed(uint8_t *ptr, uint8_t val) {
 }
 
 template <>
-__device__ inline void ibgda_store_relaxed(uint16_t *ptr, uint16_t val) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_store_relaxed(uint16_t *ptr, uint16_t val) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_STORE_RELEASE
     asm volatile("st.relaxed.gpu.global.L1::no_allocate.b16 [%0], %1;" : : "l"(ptr), "h"(val));
 #else
@@ -270,7 +275,7 @@ __device__ inline void ibgda_store_relaxed(uint16_t *ptr, uint16_t val) {
 }
 
 template <>
-__device__ inline void ibgda_store_relaxed(uint32_t *ptr, uint32_t val) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_store_relaxed(uint32_t *ptr, uint32_t val) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_STORE_RELEASE
     asm volatile("st.relaxed.gpu.global.L1::no_allocate.b32 [%0], %1;" : : "l"(ptr), "r"(val));
 #else
@@ -279,7 +284,7 @@ __device__ inline void ibgda_store_relaxed(uint32_t *ptr, uint32_t val) {
 }
 
 template <>
-__device__ inline void ibgda_store_relaxed(uint64_t *ptr, uint64_t val) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_store_relaxed(uint64_t *ptr, uint64_t val) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_STORE_RELEASE
     asm volatile("st.relaxed.gpu.global.L1::no_allocate.b64 [%0], %1;" : : "l"(ptr), "l"(val));
 #else
@@ -287,7 +292,8 @@ __device__ inline void ibgda_store_relaxed(uint64_t *ptr, uint64_t val) {
 #endif
 }
 
-__device__ static inline void ibgda_store_release(uint32_t *ptr, uint32_t val) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_store_release(uint32_t *ptr,
+                                                                                  uint32_t val) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_STORE_RELEASE
     asm volatile("st.release.gpu.global.L1::no_allocate.b32 [%0], %1;" : : "l"(ptr), "r"(val));
 #else
@@ -295,7 +301,8 @@ __device__ static inline void ibgda_store_release(uint32_t *ptr, uint32_t val) {
 #endif
 }
 
-__device__ static inline void ibgda_store_release(uint64_t *ptr, uint64_t val) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_store_release(uint64_t *ptr,
+                                                                                  uint64_t val) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_STORE_RELEASE
     asm volatile("st.release.gpu.global.L1::no_allocate.b64 [%0], %1;" : : "l"(ptr), "l"(val));
 #else
@@ -307,7 +314,7 @@ __device__ static inline void ibgda_store_release(uint64_t *ptr, uint64_t val) {
  * DO NOT use BSWAP(ibgda_atomic_read(x)) as it could create a bug.
  * See the comment near READ_ONCE.
  */
-__device__ static inline uint8_t ibgda_atomic_read(uint8_t *ptr) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint8_t ibgda_atomic_read(uint8_t *ptr) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_ATOMIC_READ_SET
     uint16_t ret;
     asm volatile("ld.relaxed.gpu.global.L1::no_allocate.b8 %0, [%1];" : "=h"(ret) : "l"(ptr));
@@ -317,7 +324,7 @@ __device__ static inline uint8_t ibgda_atomic_read(uint8_t *ptr) {
 #endif
 }
 
-__device__ static inline uint16_t ibgda_atomic_read(uint16_t *ptr) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint16_t ibgda_atomic_read(uint16_t *ptr) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_ATOMIC_READ_SET
     uint16_t ret;
     asm volatile("ld.relaxed.gpu.global.L1::no_allocate.b16 %0, [%1];" : "=h"(ret) : "l"(ptr));
@@ -327,7 +334,7 @@ __device__ static inline uint16_t ibgda_atomic_read(uint16_t *ptr) {
 #endif
 }
 
-__device__ static inline uint32_t ibgda_atomic_read(uint32_t *ptr) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint32_t ibgda_atomic_read(uint32_t *ptr) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_ATOMIC_READ_SET
     uint32_t ret;
     asm volatile("ld.relaxed.gpu.global.L1::no_allocate.b32 %0, [%1];" : "=r"(ret) : "l"(ptr));
@@ -337,7 +344,7 @@ __device__ static inline uint32_t ibgda_atomic_read(uint32_t *ptr) {
 #endif
 }
 
-__device__ static inline uint64_t ibgda_atomic_read(uint64_t *ptr) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t ibgda_atomic_read(uint64_t *ptr) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_ATOMIC_READ_SET
     uint64_t ret;
     asm volatile("ld.relaxed.gpu.global.L1::no_allocate.b64 %0, [%1];" : "=l"(ret) : "l"(ptr));
@@ -347,7 +354,7 @@ __device__ static inline uint64_t ibgda_atomic_read(uint64_t *ptr) {
 #endif
 }
 
-__device__ static inline void ibgda_atomic_set(int *ptr, int val) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_atomic_set(int *ptr, int val) {
 #ifdef NVSHMEMI_IBGDA_PTX_OPTIMIZATION_ATOMIC_READ_SET
     asm volatile("st.relaxed.gpu.global.L1::no_allocate.b32 [%0], %1;" : : "l"(ptr), "r"(val));
 #else
@@ -355,14 +362,14 @@ __device__ static inline void ibgda_atomic_set(int *ptr, int val) {
 #endif
 }
 
-__device__ static inline size_t ibgda_cal_transfer_size(size_t req_size, size_t lchunk_size,
-                                                        size_t rchunk_size) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE size_t
+ibgda_cal_transfer_size(size_t req_size, size_t lchunk_size, size_t rchunk_size) {
     return NVSHMEMI_MIN(IBGDA_MAX_TRANSFER_SIZE,
                         NVSHMEMI_MIN(req_size, NVSHMEMI_MIN(rchunk_size, lchunk_size)));
 }
 
 template <threadgroup_t SCOPE>
-__device__ static inline void ibgda_lock_acquire(int *lock) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_lock_acquire(int *lock) {
     if (nvshmemi_thread_id_in_threadgroup<SCOPE>() == 0)
         while (atomicCAS(lock, 0, 1) == 1)
             ;  // Wait until we get the lock.
@@ -375,7 +382,7 @@ __device__ static inline void ibgda_lock_acquire(int *lock) {
 }
 
 template <threadgroup_t SCOPE>
-__device__ static inline void ibgda_lock_release(int *lock) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_lock_release(int *lock) {
     // For other scopes, __syncwarp / __syncthreads guarantee the ordering
     nvshmemi_threadgroup_sync<SCOPE>();
 
@@ -387,29 +394,30 @@ __device__ static inline void ibgda_lock_release(int *lock) {
 
 // Multiple threads may update get_head concurrently.
 // Only the latest one w.r.t. wqe_idx is important.
-__device__ static inline void ibgda_update_get_head(nvshmemi_ibgda_device_qp_t *qp,
-                                                    uint64_t new_get_head) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_update_get_head(
+    nvshmemi_ibgda_device_qp_t *qp, uint64_t new_get_head) {
     nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
     atomicMax((unsigned long long int *)&mvars->tx_wq.get_head,
               (unsigned long long int)new_get_head);
 }
 
-__device__ static inline void ibgda_update_get_tail(nvshmemi_ibgda_device_qp_t *qp,
-                                                    uint64_t new_get_tail) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_update_get_tail(
+    nvshmemi_ibgda_device_qp_t *qp, uint64_t new_get_tail) {
     nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
     atomicMax((unsigned long long int *)&mvars->tx_wq.get_tail,
               (unsigned long long int)new_get_tail);
 }
 
-__device__ static inline void *ibgda_get_wqe_ptr(nvshmemi_ibgda_device_qp_t *qp, uint16_t wqe_idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void *ibgda_get_wqe_ptr(
+    nvshmemi_ibgda_device_qp_t *qp, uint16_t wqe_idx) {
     uint16_t cnt = qp->tx_wq.nwqes;
     uint16_t idx = wqe_idx & (cnt - 1);
     return (void *)((uintptr_t)qp->tx_wq.wqe + (idx << MLX5_SEND_WQE_SHIFT));
 }
 
 #ifdef NVSHMEM_TIMEOUT_DEVICE_POLLING
-__device__ static inline int ibgda_check_poll_timeout(nvshmemi_ibgda_device_cq_t *cq, uint64_t now,
-                                                      uint64_t start, uint64_t idx, int *error) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE int ibgda_check_poll_timeout(
+    nvshmemi_ibgda_device_cq_t *cq, uint64_t now, uint64_t start, uint64_t idx, int *error) {
     int status = 0;
 
     struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *)cq->cqe;
@@ -444,8 +452,8 @@ __device__ static inline int ibgda_check_poll_timeout(nvshmemi_ibgda_device_cq_t
 static_assert(NVSHMEMI_IBGDA_MAX_QP_DEPTH <= 32768,
               "static_assert(NVSHMEMI_IBGDA_MAX_QP_DEPTH <= 32768) failed");
 #endif
-__device__ static inline int ibgda_poll_cq(nvshmemi_ibgda_device_cq_t *cq, uint64_t idx,
-                                           int *error) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE int ibgda_poll_cq(
+    nvshmemi_ibgda_device_cq_t *cq, uint64_t idx, int *error) {
     int status = 0;
     struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *)cq->cqe;
 
@@ -570,8 +578,8 @@ out:
     return status;
 }
 
-__device__ static inline void ibgda_write_nop_wqe(nvshmemi_ibgda_device_qp_t *qp, uint16_t wqe_idx,
-                                                  void **out_wqes) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_write_nop_wqe(
+    nvshmemi_ibgda_device_qp_t *qp, uint16_t wqe_idx, void **out_wqes) {
     ibgda_ctrl_seg_t ctrl_seg;
 
     ibgda_ctrl_seg_t *ctrl_seg_ptr = (ibgda_ctrl_seg_t *)out_wqes[0];
@@ -591,9 +599,9 @@ __device__ static inline void ibgda_write_nop_wqe(nvshmemi_ibgda_device_qp_t *qp
         ibgda_store_relaxed(&dst[i], src[i]);
 }
 
-__device__ static inline void ibgda_write_dump_wqe(nvshmemi_ibgda_device_qp_t *qp, uint64_t laddr,
-                                                   __be32 lkey, uint32_t bytes, uint16_t wqe_idx,
-                                                   ibgda_mlx5_fm_t fm, void **out_wqes) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_write_dump_wqe(
+    nvshmemi_ibgda_device_qp_t *qp, uint64_t laddr, __be32 lkey, uint32_t bytes, uint16_t wqe_idx,
+    ibgda_mlx5_fm_t fm, void **out_wqes) {
     ibgda_ctrl_seg_t ctrl_seg;
     struct mlx5_wqe_data_seg data_seg;
 
@@ -626,12 +634,10 @@ __device__ static inline void ibgda_write_dump_wqe(nvshmemi_ibgda_device_qp_t *q
 }
 
 template <bool support_half_av_seg>
-__device__ static inline void ibgda_write_rdma_write_wqe(nvshmemi_ibgda_device_qp_t *qp,
-                                                         nvshmemi_ibgda_device_dct_t *dct,
-                                                         uint64_t laddr, __be32 lkey,
-                                                         uint64_t raddr, __be32 rkey,
-                                                         uint32_t bytes, uint16_t wqe_idx,
-                                                         uint8_t fm_ce_se, void **out_wqes) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_write_rdma_write_wqe(
+    nvshmemi_ibgda_device_qp_t *qp, nvshmemi_ibgda_device_dct_t *dct, uint64_t laddr, __be32 lkey,
+    uint64_t raddr, __be32 rkey, uint32_t bytes, uint16_t wqe_idx, uint8_t fm_ce_se,
+    void **out_wqes) {
     ibgda_ctrl_seg_t ctrl_seg;
     struct mlx5_wqe_raddr_seg raddr_seg;
     struct mlx5_wqe_data_seg data_seg;
@@ -700,12 +706,10 @@ __device__ static inline void ibgda_write_rdma_write_wqe(nvshmemi_ibgda_device_q
 }
 
 template <bool support_half_av_seg>
-__device__ static inline void ibgda_write_rdma_write_inl_wqe(nvshmemi_ibgda_device_qp_t *qp,
-                                                             nvshmemi_ibgda_device_dct_t *dct,
-                                                             const void *val, uint64_t raddr,
-                                                             __be32 rkey, uint32_t bytes,
-                                                             uint16_t wqe_idx, uint8_t fm_ce_se,
-                                                             void **out_wqes) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_write_rdma_write_inl_wqe(
+    nvshmemi_ibgda_device_qp_t *qp, nvshmemi_ibgda_device_dct_t *dct, const void *val,
+    uint64_t raddr, __be32 rkey, uint32_t bytes, uint16_t wqe_idx, uint8_t fm_ce_se,
+    void **out_wqes) {
     ibgda_ctrl_seg_t ctrl_seg;
     struct mlx5_wqe_raddr_seg raddr_seg;
     struct mlx5_wqe_inl_data_seg inl_seg;
@@ -798,21 +802,20 @@ __device__ static inline void ibgda_write_rdma_write_inl_wqe(nvshmemi_ibgda_devi
 
 /**
  * For DC, support only half av seg.
- * The header already consumes 1 wqebb and leaves 12 bytes for inline data.
+ * The header already consumes 1 wqebb and leaves 12 bytes for NVSHMEMI_DEVICE_ALWAYS_INLINE data.
  * The last wqebb is no-op.
  * One wqebb is 64 bytes.
  * Pre-calculate as it is faster to do lookup.
  * Formula: ceil(((sizeof(T) * 32) - 12) / 64) + 2
  *
  * For RC
- * The header already consumes 1 wqebb and leaves 12 + 16 bytes for inline data.
- * The last wqebb is no-op.
- * One wqebb is 64 bytes.
- * Pre-calculate as it is faster to do lookup.
+ * The header already consumes 1 wqebb and leaves 12 + 16 bytes for NVSHMEMI_DEVICE_ALWAYS_INLINE
+ * data. The last wqebb is no-op. One wqebb is 64 bytes. Pre-calculate as it is faster to do lookup.
  * Formula: ceil(((sizeof(T) * 32) - (12 + 16)) / 64) + 2
  */
 template <typename T, nvshmemi_ibgda_device_qp_type_t qp_type>
-__device__ static inline uint32_t ibgda_get_num_wqes_in_inl_combine_warp() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint32_t
+ibgda_get_num_wqes_in_inl_combine_warp() {
     if (qp_type == NVSHMEMI_IBGDA_DEVICE_QP_TYPE_DCI) {
         // DC supports up to 16 DS WQE
         switch (sizeof(T)) {
@@ -850,19 +853,20 @@ __device__ static inline uint32_t ibgda_get_num_wqes_in_inl_combine_warp() {
 
 /**
  * For DC, support only half av seg.
- * The header already consumes 4 ds and leaves 12 bytes for inline data.
+ * The header already consumes 4 ds and leaves 12 bytes for NVSHMEMI_DEVICE_ALWAYS_INLINE data.
  * One ds is 16 bytes.
  * Pre-calculate as it is faster to do lookup.
  * Formula: ceil(((sizeof(T) * 32) - 12) / 16) + 4
  *
  * For RC
- * The header already consumes 3 ds and leaves 12 bytes for inline data.
+ * The header already consumes 3 ds and leaves 12 bytes for NVSHMEMI_DEVICE_ALWAYS_INLINE data.
  * One ds is 16 bytes.
  * Pre-calculate as it is faster to do lookup.
  * Formula: ceil(((sizeof(T) * 32) - 12) / 16) + 3
  */
 template <typename T, nvshmemi_ibgda_device_qp_type_t qp_type>
-__device__ static inline uint32_t ibgda_get_ds_in_inl_combine_warp() {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint32_t
+ibgda_get_ds_in_inl_combine_warp() {
     if (qp_type == NVSHMEMI_IBGDA_DEVICE_QP_TYPE_DCI) {
         // DC supports up to 16 DS WQE
         switch (sizeof(T)) {
@@ -901,9 +905,11 @@ __device__ static inline uint32_t ibgda_get_ds_in_inl_combine_warp() {
 }
 
 template <typename T>
-__device__ static inline void ibgda_write_rdma_write_inl_wqe_combine_warp(
-    nvshmemi_ibgda_device_qp_t *qp, nvshmemi_ibgda_device_dct_t *dct, const T val, uint64_t _raddr,
-    __be32 rkey, uint16_t wqe_idx, int my_tid, void **out_wqes) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void
+ibgda_write_rdma_write_inl_wqe_combine_warp(nvshmemi_ibgda_device_qp_t *qp,
+                                            nvshmemi_ibgda_device_dct_t *dct, const T val,
+                                            uint64_t _raddr, __be32 rkey, uint16_t wqe_idx,
+                                            int my_tid, void **out_wqes) {
     ibgda_ctrl_seg_t ctrl_seg;
     struct mlx5_wqe_raddr_seg raddr_seg;
     struct mlx5_wqe_inl_data_seg inl_seg;
@@ -1029,12 +1035,15 @@ __device__ static inline void ibgda_write_rdma_write_inl_wqe_combine_warp(
 /**
  * For DCI with sizeof(T) == 8 only.
  * DC supports up to 16 DS WQE.
- * For sizeof(T) == 8, we split to two WQEs of inline size 8 * 16
+ * For sizeof(T) == 8, we split to two WQEs of NVSHMEMI_DEVICE_ALWAYS_INLINE size 8 * 16
  */
 template <typename T>
-__device__ static inline void ibgda_write_rdma_write_inl_wqe_combine_warp_for_dci_8B(
-    nvshmemi_ibgda_device_qp_t *dci, nvshmemi_ibgda_device_dct_t *dct, const T val, uint64_t _raddr,
-    __be32 rkey, uint16_t _wqe_idx, int my_tid, void **out_wqes) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void
+ibgda_write_rdma_write_inl_wqe_combine_warp_for_dci_8B(nvshmemi_ibgda_device_qp_t *dci,
+                                                       nvshmemi_ibgda_device_dct_t *dct,
+                                                       const T val, uint64_t _raddr, __be32 rkey,
+                                                       uint16_t _wqe_idx, int my_tid,
+                                                       void **out_wqes) {
     assert(likely(sizeof(T) == 8 && dci->qp_type == NVSHMEMI_IBGDA_DEVICE_QP_TYPE_DCI));
 
     // base_tid = my_tid >= 16 ? 16 : 0;
@@ -1136,12 +1145,10 @@ __device__ static inline void ibgda_write_rdma_write_inl_wqe_combine_warp_for_dc
 }
 
 template <bool support_half_av_seg>
-__device__ static inline void ibgda_write_rdma_read_wqe(nvshmemi_ibgda_device_qp_t *qp,
-                                                        nvshmemi_ibgda_device_dct_t *dct,
-                                                        uint64_t laddr, __be32 lkey, uint64_t raddr,
-                                                        __be32 rkey, uint32_t bytes,
-                                                        uint16_t wqe_idx, uint8_t fm_ce_se,
-                                                        void **out_wqes) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_write_rdma_read_wqe(
+    nvshmemi_ibgda_device_qp_t *qp, nvshmemi_ibgda_device_dct_t *dct, uint64_t laddr, __be32 lkey,
+    uint64_t raddr, __be32 rkey, uint32_t bytes, uint16_t wqe_idx, uint8_t fm_ce_se,
+    void **out_wqes) {
     ibgda_ctrl_seg_t ctrl_seg;
     struct mlx5_wqe_raddr_seg raddr_seg;
     struct mlx5_wqe_data_seg data_seg;
@@ -1210,8 +1217,8 @@ __device__ static inline void ibgda_write_rdma_read_wqe(nvshmemi_ibgda_device_qp
 }
 
 template <typename T>
-__device__ static inline uint32_t ibgda_get_num_wqes_in_atomic(
-    nvshmemi_amo_t amo_op, nvshmemi_ibgda_device_qp_type_t qp_type) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint32_t
+ibgda_get_num_wqes_in_atomic(nvshmemi_amo_t amo_op, nvshmemi_ibgda_device_qp_type_t qp_type) {
     if (qp_type == NVSHMEMI_IBGDA_DEVICE_QP_TYPE_DCI)
         return 2;
     else if (sizeof(T) == 8) {
@@ -1232,7 +1239,7 @@ __device__ static inline uint32_t ibgda_get_num_wqes_in_atomic(
 }
 
 template <bool support_half_av_seg>
-__device__ static inline void ibgda_write_atomic_wqe(
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_write_atomic_wqe(
     nvshmemi_ibgda_device_qp_t *qp, nvshmemi_ibgda_device_dct_t *dct, const void *val_1,
     const void *val_2, uint64_t laddr, __be32 lkey, uint64_t raddr, __be32 rkey, uint32_t bytes,
     uint16_t wqe_idx, nvshmemi_amo_t amo_op, uint8_t fm_ce_se, void **out_wqes) {
@@ -1560,8 +1567,8 @@ __device__ static inline void ibgda_write_atomic_wqe(
         ibgda_store_relaxed(&dst[i], src[i]);
 }
 
-__device__ static inline void ibgda_update_dbr(nvshmemi_ibgda_device_qp_t *qp,
-                                               uint32_t dbrec_head) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_update_dbr(
+    nvshmemi_ibgda_device_qp_t *qp, uint32_t dbrec_head) {
     // DBREC contains the index of the next empty WQEBB.
     __be32 dbrec_val;
     __be32 *dbrec_ptr = qp->tx_wq.dbrec;
@@ -1584,7 +1591,8 @@ __device__ static inline void ibgda_update_dbr(nvshmemi_ibgda_device_qp_t *qp,
     ibgda_store_release(dbrec_ptr, dbrec_val);
 }
 
-__device__ static inline void ibgda_ring_db(nvshmemi_ibgda_device_qp_t *qp, uint16_t prod_idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_ring_db(
+    nvshmemi_ibgda_device_qp_t *qp, uint16_t prod_idx) {
     uint64_t *bf_ptr = (uint64_t *)qp->tx_wq.bf;
     ibgda_ctrl_seg_t ctrl_seg = {.opmod_idx_opcode = HTOBE32(prod_idx << 8),
                                  .qpn_ds = HTOBE32(qp->qpn << 8)};
@@ -1593,8 +1601,8 @@ __device__ static inline void ibgda_ring_db(nvshmemi_ibgda_device_qp_t *qp, uint
 }
 
 template <bool need_strong_flush>
-__device__ static inline void ibgda_post_send(nvshmemi_ibgda_device_qp_t *qp,
-                                              uint64_t new_prod_idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_post_send(
+    nvshmemi_ibgda_device_qp_t *qp, uint64_t new_prod_idx) {
     nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
     uint64_t old_prod_idx;
 
@@ -1621,8 +1629,8 @@ __device__ static inline void ibgda_post_send(nvshmemi_ibgda_device_qp_t *qp,
 // If `qp` is shared among CTAs, need_strong_flush must be set to true because
 // we must push prior writes from this CTA to L2 before coalescing DB.
 template <bool need_strong_flush>
-__device__ static inline void ibgda_submit_requests(nvshmemi_ibgda_device_qp_t *qp,
-                                                    uint64_t base_wqe_idx, uint16_t num_wqes) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_submit_requests(
+    nvshmemi_ibgda_device_qp_t *qp, uint64_t base_wqe_idx, uint16_t num_wqes) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
     uint64_t mask = ~((uint64_t)(state->num_requests_in_batch - 1));
@@ -1669,7 +1677,8 @@ __device__ static inline void ibgda_submit_requests(nvshmemi_ibgda_device_qp_t *
     }
 }
 
-__device__ static inline uint64_t ibgda_quiet(nvshmemi_ibgda_device_qp_t *qp) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t
+ibgda_quiet(nvshmemi_ibgda_device_qp_t *qp) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     uint64_t prod_idx = state->use_async_postsend ? ibgda_atomic_read(qp->tx_wq.prod_idx)
                                                   : ibgda_atomic_read(&qp->mvars.tx_wq.ready_head);
@@ -1687,8 +1696,8 @@ __device__ static inline uint64_t ibgda_quiet(nvshmemi_ibgda_device_qp_t *qp) {
     return prod_idx;
 }
 
-__device__ static inline void ibgda_wait_for_slot_availability(nvshmemi_ibgda_device_qp_t *qp,
-                                                               uint64_t wqe_idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_wait_for_slot_availability(
+    nvshmemi_ibgda_device_qp_t *qp, uint64_t wqe_idx) {
     int status = 0;
     int err = 0;
     uint16_t nwqes = qp->tx_wq.nwqes;
@@ -1706,14 +1715,15 @@ __device__ static inline void ibgda_wait_for_slot_availability(nvshmemi_ibgda_de
     IBGDA_MFENCE();
 }
 
-__device__ static inline int ibgda_get_proxy_pe(int pe) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE int ibgda_get_proxy_pe(int pe) {
     if (nvshmemi_device_state_d.enable_rail_opt == 1)
         return (pe / nvshmemi_device_state_d.node_npes) * nvshmemi_device_state_d.node_npes +
                nvshmemi_device_state_d.node_mype;
     return pe;
 }
 
-__device__ static inline uint32_t ibgda_get_dct_id(int pe, int dev_idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint32_t ibgda_get_dct_id(int pe,
+                                                                                   int dev_idx) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     uint32_t id = ibgda_get_ctaid();
     /* There are ndcts_per_pe * state->num_devices_initialized per pe. */
@@ -1722,7 +1732,8 @@ __device__ static inline uint32_t ibgda_get_dct_id(int pe, int dev_idx) {
     return dct_id;
 }
 
-__device__ static inline nvshmemi_ibgda_device_dct_t *ibgda_get_dct(int pe, int dev_idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE nvshmemi_ibgda_device_dct_t *ibgda_get_dct(
+    int pe, int dev_idx) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     uint32_t dct_idx = ibgda_get_dct_id(pe, dev_idx);
 
@@ -1731,8 +1742,8 @@ __device__ static inline nvshmemi_ibgda_device_dct_t *ibgda_get_dct(int pe, int 
     return &state->globalmem.dcts[dct_idx - NVSHMEMI_IBGDA_MAX_CONST_DCTS];
 }
 
-__device__ static inline nvshmemi_ibgda_device_qp_t *ibgda_get_dci(int pe,
-                                                                   bool *out_shared_among_ctas) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE nvshmemi_ibgda_device_qp_t *ibgda_get_dci(
+    int pe, bool *out_shared_among_ctas) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     uint32_t id;
     uint32_t dev_offset;
@@ -1785,8 +1796,8 @@ __device__ static inline nvshmemi_ibgda_device_qp_t *ibgda_get_dci(int pe,
     return &state->globalmem.dcis[idx];
 }
 
-__device__ static inline nvshmemi_ibgda_device_qp_t *ibgda_get_rc(int pe,
-                                                                  bool *out_shared_among_ctas) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE nvshmemi_ibgda_device_qp_t *ibgda_get_rc(
+    int pe, bool *out_shared_among_ctas) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     uint32_t id;
     uint32_t idx;
@@ -1823,8 +1834,8 @@ __device__ static inline nvshmemi_ibgda_device_qp_t *ibgda_get_rc(int pe,
     return &state->globalmem.rcs[idx];
 }
 
-__device__ static inline nvshmemi_ibgda_device_qp_t *ibgda_get_qp(int pe,
-                                                                  bool *out_shared_among_ctas) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE nvshmemi_ibgda_device_qp_t *ibgda_get_qp(
+    int pe, bool *out_shared_among_ctas) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
 
     if (ibgda_is_rc_enabled() && pe != nvshmemi_device_state_d.mype)
@@ -1833,8 +1844,8 @@ __device__ static inline nvshmemi_ibgda_device_qp_t *ibgda_get_qp(int pe,
         return ibgda_get_dci(pe, out_shared_among_ctas);
 }
 
-__device__ static inline void ibgda_get_lkey(uint64_t addr, __be32 *lkey, size_t *chunk_size,
-                                             bool *is_sysmem_scope, uint32_t dev_idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_get_lkey(
+    uint64_t addr, __be32 *lkey, size_t *chunk_size, bool *is_sysmem_scope, uint32_t dev_idx) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     uint64_t heap_start = (uint64_t)nvshmemi_device_state_d.heap_base;
     uint64_t heap_end = heap_start + nvshmemi_device_state_d.heap_size - 1;
@@ -1879,9 +1890,9 @@ __device__ static inline void ibgda_get_lkey(uint64_t addr, __be32 *lkey, size_t
     assert(0);
 }
 
-__device__ static inline void ibgda_get_raddr_rkey(uint64_t addr, int dst_pe, int proxy_pe,
-                                                   uint64_t *out_raddr, __be32 *out_rkey,
-                                                   size_t *out_chunk_size, uint32_t dev_idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_get_raddr_rkey(
+    uint64_t addr, int dst_pe, int proxy_pe, uint64_t *out_raddr, __be32 *out_rkey,
+    size_t *out_chunk_size, uint32_t dev_idx) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     uint64_t heap_start = (uint64_t)nvshmemi_device_state_d.heap_base;
     uint64_t roffset = addr - heap_start;
@@ -1915,9 +1926,8 @@ __device__ static inline void ibgda_get_raddr_rkey(uint64_t addr, int dst_pe, in
     *out_chunk_size = device_key.next_addr - roffset;
 }
 
-__device__ static inline uint64_t ibgda_reserve_wqe_slots(nvshmemi_ibgda_device_qp_t *qp,
-                                                          unsigned long long int num_wqes,
-                                                          bool is_qp_shared_among_ctas) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t ibgda_reserve_wqe_slots(
+    nvshmemi_ibgda_device_qp_t *qp, unsigned long long int num_wqes, bool is_qp_shared_among_ctas) {
     nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
     uint64_t wqe_idx;
 
@@ -1943,8 +1953,8 @@ __device__ static inline uint64_t ibgda_reserve_wqe_slots(nvshmemi_ibgda_device_
     return wqe_idx;
 }
 
-__device__ static inline uint64_t ibgda_reserve_ibuf_slots(nvshmemi_ibgda_device_qp_t *qp,
-                                                           unsigned long long int num_slots) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t
+ibgda_reserve_ibuf_slots(nvshmemi_ibgda_device_qp_t *qp, unsigned long long int num_slots) {
     nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
     uint32_t nslots = qp->ibuf.nslots;
     uint64_t base_idx = atomicAdd((unsigned long long int *)&mvars->ibuf.head, num_slots);
@@ -1960,9 +1970,9 @@ __device__ static inline uint64_t ibgda_reserve_ibuf_slots(nvshmemi_ibgda_device
     return base_idx;
 }
 
-__device__ static inline void ibgda_release_ibuf(nvshmemi_ibgda_device_qp_t *qp,
-                                                 unsigned long long int base_idx,
-                                                 unsigned long long int num_slots) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_release_ibuf(
+    nvshmemi_ibgda_device_qp_t *qp, unsigned long long int base_idx,
+    unsigned long long int num_slots) {
     nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
     unsigned long long int new_idx = base_idx + num_slots;
     IBGDA_MFENCE();
@@ -1973,16 +1983,16 @@ __device__ static inline void ibgda_release_ibuf(nvshmemi_ibgda_device_qp_t *qp,
     IBGDA_MFENCE();
 }
 
-__device__ static inline uint64_t ibgda_get_ibuf_addr(nvshmemi_ibgda_device_qp_t *qp,
-                                                      uint64_t idx) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t
+ibgda_get_ibuf_addr(nvshmemi_ibgda_device_qp_t *qp, uint64_t idx) {
     idx = idx & (qp->ibuf.nslots - 1);
 
     // buf[0] is reserved for non-fetch operations
     return (uint64_t)qp->ibuf.buf + NVSHMEMI_IBGDA_IBUF_SLOT_SIZE * (idx + 1);
 }
 
-__device__ static inline bool ibgda_can_coalesce_warp(unsigned int amask,
-                                                      nvshmemi_ibgda_device_qp_t *qp) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE bool ibgda_can_coalesce_warp(
+    unsigned int amask, nvshmemi_ibgda_device_qp_t *qp) {
     int pred_same_qp;
 
     if (amask != IBGDA_FULL_WARP) return false;
@@ -1993,7 +2003,8 @@ __device__ static inline bool ibgda_can_coalesce_warp(unsigned int amask,
     return true;
 }
 
-__device__ static inline bool ibgda_can_coalesce_warp_pe(unsigned int amask, int pe) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE bool ibgda_can_coalesce_warp_pe(
+    unsigned int amask, int pe) {
     int pred_same_pe;
 
     if (amask != IBGDA_FULL_WARP) return false;
@@ -2004,8 +2015,8 @@ __device__ static inline bool ibgda_can_coalesce_warp_pe(unsigned int amask, int
     return true;
 }
 
-__device__ static inline uint64_t ibgda_cst(nvshmemi_ibgda_device_qp_t *dci,
-                                            bool is_dci_shared_among_ctas) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t
+ibgda_cst(nvshmemi_ibgda_device_qp_t *dci, bool is_dci_shared_among_ctas) {
     assert(likely(dci->qp_type == NVSHMEMI_IBGDA_DEVICE_QP_TYPE_DCI));
 
     nvshmemi_ibgda_device_dct_t *dct = ibgda_get_dct(nvshmemi_device_state_d.mype, dci->dev_idx);
@@ -2034,8 +2045,8 @@ __device__ static inline uint64_t ibgda_cst(nvshmemi_ibgda_device_qp_t *dci,
     return ibgda_quiet(dci);
 }
 
-__device__ static inline uint64_t ibgda_quiet_with_cst(nvshmemi_ibgda_device_qp_t *qp,
-                                                       bool is_qp_shared_among_ctas) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t
+ibgda_quiet_with_cst(nvshmemi_ibgda_device_qp_t *qp, bool is_qp_shared_among_ctas) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
 
@@ -2075,8 +2086,8 @@ __device__ static inline uint64_t ibgda_quiet_with_cst(nvshmemi_ibgda_device_qp_
 }
 
 template <nvshmemi_op_t channel_op, bool nbi, bool support_half_av_seg>
-__device__ static inline void ibgda_rma_thread(uint64_t rptr, uint64_t lptr, size_t remaining_size,
-                                               int dst_pe, int proxy_pe) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_rma_thread(
+    uint64_t rptr, uint64_t lptr, size_t remaining_size, int dst_pe, int proxy_pe) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     unsigned int amask = __activemask();
     bool can_coalesce_warp = ibgda_can_coalesce_warp_pe(amask, proxy_pe);
@@ -2247,8 +2258,10 @@ static_assert(NVSHMEMI_IBGDA_MIN_QP_DEPTH >= 64,
               "static_assert(NVSHMEMI_IBGDA_MIN_QP_DEPTH >= 64) failed");
 #endif
 template <threadgroup_t SCOPE, nvshmemi_op_t channel_op, bool nbi, bool support_half_av_seg>
-__device__ static inline void ibgda_rma(uint64_t req_rptr, uint64_t req_lptr, size_t bytes,
-                                        int dst_pe, int proxy_pe) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_rma(uint64_t req_rptr,
+                                                                        uint64_t req_lptr,
+                                                                        size_t bytes, int dst_pe,
+                                                                        int proxy_pe) {
     assert(SCOPE == NVSHMEMI_THREADGROUP_WARP || SCOPE == NVSHMEMI_THREADGROUP_BLOCK);
 
     // Use only warp 0
@@ -2436,7 +2449,8 @@ static_assert(NVSHMEMI_IBGDA_MIN_QP_DEPTH >= 64,
               "static_assert(NVSHMEMI_IBGDA_MIN_QP_DEPTH >= 64) failed");
 #endif
 template <typename T, bool is_full_warp, bool can_combine_data, bool support_half_av_seg>
-__device__ static inline void nvshmemi_ibgda_rma_p_impl(void *rptr, const T value, int dst_pe) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_rma_p_impl(
+    void *rptr, const T value, int dst_pe) {
     static_assert((can_combine_data && is_full_warp) || (!can_combine_data),
                   "can_combine_data check 1 failed.\n");
     static_assert((can_combine_data && support_half_av_seg) || (!can_combine_data),
@@ -2556,7 +2570,8 @@ __device__ static inline void nvshmemi_ibgda_rma_p_impl(void *rptr, const T valu
 }
 
 template <typename T>
-__device__ inline void nvshmemi_ibgda_rma_p(void *rptr, const T value, int dst_pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_rma_p(void *rptr, const T value,
+                                                                   int dst_pe) {
     unsigned int amask = __activemask();
     bool can_combine_data = false;
     int pred_pe = 0;
@@ -2597,7 +2612,8 @@ __device__ inline void nvshmemi_ibgda_rma_p(void *rptr, const T value, int dst_p
  * RMA G base
  */
 template <typename T, bool support_half_av_seg>
-__device__ inline T nvshmemi_ibgda_rma_g_impl(void *rptr, int dst_pe, int proxy_pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE T nvshmemi_ibgda_rma_g_impl(void *rptr, int dst_pe,
+                                                                     int proxy_pe) {
     unsigned int amask = __activemask();
     int my_tid;
     int tg_size;
@@ -2734,7 +2750,7 @@ __device__ inline T nvshmemi_ibgda_rma_g_impl(void *rptr, int dst_pe, int proxy_
 }
 
 template <typename T>
-__device__ inline T nvshmemi_ibgda_rma_g(void *rptr, int dst_pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE T nvshmemi_ibgda_rma_g(void *rptr, int dst_pe) {
     T ret;
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
 
@@ -2751,7 +2767,8 @@ __device__ inline T nvshmemi_ibgda_rma_g(void *rptr, int dst_pe) {
  * RMA NBI base
  */
 template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
-__device__ inline void nvshmemi_ibgda_rma_nbi(void *rptr, void *lptr, size_t bytes, int dst_pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_rma_nbi(void *rptr, void *lptr,
+                                                                     size_t bytes, int dst_pe) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     int proxy_pe = ibgda_get_proxy_pe(dst_pe);
     if (SCOPE == NVSHMEMI_THREADGROUP_THREAD) {
@@ -2777,7 +2794,8 @@ __device__ inline void nvshmemi_ibgda_rma_nbi(void *rptr, void *lptr, size_t byt
  * RMA (blocking) base
  */
 template <threadgroup_t SCOPE, nvshmemi_op_t channel_op>
-__device__ inline void nvshmemi_ibgda_rma(void *rptr, void *lptr, size_t bytes, int dst_pe) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_rma(void *rptr, void *lptr,
+                                                                 size_t bytes, int dst_pe) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     int proxy_pe = ibgda_get_proxy_pe(dst_pe);
     if (SCOPE == NVSHMEMI_THREADGROUP_THREAD) {
@@ -2803,8 +2821,10 @@ __device__ inline void nvshmemi_ibgda_rma(void *rptr, void *lptr, size_t bytes, 
  * AMO non-fetch base
  */
 template <typename T, bool support_half_av_seg>
-__device__ inline void nvshmemi_ibgda_amo_nonfetch_impl(void *rptr, const T value, int pe,
-                                                        nvshmemi_amo_t op) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_amo_nonfetch_impl(void *rptr,
+                                                                               const T value,
+                                                                               int pe,
+                                                                               nvshmemi_amo_t op) {
     unsigned int amask = __activemask();
     int my_tid;
     int tg_size;
@@ -2879,8 +2899,9 @@ __device__ inline void nvshmemi_ibgda_amo_nonfetch_impl(void *rptr, const T valu
 }
 
 template <typename T>
-__device__ inline void nvshmemi_ibgda_amo_nonfetch(void *rptr, const T value, int pe,
-                                                   nvshmemi_amo_t op) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_amo_nonfetch(void *rptr, const T value,
+                                                                          int pe,
+                                                                          nvshmemi_amo_t op) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
 
     if (state->support_half_av_seg)
@@ -2893,8 +2914,9 @@ __device__ inline void nvshmemi_ibgda_amo_nonfetch(void *rptr, const T value, in
  * AMO fetch base
  */
 template <typename T, bool support_half_av_seg>
-__device__ inline T nvshmemi_ibgda_amo_fetch_impl(void *rptr, const T value, const T compare,
-                                                  int pe, nvshmemi_amo_t op) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE T nvshmemi_ibgda_amo_fetch_impl(void *rptr, const T value,
+                                                                         const T compare, int pe,
+                                                                         nvshmemi_amo_t op) {
     unsigned int amask = __activemask();
     int my_tid;
     int tg_size;
@@ -3005,8 +3027,9 @@ __device__ inline T nvshmemi_ibgda_amo_fetch_impl(void *rptr, const T value, con
 }
 
 template <typename T>
-__device__ inline T nvshmemi_ibgda_amo_fetch(void *rptr, const T value, const T compare, int pe,
-                                             nvshmemi_amo_t op) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE T nvshmemi_ibgda_amo_fetch(void *rptr, const T value,
+                                                                    const T compare, int pe,
+                                                                    nvshmemi_amo_t op) {
     T ret;
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
 
@@ -3022,10 +3045,9 @@ static_assert(NVSHMEMI_IBGDA_MIN_QP_DEPTH >= 128,
               "static_assert(NVSHMEMI_IBGDA_MIN_QP_DEPTH >= 128) failed");
 #endif
 template <bool is_nbi, bool support_half_av_seg>
-__device__ static inline void nvshmemi_ibgda_put_signal_thread_impl(void *rptr, void *lptr,
-                                                                    size_t bytes, void *sig_rptr,
-                                                                    uint64_t signal,
-                                                                    nvshmemi_amo_t sig_op, int pe) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_put_signal_thread_impl(
+    void *rptr, void *lptr, size_t bytes, void *sig_rptr, uint64_t signal, nvshmemi_amo_t sig_op,
+    int pe) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     nvshmemi_ibgda_device_qp_t *qp;
     nvshmemi_ibgda_device_dct_t *dct;
@@ -3187,10 +3209,9 @@ static_assert(NVSHMEMI_IBGDA_MIN_QP_DEPTH >= 64,
               "static_assert(NVSHMEMI_IBGDA_MIN_QP_DEPTH >= 64) failed");
 #endif
 template <threadgroup_t SCOPE, bool is_nbi, bool support_half_av_seg>
-__device__ static inline void nvshmemi_ibgda_put_signal_impl(void *req_rptr, void *req_lptr,
-                                                             size_t bytes, void *sig_rptr,
-                                                             uint64_t signal, nvshmemi_amo_t sig_op,
-                                                             int pe) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_put_signal_impl(
+    void *req_rptr, void *req_lptr, size_t bytes, void *sig_rptr, uint64_t signal,
+    nvshmemi_amo_t sig_op, int pe) {
     assert(SCOPE == NVSHMEMI_THREADGROUP_WARP || SCOPE == NVSHMEMI_THREADGROUP_BLOCK);
 
     // Use only wrap 0
@@ -3345,9 +3366,9 @@ out:
 }
 
 template <threadgroup_t SCOPE>
-__device__ inline void nvshmemi_ibgda_put_signal(void *rptr, void *lptr, size_t bytes,
-                                                 void *sig_rptr, uint64_t signal,
-                                                 nvshmemi_amo_t sig_op, int pe, bool is_nbi) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_put_signal(
+    void *rptr, void *lptr, size_t bytes, void *sig_rptr, uint64_t signal, nvshmemi_amo_t sig_op,
+    int pe, bool is_nbi) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     if (SCOPE == NVSHMEMI_THREADGROUP_THREAD) {
         if (is_nbi && state->support_half_av_seg)
@@ -3379,7 +3400,7 @@ __device__ inline void nvshmemi_ibgda_put_signal(void *rptr, void *lptr, size_t 
 }
 
 template <threadgroup_t SCOPE>
-__device__ inline void nvshmemi_ibgda_quiet() {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_quiet() {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     nvshmemi_ibgda_device_qp_t *qp;
     uint32_t ndcis = state->num_shared_dcis + state->num_exclusive_dcis;
@@ -3409,7 +3430,7 @@ __device__ inline void nvshmemi_ibgda_quiet() {
 }
 
 template <threadgroup_t SCOPE>
-__device__ inline void nvshmemi_ibgda_fence() {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_fence() {
     // Multiple QPs may target the same PE before fence.
     // We need to quiet those QPs.
     // TODO: Make it more efficient.
@@ -3445,7 +3466,8 @@ __device__ inline void nvshmemi_ibgda_fence() {
     nvshmemi_threadgroup_sync<SCOPE>();
 }
 
-__device__ inline void nvshmemi_ibgda_enforce_consistency_at_target(bool use_membar) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_ibgda_enforce_consistency_at_target(
+    bool use_membar) {
     nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
 
     if (!state->may_skip_cst) {

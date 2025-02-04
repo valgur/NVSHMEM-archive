@@ -26,9 +26,10 @@
 #include "internal/host_transport/cudawrap.h"                // for CUPFN, nvshmemi_cuda_fn...
 #include "bootstrap_host_transport/env_defs_internal.h"      // for nvshmemi_options_s, nvs...
 #include "non_abi/nvshmemx_error.h"                          // for NVSHMEMX_ERROR_INTERNAL
-#include "infiniband/mlx5dv.h"                               // for DEVX_SET, mlx5_wqe_ctrl...
-#include "infiniband/verbs.h"                                // for ibv_port_attr, ibv_ah_attr
-#include "mlx5_ifc.h"                                        // for mlx5_ifc_qpc_bits, mlx5...
+#include "non_abi/nvshmem_version.h"
+#include "infiniband/mlx5dv.h"  // for DEVX_SET, mlx5_wqe_ctrl...
+#include "infiniband/verbs.h"   // for ibv_port_attr, ibv_ah_attr
+#include "mlx5_ifc.h"           // for mlx5_ifc_qpc_bits, mlx5...
 #include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for bootstrap_handle_t
 #include "internal/host_transport/nvshmemi_transport_defines.h"  // for nvshmem_mem_handle_t
 #include "internal/host_transport/transport.h"                   // for nvshmem_transport, amo_...
@@ -44,6 +45,9 @@ int ibdevx_srq_depth;
 int ibdevx_qp_depth;
 #define ibdevx_REQUEST_QUEUE_MASK (ibdevx_qp_depth - 1)
 #define ibdevx_BUF_SIZE 64
+
+#define ibdevx_ROCE_V1_UDP_SPORT_BASE 0x0000
+#define ibdevx_ROCE_V2_UDP_SPORT_BASE 0xC000
 
 #if defined(NVSHMEM_X86_64)
 #define ibdevx_CACHELINE 64
@@ -690,16 +694,26 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
     DEVX_SET(qpc, qp_context, atomic_mode, NVSHMEMT_IBDEVX_MLX5_QPC_ATOMIC_MODE_UP_TO_64B);
 
     if (port_attr->link_layer == IBV_LINK_LAYER_ETHERNET) {
-        ib_get_gid_index(&ftable, device->context, portid, port_attr->gid_tbl_len,
-                         &device->gid_info[portid - 1].local_gid_index, ibdevx_state->log_level,
-                         ibdevx_state->options);
-        /*ftable.query_gid(device->context, portid, device->gid_info[portid - 1].local_gid_index,
-                         &device->gid_info[portid - 1].local_gid);*/
         struct ibv_ah_attr ah_attr;
         struct ibv_ah *ah;
         struct mlx5dv_obj dv;
         struct mlx5dv_ah dah;
 
+        const char *nic_device_name = ftable.get_device_name(device->context->device);
+        int roce_version = 0;
+
+        ib_get_gid_index(&ftable, device->context, portid, port_attr->gid_tbl_len,
+                         &device->gid_info[portid - 1].local_gid_index, ibdevx_state->log_level,
+                         ibdevx_state->options);
+        ftable.query_gid(device->context, portid, device->gid_info[portid - 1].local_gid_index,
+                         &device->gid_info[portid - 1].local_gid);
+
+        status = ib_roce_get_version_num(
+            nic_device_name, portid, device->gid_info[portid - 1].local_gid_index, &roce_version);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "Error in ib_roce_get_version_num\n");
+
+        memset(&ah_attr, 0, sizeof(ah_attr));
         ah_attr.is_global = 1;
         ah_attr.port_num = portid;
         ah_attr.grh.dgid.global.subnet_prefix = ep_handle->spn;
@@ -708,6 +722,10 @@ static int ep_connect(struct ibdevx_ep *ep, struct ibdevx_ep_handle *ep_handle) 
         ah_attr.grh.traffic_class = ibdevx_state->options->IB_TRAFFIC_CLASS;
         ah_attr.sl = ibdevx_state->options->IB_SL;
         ah_attr.src_path_bits = 0;
+
+        assert(roce_version == 1 || roce_version == 2);
+        ah_attr.dlid = port_attr->lid | (roce_version == 1 ? ibdevx_ROCE_V1_UDP_SPORT_BASE
+                                                           : ibdevx_ROCE_V2_UDP_SPORT_BASE);
 
         ah = ftable.create_ah(device->pd, &ah_attr);
         NVSHMEMI_NULL_ERROR_JMP(ah, status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to create ah.\n");

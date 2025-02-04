@@ -28,10 +28,11 @@
 #include "bootstrap_host_transport/env_defs_internal.h"  // for nvshmemi_options_s, nvshmem...
 #include "non_abi/nvshmemx_error.h"                      // for NVSHMEMX_ERROR_INTERNAL
 #include "non_abi/nvshmem_build_options.h"               // IWYU pragma: keep
-#include "infiniband/mlx5dv.h"                           // for DEVX_SET, DEVX_ST_SZ_BYTES
-#include "infiniband/verbs.h"                            // for ibv_ah_attr, ibv_port_attr
-#include "mlx5_ifc.h"                                    // for mlx5_ifc_qpc_bits, mlx5_ifc...
-#include "mlx5_prm.h"                                    // for mlx5_ifc_cqc_bits, mlx5_ifc...
+#include "non_abi/nvshmem_version.h"
+#include "infiniband/mlx5dv.h"  // for DEVX_SET, DEVX_ST_SZ_BYTES
+#include "infiniband/verbs.h"   // for ibv_ah_attr, ibv_port_attr
+#include "mlx5_ifc.h"           // for mlx5_ifc_qpc_bits, mlx5_ifc...
+#include "mlx5_prm.h"           // for mlx5_ifc_cqc_bits, mlx5_ifc...
 #include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for bootstrap_handle_t
 #include "internal/host_transport/nvshmemi_transport_defines.h"  // for nvshmem_mem_handle_t, NVSHM...
 #include "internal/host_transport/transport.h"  // for nvshmem_transport, nvshmem_...
@@ -67,6 +68,9 @@
 #define IBGDA_MIN_RNR_NAK 12
 
 #define IBGDA_GRH_HOP_LIMIT 255
+
+#define IBGDA_ROCE_V1_UDP_SPORT_BASE 0x0000
+#define IBGDA_ROCE_V2_UDP_SPORT_BASE 0xC000
 
 // First slot is reserved for non-fetch operations.
 #define IBGDA_IBUF_RESERVED_SLOTS 1
@@ -1300,16 +1304,26 @@ static int ibgda_rc_init2rtr(nvshmemt_ibgda_state_t *ibgda_state, struct ibgda_e
         DEVX_SET(qpc, qpc, primary_address_path.sl, ibgda_state->options->IB_SL);
         DEVX_SET(qpc, qpc, primary_address_path.grh, false);
     } else if (port_attr->link_layer == IBV_LINK_LAYER_ETHERNET) {
-        ib_get_gid_index(&ftable, device->context, portid, port_attr->gid_tbl_len,
-                         (int *)&device->gid_info[portid - 1].local_gid_index,
-                         ibgda_state->log_level, ibgda_state->options);
-        ftable.query_gid(device->context, portid, device->gid_info[portid - 1].local_gid_index,
-                         (ibv_gid *)&device->gid_info[portid - 1].local_gid);
         struct ibv_ah_attr ah_attr;
         struct ibv_ah *ah;
         struct mlx5dv_obj dv;
         struct mlx5dv_ah dah;
 
+        const char *nic_device_name = ftable.get_device_name(device->context->device);
+        int roce_version = 0;
+
+        ib_get_gid_index(&ftable, device->context, portid, port_attr->gid_tbl_len,
+                         (int *)&device->gid_info[portid - 1].local_gid_index,
+                         ibgda_state->log_level, ibgda_state->options);
+        ftable.query_gid(device->context, portid, device->gid_info[portid - 1].local_gid_index,
+                         (ibv_gid *)&device->gid_info[portid - 1].local_gid);
+
+        status = ib_roce_get_version_num(
+            nic_device_name, portid, device->gid_info[portid - 1].local_gid_index, &roce_version);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                              "Error in ib_roce_get_version_num\n");
+
+        memset(&ah_attr, 0, sizeof(ah_attr));
         ah_attr.is_global = 1;
         ah_attr.port_num = portid;
         ah_attr.grh.dgid.global.subnet_prefix = peer_ep_handle->spn;
@@ -1318,6 +1332,10 @@ static int ibgda_rc_init2rtr(nvshmemt_ibgda_state_t *ibgda_state, struct ibgda_e
         ah_attr.grh.traffic_class = ibgda_state->options->IB_TRAFFIC_CLASS;
         ah_attr.sl = ibgda_state->options->IB_SL;
         ah_attr.src_path_bits = 0;
+
+        assert(roce_version == 1 || roce_version == 2);
+        ah_attr.dlid = port_attr->lid | (roce_version == 1 ? IBGDA_ROCE_V1_UDP_SPORT_BASE
+                                                           : IBGDA_ROCE_V2_UDP_SPORT_BASE);
 
         ah = ftable.create_ah(device->pd, &ah_attr);
         NVSHMEMI_NULL_ERROR_JMP(ah, status, NVSHMEMX_ERROR_INTERNAL, out, "Unable to create ah.\n");
@@ -2377,7 +2395,7 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
     int n_devs_selected = ibgda_state->n_devs_selected;
     int num_qp_groups = 0;
     int num_dct_handles = 0;
-    int num_dct_cache_handles = 0;
+    int num_dct_non_cache_handles = 0;
     int num_rc_handles = 0;
     int num_cq_handles = 0;
     int num_dci_handles = 0;
@@ -2386,8 +2404,6 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
     int cq_idx = 0;
     bool skip_cst = true;
     bool support_half_av_seg = true;
-
-    int num_elements;
 
     assert(ibgda_device_state_h != 0);
     memset(ibgda_device_state_h, 0, sizeof(*ibgda_device_state_h));
@@ -2408,7 +2424,6 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
         num_cq_handles += device->dci.num_eps + (device->rc.num_eps_per_pe * (n_pes - 1));
         num_shared_dci_handles += device->dci.num_shared_eps;
     }
-    num_elements = num_dct_handles - NVSHMEMI_IBGDA_MAX_CONST_DCTS;
     assert(num_dci_handles - num_shared_dci_handles >= 0);
 
     if (num_rc_handles > 0) {
@@ -2445,8 +2460,8 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
 
     /* allocate device memory for dct, rc, cq, dci start */
     if (num_dct_handles > NVSHMEMI_IBGDA_MAX_CONST_DCTS) {
-        num_dct_cache_handles = num_dct_handles - NVSHMEMI_IBGDA_MAX_CONST_DCTS;
-        status = cudaMalloc(&dct_d, num_elements * sizeof(*dct_d));
+        num_dct_non_cache_handles = num_dct_handles - NVSHMEMI_IBGDA_MAX_CONST_DCTS;
+        status = cudaMalloc(&dct_d, num_dct_non_cache_handles * sizeof(*dct_d));
         NVSHMEMI_NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                               "dct_d allocation failed.\n");
     }
@@ -2560,9 +2575,9 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
 
     /* Copy host side structs to device side structs start */
     /* Add the rest of DCTs to global memory */
-    if (num_dct_cache_handles > NVSHMEMI_IBGDA_MAX_CONST_DCTS) {
+    if (num_dct_non_cache_handles > 0) {
         const void *dct_h_ptr = (const void *)&dct_h[NVSHMEMI_IBGDA_MAX_CONST_DCTS];
-        status = cudaMemcpyAsync(dct_d, dct_h_ptr, sizeof(*dct_d) * num_elements,
+        status = cudaMemcpyAsync(dct_d, dct_h_ptr, sizeof(*dct_d) * num_dct_non_cache_handles,
                                  cudaMemcpyHostToDevice, ibgda_state->my_stream);
         NVSHMEMI_NE_ERROR_JMP(status, cudaSuccess, NVSHMEMX_ERROR_INTERNAL, out, "dct copy err.");
     }

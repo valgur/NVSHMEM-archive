@@ -12,12 +12,10 @@
 
 #include <stdio.h>
 #include <assert.h>
+
+#include "bootstrap_helper.h"
 #include "nvshmem.h"
 #include "nvshmemx.h"
-
-#ifdef NVSHMEMTEST_MPI_SUPPORT
-#include "mpi.h"
-#endif
 
 #undef CUDA_CHECK
 #define CUDA_CHECK(stmt)                                                          \
@@ -67,16 +65,7 @@ int main(int c, char *v[]) {
 
 #ifdef NVSHMEMTEST_MPI_SUPPORT
     if (use_mpi) {
-        MPI_Init(&c, &v);
-        int rank, nranks;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        MPI_Comm_size(MPI_COMM_WORLD, &nranks);
-        MPI_Comm mpi_comm = MPI_COMM_WORLD;
-
-        nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
-
-        attr.mpi_comm = &mpi_comm;
-        nvshmemx_init_attr(NVSHMEMX_INIT_WITH_MPI_COMM, &attr);
+        nvshmemi_init_mpi(&c, &v);
     } else
         nvshmem_init();
 #else
@@ -126,7 +115,7 @@ int main(int c, char *v[]) {
     nvshmem_finalize();
 
 #ifdef NVSHMEMTEST_MPI_SUPPORT
-    if (use_mpi) MPI_Finalize();
+    if (use_mpi) nvshmemi_finalize_mpi();
 #endif
     return 0;
 }

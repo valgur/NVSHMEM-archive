@@ -10,7 +10,13 @@
  * See COPYRIGHT.txt for license information
  */
 
+#define CUMODULE_NAME "shmem_atomic_ping_pong_latency.cubin"
+
 #include "atomic_ping_pong_common.h"
+
+#if defined __cplusplus || defined NVSHMEM_BITCODE_APPLICATION
+extern "C" {
+#endif
 
 /* add */
 DEFINE_PING_PONG_TEST_FOR_AMO_ONE_ARG(unsigned int, uint, add, (value * (1 + i)), (value));
@@ -177,23 +183,27 @@ DEFINE_PING_PONG_TEST_FOR_AMO_TWO_ARG(int, int, compare_swap, i, i + 1);
 DEFINE_PING_PONG_TEST_FOR_AMO_TWO_ARG(long, long, compare_swap, i, i + 1);
 DEFINE_PING_PONG_TEST_FOR_AMO_TWO_ARG(size_t, size, compare_swap, i, i + 1);
 
-int main(int c, char *v[]) {
+#if defined __cplusplus || defined NVSHMEM_BITCODE_APPLICATION
+}
+#endif
+
+int main(int argc, char *argv[]) {
     int mype, npes;
     int iter, skip;
     int rc = 0;
 
     void *flag_d = NULL;
     cudaStream_t stream;
-    nvshmemi_amo_t op;
+    read_args(argc, argv);
 
     void **h_tables;
     uint64_t *h_size_arr;
     double *h_lat;
 
-    MAIN_SETUP(c, v, mype, npes, flag_d, stream, h_size_arr, h_tables, h_lat, &op);
+    MAIN_SETUP(argc, argv, mype, npes, flag_d, stream, h_size_arr, h_tables, h_lat, &op);
 
-    switch (op) {
-        case NVSHMEMI_AMO_INC: {
+    switch (test_amo.type) {
+        case AMO_INC: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITHOUT_ARG(unsigned int, uint, inc, flag_d, mype, iter, skip, h_lat,
@@ -213,7 +223,7 @@ int main(int c, char *v[]) {
             RUN_TEST_WITHOUT_ARG(size_t, size, inc, flag_d, mype, iter, skip, h_lat, h_size_arr, 0);
             break;
         }
-        case NVSHMEMI_AMO_SET: {
+        case AMO_SET: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITH_ARG(unsigned int, uint, set, flag_d, mype, iter, skip, h_lat, h_size_arr,
@@ -236,7 +246,7 @@ int main(int c, char *v[]) {
                               0, 551);
             break;
         }
-        case NVSHMEMI_AMO_ADD: {
+        case AMO_ADD: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITH_ARG(unsigned int, uint, add, flag_d, mype, iter, skip, h_lat, h_size_arr,
@@ -259,7 +269,7 @@ int main(int c, char *v[]) {
                               0, 0);
             break;
         }
-        case NVSHMEMI_AMO_AND: {
+        case AMO_AND: {
             iter = 64;
             skip = 0;
             /* TODO: Figure out a good way to do this with signed types. The bit shifts we do don't
@@ -281,7 +291,7 @@ int main(int c, char *v[]) {
                               0xFFFFFFFF, 0, 0xFFFFFFFF);
             break;
         }
-        case NVSHMEMI_AMO_OR: {
+        case AMO_OR: {
             iter = 64;
             skip = 0;
             /* TODO: Figure out a good way to do this with signed types. The bit shifts we do don't
@@ -303,7 +313,7 @@ int main(int c, char *v[]) {
                               1, 0xFFFFFFFF, 0);
             break;
         }
-        case NVSHMEMI_AMO_XOR: {
+        case AMO_XOR: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITH_ARG(unsigned long, ulong, xor, flag_d, mype, iter, skip, h_lat,
@@ -322,7 +332,7 @@ int main(int c, char *v[]) {
                               0, 0, 1);
             break;
         }
-        case NVSHMEMI_AMO_FETCH_INC: {
+        case AMO_FETCH_INC: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITHOUT_ARG(unsigned int, uint, fetch_inc, flag_d, mype, iter, skip, h_lat,
@@ -345,7 +355,7 @@ int main(int c, char *v[]) {
                                  h_size_arr, 0);
             break;
         }
-        case NVSHMEMI_AMO_FETCH_ADD: {
+        case AMO_FETCH_ADD: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITH_ARG(unsigned int, uint, fetch_add, flag_d, mype, iter, skip, h_lat,
@@ -368,7 +378,7 @@ int main(int c, char *v[]) {
                               415, 0, 0);
             break;
         }
-        case NVSHMEMI_AMO_FETCH_AND: {
+        case AMO_FETCH_AND: {
             iter = 64;
             skip = 0;
             /* TODO: Figure out a good way to do this with signed types. The bit shifts we do don't
@@ -390,7 +400,7 @@ int main(int c, char *v[]) {
                               h_size_arr, 0xFFFFFFFF, 0, 0xFFFFFFFF);
             break;
         }
-        case NVSHMEMI_AMO_FETCH_OR: {
+        case AMO_FETCH_OR: {
             iter = 64;
             skip = 0;
             /* TODO: Figure out a good way to do this with signed types. The bit shifts we do don't
@@ -412,7 +422,7 @@ int main(int c, char *v[]) {
                               h_size_arr, 1, 0xFFFFFFFF, 0);
             break;
         }
-        case NVSHMEMI_AMO_FETCH_XOR: {
+        case AMO_FETCH_XOR: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITH_ARG(unsigned long, ulong, fetch_xor, flag_d, mype, iter, skip, h_lat,
@@ -431,7 +441,7 @@ int main(int c, char *v[]) {
                               h_size_arr, 0, 0, 1);
             break;
         }
-        case NVSHMEMI_AMO_SWAP: {
+        case AMO_SWAP: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITH_ARG(unsigned int, uint, swap, flag_d, mype, iter, skip, h_lat, h_size_arr,
@@ -453,7 +463,7 @@ int main(int c, char *v[]) {
                               1);
             break;
         }
-        case NVSHMEMI_AMO_COMPARE_SWAP: {
+        case AMO_COMPARE_SWAP: {
             iter = 500;
             skip = 50;
             RUN_TEST_WITH_ARG(unsigned int, uint, compare_swap, flag_d, mype, iter, skip, h_lat,
@@ -477,7 +487,7 @@ int main(int c, char *v[]) {
             break;
         }
         default: {
-            fprintf(stderr, "Error, unsupported Atomic op %d.\n", op);
+            fprintf(stderr, "Error, unsupported Atomic op %s.\n", test_amo.name.c_str());
             rc = -1;
             break;
         }

@@ -10,6 +10,8 @@
  * See COPYRIGHT.txt for license information
  */
 
+#define CUMODULE_NAME "shmem_g_latency.cubin"
+
 #include <stdio.h>
 #include <assert.h>
 #include <cuda.h>
@@ -17,9 +19,11 @@
 #include <unistd.h>
 #include "utils.h"
 
-#define THREADS 512
-#define MAX_MSG_SIZE 64 * 1024
-#define UNROLL 8
+CUfunction test_cubin;
+
+#if defined __cplusplus || defined NVSHMEM_BITCODE_APPLICATION
+extern "C" {
+#endif
 
 __global__ void pull(int *data_d, int len, int pe, int iter) {
     int i, j, tid, peer;
@@ -29,7 +33,7 @@ __global__ void pull(int *data_d, int len, int pe, int iter) {
 
     for (i = 0; i < iter; i++) {
         if (!pe) {
-            for (j = tid; j < len; j += THREADS) {
+            for (j = tid; j < len; j += blockDim.x) {
                 *(data_d + j) = nvshmem_int_g(data_d + j, peer);
             }
 
@@ -38,13 +42,27 @@ __global__ void pull(int *data_d, int len, int pe, int iter) {
     }
 }
 
-int main(int c, char *v[]) {
+#if defined __cplusplus || defined NVSHMEM_BITCODE_APPLICATION
+}
+#endif
+
+void test_pull(int *data_d, int len, int pe, int iter, CUfunction kernel) {
+    if (use_cubin) {
+        void *arglist[] = {(void *)&data_d, (void *)&len, (void *)&pe, (void *)&iter};
+        CU_CHECK(cuLaunchKernel(kernel, 1, 1, 1, threads_per_block, 1, 1, 0, NULL, arglist, NULL));
+    } else {
+        pull<<<1, threads_per_block>>>(data_d, len, pe, iter);
+    }
+}
+
+int main(int argc, char *argv[]) {
     int mype, npes, size;
     int *data_d = NULL;
 
-    int iter = 200;
-    int skip = 20;
-    int max_msg_size = MAX_MSG_SIZE;
+    read_args(argc, argv);
+
+    int iter = iters;
+    int skip = warmup_iters;
 
     int array_size, i;
     void **h_tables;
@@ -53,8 +71,14 @@ int main(int c, char *v[]) {
 
     float milliseconds;
     cudaEvent_t start, stop;
+    CUfunction test_cubin = NULL;
 
-    init_wrapper(&c, &v);
+    init_wrapper(&argc, &argv);
+
+    if (use_cubin) {
+        init_cumodule(CUMODULE_NAME);
+        init_test_case_kernel(&test_cubin, "pull");
+    }
 
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
@@ -67,27 +91,27 @@ int main(int c, char *v[]) {
         goto finalize;
     }
 
-    array_size = floor(std::log2((float)max_msg_size)) + 1;
+    array_size = max_size_log;
     alloc_tables(&h_tables, 2, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_lat = (double *)h_tables[1];
 
-    data_d = (int *)nvshmem_malloc(max_msg_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    data_d = (int *)nvshmem_malloc(max_size);
+    CUDA_CHECK(cudaMemset(data_d, 0, max_size));
 
     nvshmem_barrier_all();
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
     i = 0;
-    for (size = sizeof(int); size <= max_msg_size; size *= 2) {
+    for (size = min_size; size <= max_size; size *= step_factor) {
         int nelems;
         h_size_arr[i] = size;
         nelems = size / sizeof(int);
 
-        pull<<<1, THREADS>>>(data_d, nelems, mype, skip);
+        test_pull(data_d, nelems, mype, skip, test_cubin);
         cudaEventRecord(start);
-        pull<<<1, THREADS>>>(data_d, nelems, mype, iter);
+        test_pull(data_d, nelems, mype, iter, test_cubin);
         cudaEventRecord(stop);
 
         CUDA_CHECK(cudaEventSynchronize(stop));
@@ -100,8 +124,8 @@ int main(int c, char *v[]) {
     }
 
     if (mype == 0) {
-        print_table_v1("shmem_g_latency", "None", "size (Bytes)", "latency", "us", '-', h_size_arr,
-                       h_lat, i);
+        print_table_basic("shmem_g_latency", "None", "size (Bytes)", "latency", "us", '-',
+                          h_size_arr, h_lat, i);
     }
 
 finalize:

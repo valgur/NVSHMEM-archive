@@ -10,6 +10,8 @@
  * See COPYRIGHT.txt for license information
  */
 
+#define CUMODULE_NAME "shmem_put_signal_ping_pong_latency.cubin"
+
 #include <stdio.h>
 #include <assert.h>
 #include <cuda.h>
@@ -19,6 +21,10 @@
 
 #define MAX_MSG_SIZE 1 * 1024 * 1024
 #define UNROLL 8
+
+#if defined __cplusplus || defined NVSHMEM_BITCODE_APPLICATION
+extern "C" {
+#endif
 
 #define PING_PONG(SC, SC_SUFFIX, SC_PREFIX)                                                   \
     __global__ void ping_pong##SC_SUFFIX(int *data_d, uint64_t *flag_d, int len, int pe,      \
@@ -45,15 +51,32 @@ PING_PONG(thread, , )
 PING_PONG(warp, _warp, x)
 PING_PONG(block, _block, x)
 
-int main(int c, char *v[]) {
-    int mype, npes, size;
+void test_ping_pong(void **arglist, CUfunction kernel, cudaStream_t stream) {
+    int status;
+    if (use_cubin) {
+        CU_CHECK(cuLaunchCooperativeKernel(kernel, 1, 1, 1, 1, 1, 1, 0, stream, arglist));
+    } else {
+        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, arglist, 0, stream);
+        if (status != NVSHMEMX_SUCCESS) {
+            fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
+            exit(-1);
+        }
+    }
+}
+
+#if defined __cplusplus || defined NVSHMEM_BITCODE_APPLICATION
+}
+#endif
+
+int main(int argc, char *argv[]) {
+    int mype, npes;
     uint64_t *flag_d = NULL;
     int *data_d = NULL;
     cudaStream_t stream;
 
-    int iter = 500;
-    int skip = 50;
-    int max_msg_size = MAX_MSG_SIZE;
+    read_args(argc, argv);
+    int iter = iters;
+    int skip = warmup_iters;
 
     int array_size, i;
     void **h_tables;
@@ -62,8 +85,14 @@ int main(int c, char *v[]) {
 
     float milliseconds;
     cudaEvent_t start, stop;
+    CUfunction test_cubin = NULL;
 
-    init_wrapper(&c, &v);
+    init_wrapper(&argc, &argv);
+
+    if (use_cubin) {
+        init_cumodule(CUMODULE_NAME);
+        init_test_case_kernel(&test_cubin, "ping_pong");
+    }
 
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
@@ -76,12 +105,12 @@ int main(int c, char *v[]) {
         goto finalize;
     }
 
-    data_d = (int *)nvshmem_malloc(max_msg_size);
+    data_d = (int *)nvshmem_malloc(max_size);
     flag_d = (uint64_t *)nvshmem_malloc(sizeof(uint64_t));
-    CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    CUDA_CHECK(cudaMemset(data_d, 0, max_size));
     CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
 
-    array_size = floor(std::log2((float)max_msg_size)) + 1;
+    array_size = max_size_log;
     alloc_tables(&h_tables, 2, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_lat = (double *)h_tables[1];
@@ -98,8 +127,8 @@ int main(int c, char *v[]) {
     }
 
     i = 0;
-    for (size = sizeof(int); size <= max_msg_size; size *= 2) {
-        int nelems, status = 0;
+    for (size_t size = min_size; size <= max_size; size *= step_factor) {
+        int nelems = 0;
         nelems = size / sizeof(int);
         h_size_arr[i] = size;
         void *args_1[] = {&data_d, &flag_d, &nelems, &mype, &skip};
@@ -109,21 +138,13 @@ int main(int c, char *v[]) {
         CUDA_CHECK(cudaDeviceSynchronize());
         nvshmem_barrier_all();
 
-        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, args_1, 0, stream);
-        if (status != NVSHMEMX_SUCCESS) {
-            fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
-            exit(-1);
-        }
+        test_ping_pong(args_1, test_cubin, stream);
         CUDA_CHECK(cudaDeviceSynchronize());
         CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));
         nvshmem_barrier_all();
 
         cudaEventRecord(start, stream);
-        status = nvshmemx_collective_launch((const void *)ping_pong, 1, 1, args_2, 0, stream);
-        if (status != NVSHMEMX_SUCCESS) {
-            fprintf(stderr, "shmemx_collective_launch failed %d \n", status);
-            exit(-1);
-        }
+        test_ping_pong(args_2, test_cubin, stream);
         cudaEventRecord(stop, stream);
 
         /* give latency in us */
@@ -137,8 +158,8 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     if (mype == 0) {
-        print_table_v1("shmem_put_ping_lat", "None", "size (Bytes)", "latency", "us", '-',
-                       h_size_arr, h_lat, i);
+        print_table_basic("shmem_put_ping_lat", "None", "size (Bytes)", "latency", "us", '-',
+                          h_size_arr, h_lat, i);
     }
 finalize:
 

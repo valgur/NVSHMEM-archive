@@ -47,6 +47,7 @@ class nvshmemi_mem_p2p_transport final {
     bool is_initialized(void) const { return !errored_on_initialization_; }
     int create_proc_map(nvshmemi_symmetric_heap &obj);
     std::map<pid_t, int> get_proc_map(void) const { return proc_map_; }
+    int get_num_p2p_connected_pes(nvshmemi_symmetric_heap &obj);
     bool is_nvl_connected_pe(int pe) {
         /* Check if the peer GPU is connected via the MNNVL fabric */
         auto it =

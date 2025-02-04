@@ -7,7 +7,7 @@
 #ifndef _COMM_DEVICE_UTILS_H
 #define _COMM_DEVICE_UTILS_H
 
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stdint.h>
 #else
 #include "cuda/std/cstdint"

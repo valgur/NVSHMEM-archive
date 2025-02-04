@@ -4,7 +4,7 @@
 
 #define UNIQUEID_PADDING 124
 #define UNIQUEID_ARGS_INVALID -1
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stddef.h>  // for NULL
 #define NVSHMEMX_UNIQUEID_INITIALIZER                          \
     {                                                          \

@@ -22,9 +22,8 @@
 
 #ifdef __CUDA_ARCH__
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_bcast_intranode_tree_threadgroup(nvshmem_team_t team, T *dest,
-                                                                 const T *source, size_t nelems,
-                                                                 int PE_root, int k) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_bcast_intranode_tree_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems, int PE_root, int k) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     const int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     const int groupSize = nvshmemi_threadgroup_size<SCOPE>();
@@ -94,9 +93,8 @@ __device__ inline void nvshmemi_bcast_intranode_tree_threadgroup(nvshmem_team_t 
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_bcast_internode_tree_threadgroup(nvshmem_team_t team, T *dest,
-                                                                 const T *source, size_t nelems,
-                                                                 int PE_root, int k) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_bcast_internode_tree_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems, int PE_root, int k) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     const int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     const int groupSize = nvshmemi_threadgroup_size<SCOPE>();
@@ -140,9 +138,8 @@ __device__ inline void nvshmemi_bcast_internode_tree_threadgroup(nvshmem_team_t 
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_bcast_tree_threadgroup(nvshmem_team_t team, T *dest,
-                                                       const T *source, size_t nelems, int PE_root,
-                                                       int k) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_bcast_tree_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems, int PE_root, int k) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     const int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     const int groupSize = nvshmemi_threadgroup_size<SCOPE>();
@@ -203,9 +200,8 @@ __device__ inline void nvshmemi_bcast_tree_threadgroup(nvshmem_team_t team, T *d
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_bcast_nonLL_tree_threadgroup(nvshmem_team_t team, T *dest,
-                                                             const T *source, size_t nelems,
-                                                             int PE_root, int k) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_bcast_nonLL_tree_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems, int PE_root, int k) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     const int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     const int groupSize = nvshmemi_threadgroup_size<SCOPE>();
@@ -267,9 +263,8 @@ __device__ inline void nvshmemi_bcast_nonLL_tree_threadgroup(nvshmem_team_t team
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_bcast_put2all_threadgroup(nvshmem_team_t team, T *dest,
-                                                          const T *source, size_t nelems,
-                                                          int PE_root) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_bcast_put2all_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems, int PE_root) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int i;
     int PE_start = teami->start;
@@ -287,9 +282,8 @@ __device__ inline void nvshmemi_bcast_put2all_threadgroup(nvshmem_team_t team, T
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_bcast_put2all_direct_threadgroup(nvshmem_team_t team, T *dest,
-                                                                 const T *source, size_t nelems,
-                                                                 int PE_root) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_bcast_put2all_direct_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems, int PE_root) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int i;
     int PE_start = teami->start;
@@ -309,9 +303,8 @@ __device__ inline void nvshmemi_bcast_put2all_direct_threadgroup(nvshmem_team_t 
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_bcast_hierarchical_threadgroup(nvshmem_team_t team, T *dest,
-                                                               const T *source, size_t nelems,
-                                                               int PE_root) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_bcast_hierarchical_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems, int PE_root) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     if (teami->is_team_same_mype_node) {
         nvshmemi_bcast_internode_tree_threadgroup<T, SCOPE>(
@@ -337,8 +330,8 @@ __device__ inline void nvshmemi_bcast_hierarchical_threadgroup(nvshmem_team_t te
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_broadcast_threadgroup(nvshmem_team_t team, T *dest, const T *source,
-                                                      size_t nelems, int PE_root) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_broadcast_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems, int PE_root) {
     int bcast_algo = nvshmemi_device_state_d.gpu_coll_env_params_var.bcast_algo;
     switch (bcast_algo) {
         case 0:

@@ -33,6 +33,7 @@
 #include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"
 #include "internal/host_transport/nvshmemi_transport_defines.h"
 #include "non_abi/nvshmemx_error.h"
+#include "non_abi/nvshmem_version.h"
 #include "internal/host_transport/transport.h"
 #include "transport_common.h"
 #ifdef NVSHMEM_USE_GDRCOPY

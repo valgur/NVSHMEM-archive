@@ -17,14 +17,6 @@
 #include <getopt.h>
 #include "utils.h"
 
-#define MAX_ITERS 100
-#define MAX_SKIP 10
-#define THREADS 1024
-#define BLOCKS 8
-#define MAX_DATA_SIZE 64 * 1024
-#define MIN_DATA_SIZE 1024
-#define ELEMENT_SIZE 8
-#define STRIDE 1
 #define UNROLL 2
 
 template <typename T>
@@ -110,26 +102,64 @@ __global__ void bw(T *data_d, volatile unsigned int *counter_d, int len, int pe,
 }
 
 void call_bw(int blocks, int threads, void *data_d, unsigned int *counter_d, size_t size,
-             int element_size, int mype, int iter, int stride) {
-    switch (element_size) {
-        case 1:
-            bw<uint8_t><<<blocks, threads>>>((uint8_t *)data_d, counter_d, size / sizeof(uint8_t),
-                                             mype, iter, stride);
+             NVSHMEM_DATATYPE_T dt, int mype, int iter, int stride) {
+    switch (dt) {
+        case NVSHMEM_INT:
+            bw<int><<<blocks, threads>>>((int *)data_d, counter_d, size / sizeof(uint8_t), mype,
+                                         iter, stride);
             break;
-        case 2:
-            bw<uint16_t><<<blocks, threads>>>((uint16_t *)data_d, counter_d,
-                                              size / sizeof(uint16_t), mype, iter, stride);
+        case NVSHMEM_LONG:
+            bw<long><<<blocks, threads>>>((long *)data_d, counter_d, size / sizeof(uint16_t), mype,
+                                          iter, stride);
             break;
-        case 4:
-            bw<uint32_t><<<blocks, threads>>>((uint32_t *)data_d, counter_d,
-                                              size / sizeof(uint32_t), mype, iter, stride);
+        case NVSHMEM_LONGLONG:
+            bw<long long><<<blocks, threads>>>((long long *)data_d, counter_d,
+                                               size / sizeof(uint32_t), mype, iter, stride);
             break;
-        case 8:
+        case NVSHMEM_ULONGLONG:
+            bw<unsigned long long><<<blocks, threads>>>((unsigned long long *)data_d, counter_d,
+                                                        size / sizeof(double), mype, iter, stride);
+            break;
+        case NVSHMEM_FLOAT:
+            bw<float><<<blocks, threads>>>((float *)data_d, counter_d, size / sizeof(double), mype,
+                                           iter, stride);
+            break;
+        case NVSHMEM_DOUBLE:
             bw<double><<<blocks, threads>>>((double *)data_d, counter_d, size / sizeof(double),
                                             mype, iter, stride);
             break;
+        case NVSHMEM_UINT:
+            bw<unsigned int><<<blocks, threads>>>((unsigned int *)data_d, counter_d,
+                                                  size / sizeof(double), mype, iter, stride);
+            break;
+        case NVSHMEM_INT32:
+            bw<int32_t><<<blocks, threads>>>((int32_t *)data_d, counter_d, size / sizeof(double),
+                                             mype, iter, stride);
+            break;
+        case NVSHMEM_UINT32:
+            bw<unsigned int32_t><<<blocks, threads>>>((unsigned int32_t *)data_d, counter_d,
+                                                      size / sizeof(double), mype, iter, stride);
+            break;
+        case NVSHMEM_INT64:
+            bw<int64_t><<<blocks, threads>>>((int64_t *)data_d, counter_d, size / sizeof(double),
+                                             mype, iter, stride);
+            break;
+        case NVSHMEM_UINT64:
+            bw<unsigned int64_t><<<blocks, threads>>>((unsigned int64_t *)data_d, counter_d,
+                                                      size / sizeof(double), mype, iter, stride);
+            break;
+        case NVSHMEM_FP16:
+            bw<half><<<blocks, threads>>>((half *)data_d, counter_d, size / sizeof(double), mype,
+                                          iter, stride);
+            break;
+#if CUDA_VERSION >= 12020
+        case NVSHMEM_BF16:
+            bw<__nv_bfloat16><<<blocks, threads>>>((__nv_bfloat16 *)data_d, counter_d,
+                                                   size / sizeof(double), mype, iter, stride);
+            break;
+#endif
         default:
-            fprintf(stderr, "element_size=%d is not supported \n", element_size);
+            fprintf(stderr, "element=%d is not supported \n", dt);
             exit(-EINVAL);
     }
 }
@@ -138,7 +168,9 @@ int main(int argc, char *argv[]) {
     int mype, npes;
     void *data_d = NULL;
     unsigned int *counter_d;
-    int max_blocks = BLOCKS, max_threads = THREADS;
+
+    read_args(argc, argv);
+    int max_blocks = num_blocks, max_threads = threads_per_block;
     int array_size, i;
     void **h_tables;
     uint64_t *h_size_arr;
@@ -146,12 +178,9 @@ int main(int argc, char *argv[]) {
     double *h_msgrate;
     bool report_msgrate = false;
 
-    int iter = MAX_ITERS;
-    int skip = MAX_SKIP;
-    int64_t max_data_size = MAX_DATA_SIZE;
-    int64_t min_data_size = MIN_DATA_SIZE;
-    int element_size = ELEMENT_SIZE;
-    int stride = STRIDE;
+    int iter = iters;
+    int skip = warmup_iters;
+    int element_size = datatype.size;
 
     float milliseconds;
     cudaEvent_t start, stop;
@@ -169,70 +198,14 @@ int main(int argc, char *argv[]) {
         goto finalize;
     }
 
-    while (1) {
-        int c;
-        c = getopt(argc, argv, "c:t:m:M:e:s:Rh");
-        if (c == -1) break;
-
-        switch (c) {
-            case 'c':
-                max_blocks = strtol(optarg, NULL, 0);
-                break;
-            case 't':
-                max_threads = strtol(optarg, NULL, 0);
-                break;
-            case 'm':
-                min_data_size = strtol(optarg, NULL, 0);
-                break;
-            case 'M':
-                max_data_size = strtol(optarg, NULL, 0);
-                break;
-            case 'e':
-                element_size = strtol(optarg, NULL, 0);
-                break;
-            case 's':
-                stride = strtol(optarg, NULL, 0);
-                break;
-            case 'R':
-                report_msgrate = true;
-                break;
-            default:
-            case 'h':
-                printf(
-                    "-c [CTAs] -t [THREADS] -m [MIN_DATA] -M [MAX_DATA] -e [ELEMENT_SIZE] -s "
-                    "[STRIDE] -R(report_msgrate) \n");
-                goto finalize;
-        }
-    }
-
-    if (min_data_size <= 0) {
-        fprintf(stderr, "MIN_DATA must be a positive integer \n");
-        goto finalize;
-    }
-
-    if (max_data_size <= 0) {
-        fprintf(stderr, "MAX_DATA must be a positive integer \n");
-        goto finalize;
-    }
-
-    if (min_data_size > max_data_size) {
-        fprintf(stderr, "MIN_DATA must be less than or equal to MAX_DATA \n");
-        goto finalize;
-    }
-
-    if (stride < 1) {
-        fprintf(stderr, "STRIDE must be at least 1 \n");
-        goto finalize;
-    }
-
-    array_size = floor(std::log2((float)max_data_size)) + 1;
+    array_size = max_size_log;
     alloc_tables(&h_tables, 3, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_bw = (double *)h_tables[1];
     h_msgrate = (double *)h_tables[2];
 
-    data_d = (void *)nvshmem_malloc(max_data_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_data_size));
+    data_d = (void *)nvshmem_malloc(max_size);
+    CUDA_CHECK(cudaMemset(data_d, 0, max_size));
 
     CUDA_CHECK(cudaMalloc((void **)&counter_d, sizeof(unsigned int) * 2));
     CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
@@ -242,17 +215,17 @@ int main(int argc, char *argv[]) {
     size_t size;
     i = 0;
     if (mype == 0) {
-        for (size = (size_t)min_data_size; size <= (size_t)max_data_size; size *= 2) {
+        for (size = min_size; size <= max_size; size *= step_factor) {
             int blocks = max_blocks, threads = max_threads;
             h_size_arr[i] = size;
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
-            call_bw(blocks, threads, data_d, counter_d, size, element_size, mype, skip, stride);
+            call_bw(blocks, threads, data_d, counter_d, size, datatype.type, mype, skip, stride);
             CUDA_CHECK(cudaGetLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
 
             cudaEventRecord(start);
-            call_bw(blocks, threads, data_d, counter_d, size, element_size, mype, iter, stride);
+            call_bw(blocks, threads, data_d, counter_d, size, datatype.type, mype, iter, stride);
             cudaEventRecord(stop);
 
             CUDA_CHECK(cudaGetLastError());
@@ -265,17 +238,17 @@ int main(int argc, char *argv[]) {
             i++;
         }
     } else {
-        for (size = (size_t)min_data_size; size <= (size_t)max_data_size; size *= 2) {
+        for (size = min_size; size <= max_size; size *= step_factor) {
             nvshmem_barrier_all();
         }
     }
 
     if (mype == 0) {
-        print_table_v1("shmem_g_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr, h_bw,
-                       i);
+        print_table_basic("shmem_g_bw", "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr,
+                          h_bw, i);
         if (report_msgrate)
-            print_table_v1("shmem_g_bw", "None", "size (Bytes)", "msgrate", "MMPS", '+', h_size_arr,
-                           h_msgrate, i);
+            print_table_basic("shmem_g_bw", "None", "size (Bytes)", "msgrate", "MMPS", '+',
+                              h_size_arr, h_msgrate, i);
     }
 
 finalize:

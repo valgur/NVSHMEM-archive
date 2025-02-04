@@ -1,3 +1,5 @@
+/device/pt-to-pt/shmem_atomic_ping_pong_latency
+/device/pt-to-pt/shmem_put_atomic_ping_pong_latency
 /device/pt-to-pt/shmem_p_latency
 /device/pt-to-pt/shmem_p_bw
 /device/pt-to-pt/shmem_g_latency

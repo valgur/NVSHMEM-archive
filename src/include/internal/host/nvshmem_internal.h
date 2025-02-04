@@ -138,7 +138,11 @@ static inline void nvshmemi_get_local_mem_handle(nvshmem_mem_handle_t **handle, 
     }
 
     if (len) *len = *len < max_len ? *len : max_len;
-    assert(*handle != NULL);
+    assert(*handle != NULL &&
+           "Could not retrieve remote transport handle for the local buffer. \
+           Hint: Make sure local buffer is registered with NVSHMEM. NVSHMEM only supports local buffer that is \
+           either in NVSHMEM symmetric memory or registered via nvshmemx_buffer_register() API. \
+           SM shared memory and registers are not supported");
 }
 
 static inline void nvshmemi_get_remote_mem_handle(rma_memdesc_t *handle, size_t *len, void *addr,
@@ -198,12 +202,12 @@ void nvshmemi_add_transport(int id, int (*init_op)(nvshmem_transport_t *));
 int nvshmemi_transport_init(struct nvshmemi_state_dec *state);
 int nvshmemi_transport_finalize(struct nvshmemi_state_dec *state);
 
-#ifdef __cplusplus
+#if defined __cplusplus
 extern "C" {
 #endif
 void *nvshmemi_malloc(size_t size);
 void nvshmemi_free(void *ptr);
-#ifdef __cplusplus
+#if defined __cplusplus
 }
 #endif
 

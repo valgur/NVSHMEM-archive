@@ -3,6 +3,8 @@ import sys
 import os
 import re
 import time
+import signal
+
 from subprocess import Popen, PIPE
 from threading import Thread
 
@@ -51,45 +53,40 @@ def get_args_combinations_pe_range(full_test_path, npe_start_end_step, max_pes):
   args_combs = []
   npe_range_ = list(npe_start_end_step)
   npe_range = [npe for npe in npe_range_ if npe <= max_pes]
+
+  full_args_path = full_test_path + '.args'
   if 'pt-to-pt' in full_test_path:
     npe_range[0] = 2
     if 1 < len(npe_range):
       elemsDelCnt = len(npe_range) - 1
       for cnt in range(0, elemsDelCnt):
         del npe_range[-1]
-#TODO : delete the test of this def
-    full_args_path = full_test_path + '.args'
+    #TODO : delete the test of this def
     if not os.path.isfile(full_args_path):
       return (args_combs, npe_range)
+    else:
+      print(full_args_path)
     with open(full_args_path) as f:
       lines = f.readlines()
-      for i in range(1, len(lines)):
+      for i in range(0, len(lines)):
         if lines[i]:
+          print("Add parameters: %s" % lines[i])
           args_combs.append(lines[i])
     return (args_combs, npe_range)
-  full_args_path = full_test_path+'.args'
+
   if not os.path.isfile(full_args_path):
     return (args_combs, npe_range)
-  firstline = None
-  secondline = None
+  else:
+    print(full_args_path)
+
   with open(full_args_path) as f:
-    firstline, secondline = f.readline(), f.readline()
-    vals = map(int, firstline.split())
-    idx = 0
-    for v in vals:
-      if v <= max_pes:
-        npe_range[idx] = v #XXX:all perf tests need at least 2 avail GPUs
-      else:
-        break
-      idx += 1
-    if idx < len(npe_range):
-      elemsDelCnt = len(npe_range) - idx
-      for cnt in range(0, elemsDelCnt):
-        del npe_range[-1]
-    if secondline:
-      args_combs.append(secondline)
-    for line in f:
-      args_combs.append(line)
+    lines = f.readlines()
+    # f.seek(0)
+    for i in range(0,len(lines)):
+      print("Add parameters: %s" % lines[i])
+      if lines[i]:
+        args_combs.append(lines[i])
+
   return (args_combs, npe_range)
 
 def get_env_combinations(full_test_path):
@@ -214,22 +211,30 @@ def show_table_partial_data_only(data):
 
 def thread_func(cmd_line, ftesto, fteste):
   global test_process
-  print(' '.join([str(elem) for elem in cmd_line]))
+  cmd_line_str = ' '.join([str(elem) for elem in cmd_line])
+  print(cmd_line_str)
   # test_process = Popen(['echo', 'Running ' + ' '.join([str(elem) for elem in cmd_line]) + '\r\n'], stdout=ftesto)
   fteste.write('Running ' + ' '.join([str(elem) for elem in cmd_line]) + '\r\n')
+  fteste.flush()
   ftesto.write('Running ' + ' '.join([str(elem) for elem in cmd_line]) + '\r\n')
+  ftesto.flush()
   try:
     # Run the command and capture stdout and stderr
-    test_process = Popen(cmd_line, stdout=PIPE, stderr=PIPE)
+    command_line_list = []
+    command_line_list.append(cmd_line_str)
+    test_process = Popen(command_line_list, stdout=PIPE, stderr=PIPE, shell=True, preexec_fn=os.setsid)
     stdout_data, stderr_data = test_process.communicate()
 
     # Write the stderr and stdout data to the respective files
     fteste.write(stderr_data.decode('utf-8'))
+    fteste.flush()
     ftesto.write(stdout_data.decode('utf-8'))
+    ftesto.flush()
 
     # Optionally print stdout data if SHOW_PERF_DATA is set to "Yes"
-    if os.environ['SHOW_PERF_DATA'] == "Yes":
-      show_table_partial_data_only(stdout_data.decode('utf-8'))
+    show_perf_data = os.environ.get('SHOW_PERF_DATA', 'No')
+    if show_perf_data == "Yes":
+        show_table_partial_data_only(stdout_data.decode('utf-8'))
 
     test_process.stderr_data = stderr_data
     test_process.stdout_data = stdout_data
@@ -244,10 +249,15 @@ def run_cmd(cmd_line, test_path, timeout, ftesto, fteste):
   th.start()
   th.join(timeout)
   if th.is_alive():
-    Popen(['echo', 'Timed out ' + ' '.join([str(elem) for elem in cmd_line]) + '\r\n'], stdout=fteste)
-    test_process.terminate()
+    # Popen(['echo', 'Timed out ' + ' '.join([str(elem) for elem in cmd_line]) + '\r\n'], stdout=fteste)
+    fteste.write('Timed out ' + ' '.join([str(elem) for elem in cmd_line]) + '\r\n')
+    fteste.flush()
+    print("Timed out " + ' '.join([str(elem) for elem in cmd_line]))
+    os.killpg(os.getpgid(test_process.pid), signal.SIGTERM)
+    # test_process.terminate()
     th.join()
     report_failure(cmd_line, test_path, ftesto, fteste)
+
   if test_process.returncode:
     if hasattr(test_process, 'stderr_data'):
       print(test_process.stderr_data.decode('utf-8'))
@@ -331,6 +341,11 @@ def enumerate_env_lines(env_combs, cmd_line_suffix, nvshmem_install_path, test_i
   else:
     QA_BOOTSTRAP = "pmi"
 
+  if 'QA_BIND_TO' in os.environ:
+    QA_BIND_TO = os.environ['QA_BIND_TO']
+  else:
+    QA_BIND_TO = "socket"
+
   if QA_BOOTSTRAP == "uid":
     bootstrap_str = "NVSHMEMTEST_USE_UID_BOOTSTRAP=1"
   elif QA_BOOTSTRAP == "mpi":
@@ -341,7 +356,7 @@ def enumerate_env_lines(env_combs, cmd_line_suffix, nvshmem_install_path, test_i
   if env_combs:
     for combidx in range(0, len(env_combs)):
       if launcher_choice == NVSHMEM_LAUNCHER:
-        cmd_line_prefix = [nvshmem_install_path+'/bin/nvshmrun.hydra', '--bind-to', 'none', '--launcher', 'ssh', '--hosts', hosts]
+        cmd_line_prefix = [nvshmem_install_path+'/bin/nvshmrun.hydra', '--bind-to', QA_BIND_TO, '--launcher', 'ssh', '--hosts', hosts]
         extra_parameters = extra_parameters_string.split()
         first_e = cmd_line_prefix.index("--launcher")
         for item in extra_parameters[::-1]:
@@ -356,7 +371,7 @@ def enumerate_env_lines(env_combs, cmd_line_suffix, nvshmem_install_path, test_i
         cmd_line_prefix.append('-n')
         run_cmd_vary_pes(cmd_line_prefix, cmd_line_suffix, test_install_path, full_test_path, npe_range, nhosts, timeout, launcher_choice, ftesto, fteste)
       if launcher_choice == MPI_LAUNCHER:
-        cmd_line_prefix = [mpi_install_path+'/bin/mpirun', '--mca', 'btl', '^uct', '--allow-run-as-root', '-oversubscribe', '--bind-to', 'none', '-x', 'LD_LIBRARY_PATH='+cuda_install_path+'/lib64:'+gdrcopy_install_path+nccl_install_lib+pmix_install_lib+':'+nvshmem_install_path+'/lib'+':$LD_LIBRARY_PATH', '-x', bootstrap_str , '--host', hosts]
+        cmd_line_prefix = [mpi_install_path+'/bin/mpirun', '--mca', 'btl', '^uct', '--allow-run-as-root', '-oversubscribe', '--bind-to', QA_BIND_TO, '-x', 'LD_LIBRARY_PATH='+cuda_install_path+'/lib64:'+gdrcopy_install_path+nccl_install_lib+pmix_install_lib+':'+nvshmem_install_path+'/lib'+':$LD_LIBRARY_PATH', '-x', bootstrap_str , '--host', hosts]
         extra_parameters = extra_parameters_string.split()
         first_x = cmd_line_prefix.index("-x")
         for item in extra_parameters[::-1]:
@@ -371,7 +386,7 @@ def enumerate_env_lines(env_combs, cmd_line_suffix, nvshmem_install_path, test_i
         cmd_line_prefix.append('-n')
         run_cmd_vary_pes(cmd_line_prefix, cmd_line_suffix, test_install_path, full_test_path, npe_range, nhosts, timeout, launcher_choice, ftesto, fteste)
       if launcher_choice == SHMEM_LAUNCHER:
-        cmd_line_prefix = [mpi_install_path+'/bin/oshrun', '--mca', 'btl', '^uct',  '--allow-run-as-root', '-oversubscribe', '-x', 'LD_LIBRARY_PATH='+cuda_install_path+'/lib64:'+gdrcopy_install_path+nccl_install_lib+pmix_install_lib+':'+nvshmem_install_path+'/lib'+':$LD_LIBRARY_PATH', '-x', 'NVSHMEMTEST_USE_SHMEM_LAUNCHER=1' , '--host', hosts]
+        cmd_line_prefix = [mpi_install_path+'/bin/oshrun', '--mca', 'btl', '^uct',  '--allow-run-as-root', '-oversubscribe', '--bind-to', QA_BIND_TO, '-x', 'LD_LIBRARY_PATH='+cuda_install_path+'/lib64:'+gdrcopy_install_path+nccl_install_lib+pmix_install_lib+':'+nvshmem_install_path+'/lib'+':$LD_LIBRARY_PATH', '-x', 'NVSHMEMTEST_USE_SHMEM_LAUNCHER=1' , '--host', hosts]
         first_x = cmd_line_prefix.index("-x")
         for item in extra_parameters[::-1]:
           cmd_line_prefix.insert(first_x, item)
@@ -385,14 +400,14 @@ def enumerate_env_lines(env_combs, cmd_line_suffix, nvshmem_install_path, test_i
         run_cmd_vary_pes(cmd_line_prefix, cmd_line_suffix, test_install_path, full_test_path, npe_range, nhosts, timeout, launcher_choice, ftesto, fteste)
   else:
     if launcher_choice == NVSHMEM_LAUNCHER:
-      cmd_line_prefix = [nvshmem_install_path+'/bin/nvshmrun.hydra', '--bind-to', 'none', '--launcher', 'ssh', '--hosts', hosts, '-n']
+      cmd_line_prefix = [nvshmem_install_path+'/bin/nvshmrun.hydra', '--bind-to', QA_BIND_TO, '--launcher', 'ssh', '--hosts', hosts, '-n']
       extra_parameters = extra_parameters_string.split()
       first_e = cmd_line_prefix.index("--launcher")
       for item in extra_parameters[::-1]:
         cmd_line_prefix.insert(first_e, "-genv=%s" % item)
       run_cmd_vary_pes(cmd_line_prefix, cmd_line_suffix, test_install_path, full_test_path, npe_range, nhosts, timeout, launcher_choice, ftesto, fteste)
     if launcher_choice == MPI_LAUNCHER:
-      cmd_line_prefix = [mpi_install_path+'/bin/mpirun', '--mca', 'btl', '^uct', '--allow-run-as-root', '-oversubscribe', '--bind-to', 'none', '-x', 'LD_LIBRARY_PATH='+cuda_install_path+'/lib64:'+gdrcopy_install_path+nccl_install_lib+pmix_install_lib+':'+nvshmem_install_path+'/lib'+':$LD_LIBRARY_PATH', '-x', bootstrap_str, '--host', hosts, '-n']
+      cmd_line_prefix = [mpi_install_path+'/bin/mpirun', '--mca', 'btl', '^uct', '--allow-run-as-root', '-oversubscribe', '--bind-to', QA_BIND_TO, '-x', 'LD_LIBRARY_PATH='+cuda_install_path+'/lib64:'+gdrcopy_install_path+nccl_install_lib+pmix_install_lib+':'+nvshmem_install_path+'/lib'+':$LD_LIBRARY_PATH', '-x', bootstrap_str, '--host', hosts, '-n']
       extra_parameters = extra_parameters_string.split()
       first_x = cmd_line_prefix.index("-x")
       for item in extra_parameters[::-1]:
@@ -400,7 +415,7 @@ def enumerate_env_lines(env_combs, cmd_line_suffix, nvshmem_install_path, test_i
         cmd_line_prefix.insert(first_x, "-x")
       run_cmd_vary_pes(cmd_line_prefix, cmd_line_suffix, test_install_path, full_test_path, npe_range, nhosts, timeout, launcher_choice, ftesto, fteste)
     if launcher_choice == SHMEM_LAUNCHER:
-      cmd_line_prefix = [mpi_install_path+'/bin/oshrun', '--mca', 'btl', '^uct', '--allow-run-as-root', '-oversubscribe', '--bind-to', 'none', '-x', 'LD_LIBRARY_PATH='+cuda_install_path+'/lib64:'+gdrcopy_install_path+nccl_install_lib+pmix_install_lib+':'+nvshmem_install_path+'/lib'+':$LD_LIBRARY_PATH', '-x', 'NVSHMEMTEST_USE_SHMEM_LAUNCHER=1', '--host', hosts, '-n']
+      cmd_line_prefix = [mpi_install_path+'/bin/oshrun', '--mca', 'btl', '^uct', '--allow-run-as-root', '-oversubscribe', '--bind-to', QA_BIND_TO, '-x', 'LD_LIBRARY_PATH='+cuda_install_path+'/lib64:'+gdrcopy_install_path+nccl_install_lib+pmix_install_lib+':'+nvshmem_install_path+'/lib'+':$LD_LIBRARY_PATH', '-x', 'NVSHMEMTEST_USE_SHMEM_LAUNCHER=1', '--host', hosts, '-n']
       extra_parameters = extra_parameters_string.split()
       first_x = cmd_line_prefix.index("-x")
       for item in extra_parameters[::-1]:
@@ -448,4 +463,3 @@ def walk_dir(nvshmem_install_path, mpi_install_path, test_install_path, launcher
     else:
       print("Please select launcher use 0/1/2/3. [1: Three launchers, 0: mpirun, 2: openshmem, 3: nvshmem]")
   return
-

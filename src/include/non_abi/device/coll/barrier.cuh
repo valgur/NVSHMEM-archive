@@ -21,7 +21,8 @@
 #ifdef __CUDA_ARCH__
 
 template <int k, int logk, threadgroup_t SCOPE>
-__device__ static inline void sync_dissem_pow2_threadgroup(nvshmem_team_t team) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void sync_dissem_pow2_threadgroup(
+    nvshmem_team_t team) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int start = teami->start;
     int stride = teami->stride;
@@ -76,9 +77,8 @@ __device__ static inline void sync_dissem_pow2_threadgroup(nvshmem_team_t team) 
 }
 
 template <threadgroup_t SCOPE>
-__device__ static inline void sync_dissem_threadgroup_2(int start, int stride, int size,
-                                                        volatile long *pSync,
-                                                        volatile long *sync_counter) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void sync_dissem_threadgroup_2(
+    int start, int stride, int size, volatile long *pSync, volatile long *sync_counter) {
     int num_phases = 0;
     int k =
         min(nvshmemi_device_state_d.gpu_coll_env_params_var.barrier_tg_dissem_kval, size); /* radix
@@ -129,7 +129,8 @@ __device__ static inline void sync_dissem_threadgroup_2(int start, int stride, i
 }
 
 template <threadgroup_t SCOPE>
-__device__ static inline void sync_dissem_threadgroup(nvshmem_team_t team) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void sync_dissem_threadgroup(
+    nvshmem_team_t team) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int start = teami->start;
     int stride = teami->stride;
@@ -141,11 +142,15 @@ __device__ static inline void sync_dissem_threadgroup(nvshmem_team_t team) {
 }
 
 template <threadgroup_t SCOPE>
-__device__ static inline void nvshmemi_sync_algo_threadgroup(nvshmem_team_t team) {
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_sync_algo_threadgroup(
+    nvshmem_team_t team) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int size = teami->size;
     int k = min(nvshmemi_device_state_d.gpu_coll_env_params_var.barrier_tg_dissem_kval, size);
     k = max(k, 2);
+    /* only p2p connected team for BLOCK scoped collectives should use larger radix of dissem
+     * algorithm */
+    if (teami->are_gpus_p2p_connected && SCOPE == NVSHMEMI_THREADGROUP_BLOCK) k = teami->size;
     switch (k) {
         case 2:
             sync_dissem_pow2_threadgroup<2, 1, SCOPE>(team);
@@ -169,13 +174,13 @@ __device__ static inline void nvshmemi_sync_algo_threadgroup(nvshmem_team_t team
 }
 
 template <threadgroup_t SCOPE>
-__device__ inline void nvshmemi_sync_threadgroup(nvshmem_team_t team) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_sync_threadgroup(nvshmem_team_t team) {
     nvshmemi_threadgroup_sync<SCOPE>();
     nvshmemi_sync_algo_threadgroup<SCOPE>(team);
 }
 
 template <threadgroup_t SCOPE>
-__device__ inline void nvshmemi_barrier_threadgroup(nvshmem_team_t team) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_barrier_threadgroup(nvshmem_team_t team) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     nvshmemi_threadgroup_sync<SCOPE>();
     if ((nvshmemi_device_state_d.job_connectivity > NVSHMEMI_JOB_GPU_LDST)) {

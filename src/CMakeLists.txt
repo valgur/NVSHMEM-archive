@@ -9,6 +9,12 @@ set(BOOTSTRAP_VERSION_MAJOR 3)
 set(BOOTSTRAP_VERSION_MINOR 0)
 set(BOOTSTRAP_VERSION_PATCH 0)
 
+if(NOT CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
+    list(APPEND my_cmake_cache_args
+        -DCMAKE_CUDA_ARCHITECTURES:STRING=${CMAKE_CUDA_ARCHITECTURES}
+    )
+endif()
+
 ExternalProject_Add(nvshmem_device_project
                     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/device
                     BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/device
@@ -18,7 +24,8 @@ ExternalProject_Add(nvshmem_device_project
                                 -DNVSHMEM_DEVICELIB_CUDA_HOME=${NVSHMEM_DEVICELIB_CUDA_HOME}
                                 -DNVSHMEM_ENABLE_ALL_DEVICE_INLINING=${NVSHMEM_ENABLE_ALL_DEVICE_INLINING}
                                 -DPROJECT_VERSION=${PROJECT_VERSION}
-                    CMAKE_CACHE_ARGS -DCMAKE_CUDA_ARCHITECTURES:STRING=${CMAKE_CUDA_ARCHITECTURES}
+				$ENV{CMAKE_CCACHE_FLAGS}
+                    CMAKE_CACHE_ARGS ${my_cmake_cache_args}
                     STEP_TARGETS build install
                     BUILD_ALWAYS TRUE
                     BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.a
@@ -26,6 +33,47 @@ ExternalProject_Add(nvshmem_device_project
 
 add_library(nvshmem_device STATIC IMPORTED)
 set_property(TARGET nvshmem_device PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.a)
+
+## Start bitcode library configurations
+
+if(NVSHMEM_BUILD_BITCODE_LIBRARY)
+  if(NOT NVSHMEM_ENABLE_ALL_DEVICE_INLINING)
+    configure_file(include/non_abi/device/pt-to-pt/transfer_device.cuh.in llvm_lib/non_abi/device/pt-to-pt/transfer_device.cuh COPYONLY)
+  endif()
+  if(CUDAToolkit_VERSION_MAJOR LESS 12)
+    set(BITCODE_LIB_ARCH "sm_70")
+  else()
+    set(BITCODE_LIB_ARCH "sm_90")
+  endif()
+
+  # Note - today we do optimization to avoid having a too large bitcode file. There are, as of clang 18, some existing
+  # limitations around compiling device libraries which make optimizing this library fine. Once these issues are fixed
+  # we will have to remove optimizations to enable more flexible builds.
+  add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.bc
+                    COMMAND clang -c -emit-llvm -O1 -std=c++11 -x cuda --cuda-path=${CUDA_HOME} --cuda-device-only
+                    --cuda-gpu-arch=${BITCODE_LIB_ARCH} -I ${CMAKE_CURRENT_SOURCE_DIR}/include
+                    -I ${CMAKE_CURRENT_BINARY_DIR}/llvm_lib
+                    -D__clang_llvm_bitcode_lib__ ${CMAKE_CURRENT_SOURCE_DIR}/device/init/init_device.cu -o libnvshmem_device.bc.unoptimized
+                    COMMAND opt --passes='internalize,inline,globaldce'
+                    -internalize-public-api-list='nvshmem_*,nvshmemx_*,nvshmemi_device_lib_version_d,nvshmemi_device_state_d'
+                    libnvshmem_device.bc.unoptimized -o libnvshmem_device.bc
+                    COMMAND llvm-dis libnvshmem_device.bc
+                    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/bitcode_lib_cleanup.sh ${CMAKE_CURRENT_BINARY_DIR}/llvm_lib/libnvshmem_device.ll ${CMAKE_CURRENT_BINARY_DIR}/llvm_lib/libnvshmem_device.ll.new
+                    COMMAND llvm-as libnvshmem_device.ll.new -o ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.bc
+                    COMMAND rm libnvshmem_device.bc.unoptimized libnvshmem_device.ll libnvshmem_device.ll.new libnvshmem_device.bc
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/llvm_lib
+                    DEPENDS device/init/init_device.cu)
+
+  add_custom_target(libnvshmem_device_bitcode ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.bc)
+  install(
+          FILES ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.bc
+          DESTINATION lib/
+          PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                      GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+  )
+endif()
+
+## End bitcode library configurations
 
 if(NVSHMEM_BUILD_EXAMPLES)
 set(NVSHMEM_EXAMPLES_RELEASE_PREFIX "bin/examples")
@@ -155,10 +203,6 @@ set_target_properties(${ACTIVE_BOOTSTRAPS}
 add_library(
   nvshmem STATIC
 )
-
-set(INTERLIB_VERSION_MAJOR 3)
-set(INTERLIB_VERSION_MINOR 0)
-set(INTERLIB_VERSION_PATCH 0)
 
 add_library(
   nvshmem_host SHARED
@@ -509,14 +553,14 @@ endif()
 
 ## Start inlining requirements
 if(NVSHMEM_ENABLE_ALL_DEVICE_INLINING)
-set(INCEXPORTS
-    ${INCEXPORTS}
+set(INC_EXPORTS
+    ${INC_EXPORTS}
     non_abi/device/pt-to-pt/transfer_device.cuh
 )
 configure_file(include/non_abi/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/include/non_abi/device/pt-to-pt/transfer_device.cuh COPYONLY)
 else()
-set(INCEXPORTS
-    ${INCEXPORTS}
+set(INC_EXPORTS
+    ${INC_EXPORTS}
     non_abi/device/pt-to-pt/nvshmemi_transfer_api.cuh
 )
 set(NVSHMEM_DEVICE_SOURCES
@@ -551,8 +595,8 @@ target_include_directories(nvshmem-info PRIVATE include include/host/env)
 configure_file(include/non_abi/nvshmem_version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/non_abi/nvshmem_version.h @ONLY)
 configure_file(include/non_abi/nvshmem_build_options.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/non_abi/nvshmem_build_options.h)
 
-set(INCEXPORTS
-    ${INCEXPORTS}
+set(INC_EXPORTS
+    ${INC_EXPORTS}
     bootstrap_device_host/nvshmem_uniqueid.h
     device_host/nvshmem_proxy_channel.h
     device_host/nvshmem_types.h
@@ -593,67 +637,101 @@ set(INCEXPORTS
     nvshmemx.h
 )
 
-foreach(INC ${INCEXPORTS})
+foreach(INC ${INC_EXPORTS})
   configure_file(include/${INC} ${CMAKE_CURRENT_BINARY_DIR}/include/${INC} COPYONLY)
-endforeach(INC ${INCEXPORTS})
+endforeach(INC ${INC_EXPORTS})
 # End header configuration and export
 
 # start share configuration
-set(SHAREEXPORTS
-    host/bootstrap/bootstrap_loader.cpp
-    modules/bootstrap/common/bootstrap_util.h
-    modules/bootstrap/mpi/bootstrap_mpi.c
-    modules/bootstrap/pmi/bootstrap_pmi.cpp
-    modules/bootstrap/pmix/bootstrap_pmix.c
-    modules/bootstrap/shmem/bootstrap_shmem.c
-    modules/bootstrap/uid/ncclSocket/ncclsocket_socket.cpp
-    modules/bootstrap/uid/bootstrap_uid_remap.h
-    modules/bootstrap/uid/ncclSocket/ncclsocket_nccl.h
-    modules/bootstrap/uid/ncclSocket/ncclsocket_utils.h
-    modules/bootstrap/uid/ncclSocket/ncclsocket_param.h
-    modules/bootstrap/uid/ncclSocket/ncclsocket_debug.h
-    modules/bootstrap/uid/ncclSocket/ncclsocket_checks.h
-    modules/bootstrap/uid/ncclSocket/ncclsocket_socket.hpp
-    modules/bootstrap/uid/bootstrap_uid.cpp
-    modules/bootstrap/uid/bootstrap_uid_types.hpp
-    host/bootstrap/bootstrap.cpp
+
+configure_file(${CMAKE_SOURCE_DIR}/nvshmem_bootstrap.sym
+               ${CMAKE_CURRENT_BINARY_DIR}/share/src/bootstrap-plugins/nvshmem_bootstrap.sym COPYONLY)
+
+set(BOOTSTRAP_EXPORTS
+    common/bootstrap_util.cpp
+    common/bootstrap_util.h
+    common/env_defs.h
+    mpi/bootstrap_mpi.c
+    pmi/bootstrap_pmi.cpp
+    pmix/bootstrap_pmix.c
+    shmem/bootstrap_shmem.c
+    uid/bootstrap_uid.cpp
+    uid/bootstrap_uid_remap.h
+    uid/ncclSocket/ncclsocket_checks.h
+    uid/ncclSocket/ncclsocket_debug.h
+    uid/ncclSocket/ncclsocket_nccl.h
+    uid/ncclSocket/ncclsocket_param.h
+    uid/ncclSocket/ncclsocket_socket.hpp
+    uid/ncclSocket/ncclsocket_socket.cpp
+    uid/ncclSocket/ncclsocket_utils.h
+    uid/bootstrap_uid_types.hpp
 )
 
-foreach(SHARE ${SHAREEXPORTS})
+foreach(SHARE ${BOOTSTRAP_EXPORTS})
   get_filename_component(SHAREFILE ${SHARE} NAME)
-  configure_file(${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/bootstrap-plugins/${SHARE} COPYONLY)
-endforeach(SHARE ${SHAREEXPORTS})
+  configure_file(modules/bootstrap/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/bootstrap-plugins/${SHARE} COPYONLY)
+endforeach(SHARE ${BOOTSTRAP_EXPORTS})
 
-set(SHAREINCEXPORTS
+set(BOOTSTRAP_INC_EXPORTS
+    bootstrap_device_host/nvshmem_uniqueid.h
+    bootstrap_host_transport/env_defs_internal.h
     internal/bootstrap_host/nvshmemi_bootstrap.h
     internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h
+    non_abi/nvshmem_version.h
+    non_abi/nvshmemx_error.h
 )
 
-foreach(SHARE ${SHAREINCEXPORTS})
-  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/bootstrap-plugins/${SHARE} COPYONLY)
-endforeach(SHARE ${SHAREINCEXPORTS})
+foreach(SHARE ${BOOTSTRAP_INC_EXPORTS})
+  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/bootstrap-plugins/include/${SHARE} COPYONLY)
+endforeach(SHARE ${BOOTSTRAP_INC_EXPORTS})
 
-set(TRANSPORTINCEXPORTS
+set(BOOTSTRAP_CMAKE_EXPORTS
+    CMakeLists.txt
+    common/CMakeLists.txt
+    mpi/CMakeLists.txt
+    pmi/CMakeLists.txt
+    pmix/CMakeLists.txt
+    shmem/CMakeLists.txt
+    uid/CMakeLists.txt
+)
+
+foreach(SHARE ${BOOTSTRAP_CMAKE_EXPORTS})
+  configure_file(modules/bootstrap/${SHARE}.in ${CMAKE_CURRENT_BINARY_DIR}/share/src/bootstrap-plugins/${SHARE} @ONLY)
+endforeach(SHARE ${BOOTSTRAP_CMAKE_EXPORTS})
+
+configure_file(${CMAKE_SOURCE_DIR}/nvshmem_transport.sym
+               ${CMAKE_CURRENT_BINARY_DIR}/share/src/transport-plugins/nvshmem_transport.sym COPYONLY)
+
+set(TRANSPORT_INC_EXPORTS
+    bootstrap_host_transport/env_defs_internal.h
+    device_host_transport/nvshmem_common_ibgda.h
+    device_host_transport/nvshmem_common_transport.h
+    device_host_transport/nvshmem_constants.h
+    internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h
     internal/host_transport/cudawrap.h
     internal/host_transport/nvshmemi_transport_defines.h
     internal/host_transport/transport.h
+    non_abi/nvshmem_version.h
+    non_abi/nvshmemx_error.h
+    non_abi/nvshmem_build_options.h
 )
 
-foreach(SHARE ${TRANSPORTINCEXPORTS})
-  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/transport-plugins/common/${SHARE} COPYONLY)
-endforeach(SHARE ${SHAREEXPORTS})
+foreach(SHARE ${TRANSPORT_INC_EXPORTS})
+  configure_file(include/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/transport-plugins/include/${SHARE} COPYONLY)
+endforeach(SHARE ${TRANSPORT_INC_EXPORTS})
 
-set(TRANSPORTEXPORTS
+set(TRANSPORT_EXPORTS
+    common/env_defs.h
     common/mlx5_ifc.h
     common/mlx5_prm.h
-    common/transport_common.h
-    common/transport_gdr_common.h
-    common/transport_ib_common.h
-    common/transport_mlx5_common.h
     common/transport_common.cpp
+    common/transport_common.h
     common/transport_gdr_common.cpp
+    common/transport_gdr_common.h
     common/transport_ib_common.cpp
+    common/transport_ib_common.h
     common/transport_mlx5_common.cpp
+    common/transport_mlx5_common.h
     ibdevx/ibdevx.cpp
     ibdevx/ibdevx.h
     ibgda/ibgda.cpp
@@ -664,10 +742,23 @@ set(TRANSPORTEXPORTS
     ucx/ucx.h
 )
 
-foreach(SHARE ${TRANSPORTEXPORTS})
+foreach(SHARE ${TRANSPORT_EXPORTS})
   configure_file(modules/transport/${SHARE} ${CMAKE_CURRENT_BINARY_DIR}/share/src/transport-plugins/${SHARE} COPYONLY)
-endforeach(SHARE ${SHAREEXPORTS})
+endforeach(SHARE ${TRANSPORT_EXPORTS})
 
+set(TRANSPORT_CMAKE_EXPORTS
+    CMakeLists.txt
+    common/CMakeLists.txt
+    libfabric/CMakeLists.txt
+    ibdevx/CMakeLists.txt
+    ibgda/CMakeLists.txt
+    ibrc/CMakeLists.txt
+    ucx/CMakeLists.txt
+)
+
+foreach(SHARE ${TRANSPORT_CMAKE_EXPORTS})
+  configure_file(modules/transport/${SHARE}.in ${CMAKE_CURRENT_BINARY_DIR}/share/src/transport-plugins/${SHARE} @ONLY)
+endforeach(SHARE ${TRANSPORT_CMAKE_EXPORTS})
 # end share configuration
 
 # start custom builds for nvshmem packages
@@ -681,7 +772,7 @@ add_custom_target(git_commit ALL COMMAND test -f git_commit.txt || git rev-parse
                              ${CMAKE_CURRENT_SOURCE_DIR}/../version.txt
                   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-if(NVSHMEM_BUILD_PACKAGES)
+if(NVSHMEM_BUILD_PACKAGES AND NVSHMEM_BUILD_HYDRA_LAUNCHER)
   add_custom_target(hydra
                     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/install_hydra.sh ${CMAKE_CURRENT_SOURCE_DIR}/hydra_build ${CMAKE_CURRENT_BINARY_DIR}
                     COMMAND rm -rf ${CMAKE_CURRENT_SOURCE_DIR}/hydra_build
@@ -696,6 +787,56 @@ endif()
 add_dependencies(nvshmem_host nvshmem_device_project-build)
 
 # Start Installation definitions
+install(CODE "
+  # Patch NVSHMEM target files
+  file(GLOB_RECURSE targets_files \"${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/Export/*/NVSHMEM*Targets*.cmake\")
+  foreach(targets_file IN LISTS targets_files)
+    message(STATUS \"Processing targets_file=\${targets_file}\")
+    file(READ \"\${targets_file}\" _file_contents)
+    string(REPLACE \"\\\${_IMPORT_PREFIX}/bin\" \"\\\${NVSHMEM_BIN_DIR}\" _file_contents \"\${_file_contents}\")
+        string(REPLACE \"\\\${_IMPORT_PREFIX}/include\" \"\\\${NVSHMEM_INCLUDE_DIR}\" _file_contents \"\${_file_contents}\")
+    string(REPLACE \"\\\${_IMPORT_PREFIX}/lib\" \"\\\${NVSHMEM_LIB_DIR}\" _file_contents \"\${_file_contents}\")
+    file(WRITE \"\${targets_file}\" \"\${_file_contents}\")
+  endforeach()
+")
+
+
+# This makes sure the device config file is included as well
+install(CODE "
+  # Patch NVSHMEM target files
+  file(GLOB_RECURSE targets_files \"${CMAKE_BINARY_DIR}/lib/cmake/NVSHMEM*Targets*.cmake\")
+  foreach(targets_file IN LISTS targets_files)
+    message(STATUS \"Processing targets_file=\${targets_file}\")
+    file(READ \"\${targets_file}\" _file_contents)
+    string(REPLACE \"\\\${_IMPORT_PREFIX}/bin\" \"\\\${NVSHMEM_BIN_DIR}\" _file_contents \"\${_file_contents}\")
+        string(REPLACE \"\\\${_IMPORT_PREFIX}/include\" \"\\\${NVSHMEM_INCLUDE_DIR}\" _file_contents \"\${_file_contents}\")
+    string(REPLACE \"\\\${_IMPORT_PREFIX}/lib\" \"\\\${NVSHMEM_LIB_DIR}\" _file_contents \"\${_file_contents}\")
+    file(WRITE \"\${targets_file}\" \"\${_file_contents}\")
+  endforeach()
+")
+
+install(
+  EXPORT NVSHMEMTargets
+  NAMESPACE nvshmem::
+  DESTINATION lib/cmake/nvshmem/
+  COMPONENT Export
+)
+
+# ${CMAKE_CURRENT_BINARY_DIR}/NVSHMEMConfig.cmake
+install(FILES ${CMAKE_BINARY_DIR}/NVSHMEMVersion.cmake
+        DESTINATION lib/cmake/nvshmem
+)
+
+install(FILES ${CMAKE_BINARY_DIR}/NVSHMEMConfig.cmake
+        DESTINATION lib/cmake/nvshmem
+	)
+
+export(
+  EXPORT NVSHMEMTargets
+  NAMESPACE nvshmem::
+  FILE "NVSHMEMTargets.cmake"
+)
+
 install(
 	TARGETS nvshmem nvshmem_host nvshmem-info ${ACTIVE_BOOTSTRAPS} ${ACTIVE_TRANSPORTS}
   EXPORT NVSHMEMTargets
@@ -779,6 +920,7 @@ install(
   FILES ${CMAKE_CURRENT_SOURCE_DIR}/../git_commit.txt
   DESTINATION ./
 )
+
 include(CMakePackageConfigHelpers)
 
 if(NVSHMEM_BUILD_TGZ_PACKAGE)
@@ -826,20 +968,18 @@ set(CPACK_SOURCE_IGNORE_FILES
 /include/non_abi/nvshmem_version.h$;\
 /perftest/perftest_install/;\
 /test/test_install/;
-/scripts/cronjob_peak.sh;\
-/scripts/cronjob_prom.sh;\
-/scripts/cronjob_psg.sh;\
-/scripts/cronjob_pwr0x.sh;\
+/scripts/create_imex.sh;\
 /scripts/dependency_installer.sh;\
-/scripts/locate_package_dir.sh;\
-/scripts/run_dev_coll.sh;\
-/scripts/run_perf.sh;\
-/scripts/run_tests.sh;\
+/scripts/include_checker.sh;\
+/scripts/iwyu_c_cpp_check.sh;\
+/scripts/iwyu_header_cuda_check.sh;\
+/scripts/iwyu_output_parser.py;\
+/scripts/iwyu_test_functionality.sh;\
 /scripts/testrunner.pl;\
 /src/build/;")
 
 if(NOT NVSHMEM_INSTALL_FUNCTIONAL_TESTS)
-  set(CPACK_SOURCE_IGNORE_FILES ${CPACK_SOURCE_IGNORE_FILES}"/test/;")
+  set(CPACK_SOURCE_IGNORE_FILES ${CPACK_SOURCE_IGNORE_FILES}"/test/;/docker/;")
 endif()
 
 

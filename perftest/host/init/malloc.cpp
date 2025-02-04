@@ -24,6 +24,8 @@ int main(int argc, char *argv[]) {
     int mype;
     struct timeval t_start, t_stop;
     char size_string[100];
+
+    read_args(argc, argv);
     size_t min_malloc_size = 1 << 30;
     size_t max_alloc_size;
     uint64_t *h_size_arr;
@@ -74,8 +76,8 @@ int main(int argc, char *argv[]) {
         malloc_size *= 2;
     }
     if (!mype) {
-        print_table_v1("malloc", "None", "size (Bytes)", "time", "us", '-', h_size_arr, h_time,
-                       loop_size);
+        print_table_basic("malloc", "None", "size (Bytes)", "time", "us", '-', h_size_arr, h_time,
+                          loop_size);
     }
 
     finalize_wrapper();

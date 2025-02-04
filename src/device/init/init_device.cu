@@ -8,6 +8,11 @@
 #include <algorithm>
 #include <cuda_runtime.h>
 
+#ifdef __clang_llvm_bitcode_lib__
+#define assert(...)
+#include "nvshmem.h"
+#endif
+
 #include "non_abi/nvshmem_build_options.h"
 #include "non_abi/nvshmem_version.h"
 #include "non_abi/nvshmemx_error.h"
@@ -18,27 +23,37 @@
 
 #ifdef NVSHMEM_IBGDA_SUPPORT
 #include "device_host_transport/nvshmem_common_ibgda.h"
-
-__constant__ nvshmemi_ibgda_device_state_t nvshmemi_ibgda_device_state_d;
+__constant__ __attribute__((used)) nvshmemi_ibgda_device_state_t nvshmemi_ibgda_device_state_d;
 #endif
 
 nvshmemi_device_state_t nvshmemi_device_only_state;
+
+#ifdef __clang__
+__constant__ __attribute__((address_space(4), used))
+nvshmemi_device_host_state_t nvshmemi_device_state_d = {};
+const nvshmemi_version_t nvshmemi_device_lib_version = {
+    NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
+__constant__ __attribute__((address_space(4), used))
+nvshmemi_version_t nvshmemi_device_lib_version_d = {
+    NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
+#else
 __constant__ nvshmemi_device_host_state_t nvshmemi_device_state_d;
 const nvshmemi_version_t nvshmemi_device_lib_version = {
-    NVSHMEM_INTERLIB_MAJOR_VERSION, NVSHMEM_INTERLIB_MINOR_VERSION, NVSHMEM_INTERLIB_PATCH_VERSION};
+    NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
 __constant__ nvshmemi_version_t nvshmemi_device_lib_version_d = {
-    NVSHMEM_INTERLIB_MAJOR_VERSION, NVSHMEM_INTERLIB_MINOR_VERSION, NVSHMEM_INTERLIB_PATCH_VERSION};
+    NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
+#endif
 
 #ifdef __CUDA_ARCH__
 #ifdef __cplusplus
 extern "C" {
 #endif
-__device__ void nvshmem_global_exit(int status);
+NVSHMEMI_DEVICE_PREFIX void nvshmem_global_exit(int status);
 #ifdef __cplusplus
 }
 #endif
 
-__device__ void nvshmem_global_exit(int status) {
+NVSHMEMI_DEVICE_PREFIX void nvshmem_global_exit(int status) {
     if (nvshmemi_device_state_d.proxy > NVSHMEMI_PROXY_NONE) {
         nvshmemi_proxy_global_exit(status);
     } else {

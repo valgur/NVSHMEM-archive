@@ -7,7 +7,6 @@
 #include "cpu_coll.h"
 #include <assert.h>                                      // for assert
 #include <algorithm>                                     // for max
-#include <iosfwd>                                        // for std
 #include <stdlib.h>                                      // for std
 #include "bootstrap_host_transport/env_defs_internal.h"  // for nvshmemi_opt...
 #include "device_host/nvshmem_types.h"                   // for gpu_coll_env...
@@ -17,8 +16,6 @@
 #include "internal/host/util.h"              // for nvshmemi_opt...s
 #include "non_abi/nvshmem_build_options.h"   // for NVSHMEM_USE_...
 #include "non_abi/nvshmemx_error.h"          // for NVSHMEMI_WAR...
-
-using namespace std;
 
 #ifdef NVSHMEM_USE_NCCL
 #include <dlfcn.h>  // for dlsym, dlopen, RTLD...
@@ -54,10 +51,12 @@ static int nvshmemi_coll_common_cpu_read_env() {
         nvshmemi_options.REDUCE_SCRATCH_SIZE;
     nvshmemi_device_state.gpu_coll_env_params_var.reduce_recexch_kval =
         nvshmemi_options.REDUCE_RECEXCH_KVAL;
+    nvshmemi_device_state.gpu_coll_env_params_var.reduce_nvls_threshold =
+        nvshmemi_options.REDUCE_NVLS_THRESHOLD;
 
     if (nvshmemi_device_state.gpu_coll_env_params_var.reduce_recexch_kval > nvshmemi_state->npes)
         nvshmemi_device_state.gpu_coll_env_params_var.reduce_recexch_kval =
-            max(MIN_REDUCE_RECEXCH_VALUE, nvshmemi_state->npes);
+            std::max(MIN_REDUCE_RECEXCH_VALUE, nvshmemi_state->npes);
 
     nvshmemi_device_state.gpu_coll_env_params_var.bcast_tree_kval =
         nvshmemi_options.BCAST_TREE_KVAL;
@@ -65,7 +64,19 @@ static int nvshmemi_coll_common_cpu_read_env() {
 
     nvshmemi_device_state.gpu_coll_env_params_var.fcollect_algo = nvshmemi_options.FCOLLECT_ALGO;
     nvshmemi_device_state.gpu_coll_env_params_var.bcast_algo = nvshmemi_options.BCAST_ALGO;
+    /* Backwards compatibility support for maxloc_reduce algorithm selection
+     * In 3.0 reduce_maxloc_algo didn't exist and reduce_algo was used for branching in
+     * reduce_maxloc. When reduce_maxloc_algo was added, it was placed at the end of the structure
+     * rather than renaming the old reduce_algo variable to reduce_maxloc_algo and adding a new
+     * reduce_algo variable. Now, use the two interchangeably since the old device library will not
+     * use the new variables values.
+     * TODO: in version 4.0 remove the conditional and call out the ABI change. i.e. reduce_algo is
+     * replaced with reduce_maxloc algo.
+     */
     nvshmemi_device_state.gpu_coll_env_params_var.reduce_algo = nvshmemi_options.REDUCE_ALGO;
+    if (nvshmemi_device_state.gpu_coll_env_params_var.reduce_algo == 0) {
+        nvshmemi_device_state.gpu_coll_env_params_var.reduce_algo = 1;
+    }
     nvshmemi_device_state.gpu_coll_env_params_var.reduce_maxloc_algo =
         nvshmemi_options.REDMAXLOC_ALGO;
     nvshmemi_device_state.gpu_coll_env_params_var.reducescatter_algo =
@@ -125,7 +136,7 @@ int nvshmemi_coll_common_cpu_init() {
 
     nccl_handle = dlopen("libnccl.so.2", RTLD_LAZY);
     if (!nccl_handle) {
-        NVSHMEMI_WARN_PRINT("NCCL library not found...\n");
+        INFO(NVSHMEM_INIT, "NCCL library not found...\n");
         nvshmemi_use_nccl = 0;
         goto fn_out;
     }

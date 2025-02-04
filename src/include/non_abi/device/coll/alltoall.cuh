@@ -18,8 +18,8 @@
 #define NVSHMEMI_ALLTOALL_MEDIUM_MSGSIZE 16384
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_alltoall_allpush_threadgroup(nvshmem_team_t team, T *dest,
-                                                             const T *source, size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_alltoall_allpush_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int PE_start = teami->start;
     int stride = teami->stride;
@@ -120,8 +120,8 @@ __device__ inline void nvshmemi_alltoall_allpush_threadgroup(nvshmem_team_t team
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_alltoall_p2p_allpush_threadgroup(nvshmem_team_t team, T *dest,
-                                                                 const T *source, size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_alltoall_p2p_allpush_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int PE_start = teami->start;
     int PE_stride = teami->stride;
@@ -147,8 +147,10 @@ __device__ inline void nvshmemi_alltoall_p2p_allpush_threadgroup(nvshmem_team_t 
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_alltoall_threadgroup(nvshmem_team_t team, T *dest, const T *source,
-                                                     size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_alltoall_threadgroup(nvshmem_team_t team,
+                                                                            T *dest,
+                                                                            const T *source,
+                                                                            size_t nelems) {
     if (nvshmemi_device_state_d.job_connectivity <= NVSHMEMI_JOB_GPU_LDST_REMOTE_ATOMICS)
         nvshmemi_alltoall_p2p_allpush_threadgroup<T, SCOPE>(team, dest, source, nelems);
     else

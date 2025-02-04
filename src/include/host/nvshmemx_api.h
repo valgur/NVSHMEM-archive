@@ -54,9 +54,8 @@ void nvshmemx_hostlib_finalize();
 
 static inline int nvshmemx_init_attr(unsigned int flags, nvshmemx_init_attr_t *attributes) {
     int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
-    nvshmemi_version_t app_nvshmem_version = {NVSHMEM_INTERLIB_MAJOR_VERSION,
-                                              NVSHMEM_INTERLIB_MINOR_VERSION,
-                                              NVSHMEM_INTERLIB_PATCH_VERSION};
+    nvshmemi_version_t app_nvshmem_version = {
+        NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
     if (attributes != NULL) {
         nvshmemx_init_init_attr_ver_only((*attributes));
     }

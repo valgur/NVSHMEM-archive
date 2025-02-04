@@ -1,4 +1,49 @@
 ===============================================================================
+                               Changes in 3.2.0
+===============================================================================
+# Enable experimental platform support for Blackwell B200-based systems.
+# Added one-shot and two-shot NVLINK SHARP (NVLS) allreduce algorithms for
+half-precision (``float16``, ``bfloat16``) and full-precision (``float32``) datatypes on
+NVLINK4 and NVLINK5 enabled platforms.
+# Added multi-SM based acceleration of TP collectives (`reduce`, `fcollect`,
+`reducescatter`) to improve NVLINK BW utilization on NVLINK4-enabled platform to
+achieve 8x/16x speedup for medium to large-message size (>=1MB).
+# NVSHMEM now also ships LLVM IR bitcode device library to support MLIR-compliant compiler
+toolchain integration on new and upcoming Python DSLs (Triton, Mosaic, Numba, and so on).
+This feature enhances perftest to support cubin-based ``cudaCooperativeLaunch`` and
+kernel function-based ``nvshmemx_collective_launch`` execution to improve robustness
+of the new bitcode device library.
+# Enhanced NVSHMEM host/device side collective and pt-to-pt to use new command-line
+interface to support the runtime tunability of message size, datatype, reduce op, iterations, and so on.
+# Improved heuristics for the automatic selection of on-stream NVLS
+collectives for allgather, reducescatter, and allreduce operations that span
+NVLINK-connected, GPU-based systems.
+# Eliminates dynamic link-time dependency on MPI and SHMEM on perftest and examples
+and replaces them with the dynamic load-time capability in the perftest and examples.
+# Fixed a bug that was related to incorrect bus bandwidth reporting in
+``shmem_p_bw``, ``shmem_g_bw``, ``shmem_atomic_bw``, ``shmem_put_bw``, and ``shmem_get_bw`` perftests.
+# Fixed a bug that was related to rounding error in NVLS reducescatter min and
+max operation due to incorrect usage of vectorized ``float16`` instead of ``uint32`` datatypes.
+# Fixed a bug that was related to dynamic loading of an unversioned bootstrap library.
+# Fixed a bug that was related to linking CMake projects to system installer packages.
+# Fixed a bug that was related to building heterogenous version of device library.
+# Fixed a bug that was related to establishing QP connection in IBGDA transport
+when using Dynamic Connection (DC) mode.
+# Fixed a bug that was related to building perftests for earlier CUDA versions
+(for example, 11.8) that do not support half-precision datatypes (for example, ``__nv_bfloat16``).
+# Fixed a bug that was related to ABI compatibility breakage for allreduce maxloc op.
+# Fixed a bug that was related to non-deterministic deadlock/race condition on the GPU when mixing
+``nvshmemx_team_split_strided`` with ``nvshmemx_barrier_all_on_stream`` operation back-to-back.
+# Fixed a bug that was related to out-of-memory (OOM) during dynamic device memory
+based symmetric heap reservation on platforms with > 8 NVLINK connected GPUs.
+# Fixed a documentation bug that was related to incorrect usage of
+``MPI_Bcast`` and unversioned ``nvshmemx_init_attr_t`` structure when initialization NVSHMEM using unique ID.
+# Fixed a bug that was related to host memory corruption/free when creating
+multiple teams using ``nvshmem_team_split_strided``.
+
+
+
+===============================================================================
 				Changes in 3.1.0
 ===============================================================================
 # Added support for NVLINK SHARP (NVLS) based collective algorithms on x86 + Hopper and

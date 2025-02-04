@@ -6,17 +6,18 @@
 
 #include "transport_ib_common.h"
 #include <assert.h>                            // for assert
-#include <cuda.h>                              // for CUdeviceptr, CU_MEM_RANGE_HANDLE_TY...
-#include <cuda_runtime.h>                      // for cudaGetLastError, cudaPointerGetAtt...
-#include <driver_types.h>                      // for cudaPointerAttributes, cudaMemoryTy...
+#include <cuda.h>                              // for CUdeviceptr, CU_MEM_RA...
+#include <cuda_runtime.h>                      // for cudaGetLastError, cuda...
+#include <dlfcn.h>                             // for dlclose, dlopen, RTLD_...
+#include <driver_types.h>                      // for cudaPointerAttributes
 #include <errno.h>                             // for errno
-#include <infiniband/verbs.h>                  // for IBV_ACCESS_LOCAL_WRITE, IBV_ACCESS_...
+#include <infiniband/verbs.h>                  // for IBV_ACCESS_LOCAL_WRITE
 #include <stdint.h>                            // for uintptr_t, uint64_t
 #include <string.h>                            // for strerror
-#include <unistd.h>                            // for access, close, sysconf, F_OK, _SC_P...
-#include "internal/host_transport/cudawrap.h"  // for nvshmemi_cuda_fn_table, CUCHECKGOTO
-#include "non_abi/nvshmemx_error.h"            // for NVSHMEMX_ERROR_INTERNAL, NVSHMEMX_S...
-#include "transport_common.h"                  // for nvshmemt_ibv_function_table, INFO
+#include <unistd.h>                            // for access, close, sysconf
+#include "internal/host_transport/cudawrap.h"  // for nvshmemi_cuda_fn_table
+#include "non_abi/nvshmemx_error.h"            // for NVSHMEMX_ERROR_INTERNAL
+#include "transport_common.h"                  // for LOAD_SYM, INFO, MAXPAT...
 
 int nvshmemt_ib_common_nv_peer_mem_available() {
     if (access("/sys/kernel/mm/memory_peers/nv_mem/version", F_OK) == 0) {
@@ -122,4 +123,68 @@ int nvshmemt_ib_common_release_mem_handle(struct nvshmemt_ibv_function_table *ft
 
 out:
     return status;
+}
+
+int nvshmemt_ib_iface_get_mlx_path(const char *ib_name, char **path) {
+    int status;
+
+    char device_path[MAXPATHSIZE];
+    status = snprintf(device_path, MAXPATHSIZE, "/sys/class/infiniband/%s/device", ib_name);
+    if (status < 0 || status >= MAXPATHSIZE) {
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                           "Unable to fill in device name.\n");
+    } else {
+        status = NVSHMEMX_SUCCESS;
+    }
+
+    *path = realpath(device_path, NULL);
+    NVSHMEMI_NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
+
+out:
+    return status;
+}
+
+int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable,
+                             int log_level) {
+    *ibv_handle = dlopen("libibverbs.so.1", RTLD_LAZY);
+    if (*ibv_handle == NULL) {
+        INFO(log_level, "libibverbs not found on the system.");
+        return -1;
+    }
+
+    LOAD_SYM(*ibv_handle, "ibv_fork_init", ftable->fork_init);
+    LOAD_SYM(*ibv_handle, "ibv_create_ah", ftable->create_ah);
+    LOAD_SYM(*ibv_handle, "ibv_get_device_list", ftable->get_device_list);
+    LOAD_SYM(*ibv_handle, "ibv_get_device_name", ftable->get_device_name);
+    LOAD_SYM(*ibv_handle, "ibv_open_device", ftable->open_device);
+    LOAD_SYM(*ibv_handle, "ibv_close_device", ftable->close_device);
+    LOAD_SYM(*ibv_handle, "ibv_query_port", ftable->query_port);
+    LOAD_SYM(*ibv_handle, "ibv_query_device", ftable->query_device);
+    LOAD_SYM(*ibv_handle, "ibv_alloc_pd", ftable->alloc_pd);
+    LOAD_SYM(*ibv_handle, "ibv_reg_mr", ftable->reg_mr);
+    LOAD_SYM(*ibv_handle, "ibv_reg_dmabuf_mr", ftable->reg_dmabuf_mr);
+    LOAD_SYM(*ibv_handle, "ibv_dereg_mr", ftable->dereg_mr);
+    LOAD_SYM(*ibv_handle, "ibv_create_cq", ftable->create_cq);
+    LOAD_SYM(*ibv_handle, "ibv_create_qp", ftable->create_qp);
+    LOAD_SYM(*ibv_handle, "ibv_create_srq", ftable->create_srq);
+    LOAD_SYM(*ibv_handle, "ibv_modify_qp", ftable->modify_qp);
+    LOAD_SYM(*ibv_handle, "ibv_query_gid", ftable->query_gid);
+    LOAD_SYM(*ibv_handle, "ibv_dealloc_pd", ftable->dealloc_pd);
+    LOAD_SYM(*ibv_handle, "ibv_destroy_qp", ftable->destroy_qp);
+    LOAD_SYM(*ibv_handle, "ibv_destroy_cq", ftable->destroy_cq);
+    LOAD_SYM(*ibv_handle, "ibv_destroy_srq", ftable->destroy_srq);
+    LOAD_SYM(*ibv_handle, "ibv_destroy_ah", ftable->destroy_ah);
+
+    return 0;
+}
+
+void nvshmemt_ibv_ftable_fini(void **ibv_handle) {
+    int status;
+
+    if (ibv_handle) {
+        status = dlclose(*ibv_handle);
+        if (status) {
+            NVSHMEMI_ERROR_PRINT("Unable to close libibverbs handle.");
+        }
+    }
 }

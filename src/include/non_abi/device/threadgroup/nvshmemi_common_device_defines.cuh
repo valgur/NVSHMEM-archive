@@ -10,6 +10,8 @@
 
 #if defined(__CUDACC_RDC__)
 #define EXTERN_CONSTANT extern __constant__
+#elif defined(__clang__)
+#define EXTERN_CONSTANT extern __constant__ __attribute__((address_space(4)))
 #else
 #define EXTERN_CONSTANT static __constant__
 #endif
@@ -34,7 +36,7 @@ __device__ __forceinline__ int nvshmemi_thread_id_in_threadgroup() {
             return 0;
         case NVSHMEMI_THREADGROUP_WARP:
             int myIdx;
-            asm volatile("mov.u32  %0, %laneid;" : "=r"(myIdx));
+            asm volatile("mov.u32  %0,  %%laneid;" : "=r"(myIdx));
             return myIdx;
         case NVSHMEMI_THREADGROUP_BLOCK:
             return (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);

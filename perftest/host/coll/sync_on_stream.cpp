@@ -11,21 +11,20 @@
  */
 
 #include "coll_test.h"
-int coll_max_iters = MAX_ITERS;
 
-int main(int c, char *v[]) {
+int main(int argc, char *argv[]) {
     int status = 0;
     int mype;
     size_t size = 1;
-    int iters = MAX_ITERS;
-    int skip = MAX_SKIP;
     struct timeval t_start, t_stop;
     float ms = 0;
     double latency_value;
     cudaEvent_t start_event, stop_event;
     cudaStream_t stream;
 
-    init_wrapper(&c, &v);
+    read_args(argc, argv);
+
+    init_wrapper(&argc, &argv);
 
     mype = nvshmem_my_pe();
 #ifdef _NVSHMEM_DEBUG
@@ -37,8 +36,8 @@ int main(int c, char *v[]) {
 
     DEBUG_PRINT("SHMEM: [%d of %d] hello shmem world! \n", mype, npes);
 
-    for (iters = 0; iters < coll_max_iters + skip; iters++) {
-        if (iters == skip) CUDA_CHECK(cudaEventRecord(start_event, stream));
+    for (size_t iter = 0; iter < iters + warmup_iters; iter++) {
+        if (iter == warmup_iters) CUDA_CHECK(cudaEventRecord(start_event, stream));
 
         nvshmemx_team_sync_on_stream(NVSHMEM_TEAM_WORLD, stream);
     }
@@ -47,7 +46,7 @@ int main(int c, char *v[]) {
     CUDA_CHECK(cudaEventElapsedTime(&ms, start_event, stop_event));
 
     if (!mype) {
-        latency_value = (ms / coll_max_iters) * 1000;
+        latency_value = (ms / iters) * 1000;
         print_table_basic("sync_on_stream", "None", "size (Bytes)", "latency", "us", '-', &size,
                           &latency_value, 1);
     }

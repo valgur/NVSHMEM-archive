@@ -196,7 +196,7 @@ extern int bootstrap_debug_enable;
         }                       \
     } while (0)
 
-#ifdef __cplusplus
+#if defined __cplusplus
 extern "C" {
 #endif
 
@@ -205,7 +205,7 @@ char *bootstrap_util_wrap_string(const char *str, const size_t wraplen, const ch
 
 void bootstrap_util_print_header(int style, const char *h);
 
-#ifdef __cplusplus
+#if defined __cplusplus
 };
 #endif
 

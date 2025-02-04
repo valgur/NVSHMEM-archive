@@ -69,18 +69,16 @@ if(NOT SubBuild)
       set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCHITECTURES} CACHE STRING "CUDA ARCHITECTURES" FORCE)
     else()
       if(CUDAToolkit_VERSION_MAJOR LESS 11)
-        set(CMAKE_CUDA_ARCHITECTURES 70 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+        set(CMAKE_CUDA_ARCHITECTURES "70" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 AND CUDAToolkit_VERSION_MINOR LESS 8)
-        set(CMAKE_CUDA_ARCHITECTURES 70 80 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+        set(CMAKE_CUDA_ARCHITECTURES "70;80" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 OR (CUDAToolkit_VERSION_MAJOR EQUAL 12 AND CUDAToolkit_VERSION_MINOR LESS 8))
+        set(CMAKE_CUDA_ARCHITECTURES "70;80;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       else()
-        set(CMAKE_CUDA_ARCHITECTURES 70 80 90 CACHE STRING "CUDA ARCHITECTURES" FORCE)
+        set(CMAKE_CUDA_ARCHITECTURES "70;80;90;100" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       endif()
     endif()
   endif()
-  foreach(ARCH ${CMAKE_CUDA_ARCHITECTURES})
-  set(NVCC_GENCODE "${NVCC_GENCODE}-gencode=arch=compute_${ARCH},code=sm_${ARCH};-gencode=arch=compute_${ARCH},code=compute_${ARCH};")
-  endforeach()
-  mark_as_advanced(NVCC_GENCODE CMAKE_CUDA_ARCHITECTURES_UNDEFINED CUDA_ARCHITECTURES_UNDEFINED)
 
   include(CheckCompilerFlag)
   check_compiler_flag(CUDA -t4 NVCC_THREADS)
@@ -94,25 +92,27 @@ if(NOT SubBuild)
     find_package(MPI REQUIRED)
   endif()
 
-  if(NVSHMEM_SHMEM_SUPPORT)
-    find_library(
-      SHMEM_LIB
-      NAMES oshmem
-      HINTS ${SHMEM_HOME}
-      PATH_SUFFIXES lib lib64)
-    find_path(SHMEM_INCLUDE NAME shmem.h HINTS ${SHMEM_HOME}
-              PATH_SUFFIXES include
-    )
-    add_library(shmem IMPORTED INTERFACE)
-    target_link_libraries(shmem INTERFACE ${SHMEM_LIB})
-    target_include_directories(shmem INTERFACE ${SHMEM_INCLUDE})
-    if(NVSHMEM_MPI_SUPPORT)
-      separate_arguments(SHMEM_C_LINK_FLAGS NATIVE_COMMAND "${MPI_C_LINK_FLAGS}")
-      target_link_options(shmem INTERFACE ${SHMEM_C_LINK_FLAGS})
-      target_compile_definitions(shmem INTERFACE ${MPI_C_COMPILE_DEFINITIONS})
-      target_compile_options(shmem INTERFACE ${MPI_C_COMPILE_OPTIONS})
-    endif()
-  endif()
+  # Unused by any examples currently compiled.
+# TODO: Resurrect the shmem-based-init example.
+#  if(NVSHMEM_SHMEM_SUPPORT)
+#    find_library(
+#      SHMEM_LIB
+#      NAMES oshmem
+#      HINTS ${SHMEM_HOME}
+#      PATH_SUFFIXES lib lib64)
+#    find_path(SHMEM_INCLUDE NAME shmem.h HINTS ${SHMEM_HOME}
+#              PATH_SUFFIXES include
+#    )
+#    add_library(shmem IMPORTED INTERFACE)
+#    target_link_libraries(shmem INTERFACE ${SHMEM_LIB})
+#    target_include_directories(shmem INTERFACE ${SHMEM_INCLUDE})
+#    if(NVSHMEM_MPI_SUPPORT)
+#      separate_arguments(SHMEM_C_LINK_FLAGS NATIVE_COMMAND "${MPI_C_LINK_FLAGS}")
+#      target_link_options(shmem INTERFACE ${SHMEM_C_LINK_FLAGS})
+#      target_compile_definitions(shmem INTERFACE ${MPI_C_COMPILE_DEFINITIONS})
+#      target_compile_options(shmem INTERFACE ${MPI_C_COMPILE_OPTIONS})
+#    endif()
+#  endif()
 endif()
 
 add_library(nvshmem_example_helper INTERFACE)
@@ -124,36 +124,62 @@ target_link_libraries(nvshmem_example_helper INTERFACE nvshmem_host nvshmem_devi
 endif()
 target_compile_features(nvshmem_example_helper INTERFACE cxx_std_11 cuda_std_11)
 
-if(NVSHMEM_SHMEM_SUPPORT)
-  target_link_libraries(nvshmem_example_helper INTERFACE shmem)
-  target_compile_definitions(nvshmem_example_helper INTERFACE NVSHMEMTEST_SHMEM_SUPPORT)
-endif()
+# Unused by any examples currently compiled.
+# TODO: Resurrect the shmem-based-init example.
+#if(NVSHMEM_SHMEM_SUPPORT)
+#  target_link_libraries(nvshmem_example_helper INTERFACE shmem)
+#  target_compile_definitions(nvshmem_example_helper INTERFACE NVSHMEMTEST_SHMEM_SUPPORT)
+#endif()
 
+set(MPI_EXAMPLES "")
+set(ALL_EXAMPLES "")
 if(NVSHMEM_MPI_SUPPORT)
-   target_link_libraries(nvshmem_example_helper INTERFACE MPI::MPI_CXX)
-   target_compile_definitions(nvshmem_example_helper INTERFACE NVSHMEMTEST_MPI_SUPPORT)
+  target_compile_definitions(nvshmem_example_helper INTERFACE NVSHMEMTEST_MPI_SUPPORT)
+  target_include_directories(nvshmem_example_helper INTERFACE $<BUILD_INTERFACE:${MPI_CXX_INCLUDE_DIRS}>)
+  target_compile_definitions(nvshmem_example_helper INTERFACE NVSHMEMTEST_MPI_SUPPORT)
+  list(APPEND MPI_EXAMPLES
+    mpi-based-init.cu
+    uid-based-init.cu
+    dev-guide-ring-mpi.cu
+    )
+
+  foreach(example ${MPI_EXAMPLES})
+    get_filename_component(NAME_ ${example} NAME_WE)
+    add_executable(${NAME_} ${example})
+  
+    target_link_libraries(${NAME_} MPI::MPI_CXX)
+    target_compile_definitions(${NAME_} PRIVATE NVSHMEMTEST_MPI_SUPPORT)
+
+    target_link_libraries(${NAME_} CUDA::cudart CUDA::cuda_driver)
+    if(NVSHMEM_TEST_STATIC_LIB)
+      target_link_libraries(${NAME_} nvshmem)
+    else()
+      target_link_libraries(${NAME_} nvshmem_host nvshmem_device)
+    endif()
+  endforeach()
+
 endif()
 
-set(EXAMPLES
+set(OPTIONAL_MPI_EXAMPLES
   collective-launch.cu
   on-stream.cu
   thread-group.cu
   put-block.cu
   dev-guide-ring.cu
+  ring-bcast.cu
+  ring-reduce.cu
+  moe_shuffle.cu
   )
+LIST(APPEND ALL_EXAMPLES ${MPI_EXAMPLES} ${OPTIONAL_MPI_EXAMPLES})
 
-if(NVSHMEM_MPI_SUPPORT)
-  LIST(APPEND EXAMPLES
-    mpi-based-init.cu
-    uid-based-init.cu
-    dev-guide-ring-mpi.cu
-  )
-endif()
-
-foreach(example ${EXAMPLES})
+foreach(example ${OPTIONAL_MPI_EXAMPLES})
   get_filename_component(NAME_ ${example} NAME_WE)
   add_executable(${NAME_} ${example})
   target_link_libraries(${NAME_} nvshmem_example_helper)
+endforeach()
+
+foreach(example ${ALL_EXAMPLES})
+  get_filename_component(NAME_ ${example} NAME_WE)
 
   set_target_properties(${NAME_} PROPERTIES
   POSITION_INDEPENDENT_CODE ON
@@ -170,6 +196,7 @@ foreach(example ${EXAMPLES})
   $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-O0;-g;-G>
   $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<BOOL:${NVCC_THREADS}>>:-t4>
   )
+
   set_target_properties(${NAME_} PROPERTIES OUTPUT_NAME "${NAME_}" INSTALL_RPATH "$ORIGIN/../../lib" BUILD_WITH_INSTALL_RPATH TRUE)
   install(TARGETS ${NAME_} RUNTIME DESTINATION "${NVSHMEM_EXAMPLES_INSTALL_PREFIX}")
   if (NVSHMEM_EXAMPLES_RELEASE_PREFIX)

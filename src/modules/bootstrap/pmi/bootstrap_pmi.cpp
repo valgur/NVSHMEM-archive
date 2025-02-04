@@ -86,8 +86,27 @@ static inline int WRAP_PMI_KVS_Get(const char kvsname[], const char key[], char 
 
 #else /* !NVSHMEM_BUILD_PMI2 */
 
-#include <pmi_internal.h>
+#ifdef NVSHMEM_CUSTOM_BOOTSTRAP_BUILD
+#include "pmi.h"
+#define WRAP_PMI_Init PMI_Init
+#define WRAP_PMI_Finalize PMI_Finalize
 
+#define WRAP_PMI_Get_rank PMI_Get_rank
+#define WRAP_PMI_Get_size PMI_Get_size
+
+#define WRAP_PMI_KVS_Get_key_length_max PMI_KVS_Get_key_length_max
+#define WRAP_PMI_KVS_Get_my_name PMI_KVS_Get_my_name
+#define WRAP_PMI_KVS_Get_name_length_max PMI_KVS_Get_name_length_max
+#define WRAP_PMI_KVS_Get_value_length_max PMI_KVS_Get_value_length_max
+
+#define WRAP_PMI_Barrier PMI_Barrier
+#define WRAP_PMI_KVS_Commit PMI_KVS_Commit
+
+#define WRAP_PMI_KVS_Get PMI_KVS_Get
+#define WRAP_PMI_KVS_Put PMI_KVS_Put
+#define WRAP_PMI_Abort PMI_Abort
+#else
+#include "pmi_internal.h"
 #define WRAP_PMI_Init SPMI_Init
 #define WRAP_PMI_Finalize SPMI_Finalize
 
@@ -105,6 +124,7 @@ static inline int WRAP_PMI_KVS_Get(const char kvsname[], const char key[], char 
 #define WRAP_PMI_KVS_Get SPMI_KVS_Get
 #define WRAP_PMI_KVS_Put SPMI_KVS_Put
 #define WRAP_PMI_Abort SPMI_Abort
+#endif
 
 #endif /* NVSHMEM_BUILD_PMI2 */
 

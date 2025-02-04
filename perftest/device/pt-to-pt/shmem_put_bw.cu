@@ -17,13 +17,6 @@
 #include <getopt.h>
 #include "utils.h"
 
-#define MAX_MSG_SIZE (32 * 1024 * 1024)
-
-#define MAX_ITERS 200
-#define MAX_SKIP 20
-#define BLOCKS 4
-#define THREADS_PER_BLOCK 1024
-
 __global__ void bw(double *data_d, volatile unsigned int *counter_d, int len, int pe, int iter) {
     int i, peer;
     unsigned int counter;
@@ -69,17 +62,18 @@ int main(int argc, char *argv[]) {
     int mype, npes;
     double *data_d = NULL;
     unsigned int *counter_d;
-    int max_blocks = BLOCKS, max_threads = THREADS_PER_BLOCK;
+
+    read_args(argc, argv);
+    int max_blocks = num_blocks, max_threads = threads_per_block;
 
     int array_size, i;
     void **h_tables;
     uint64_t *h_size_arr;
     double *h_bw = NULL, *h_bw_total = NULL;
     double *d_bw = NULL, *d_bw_sum = NULL;
-    bool bidirectional = false;
 
-    int iter = MAX_ITERS;
-    int skip = MAX_SKIP;
+    int iter = iters;
+    int skip = warmup_iters;
 
     float milliseconds;
     cudaEvent_t start, stop;
@@ -97,30 +91,7 @@ int main(int argc, char *argv[]) {
         goto finalize;
     }
 
-    while (1) {
-        int c;
-        c = getopt(argc, argv, "c:t:hb");
-
-        if (c == -1) break;
-
-        switch (c) {
-            case 'c':
-                max_blocks = strtol(optarg, NULL, 0);
-                break;
-            case 't':
-                max_threads = strtol(optarg, NULL, 0);
-                break;
-            case 'b':
-                bidirectional = true;
-                break;
-            default:
-            case 'h':
-                printf("-c [CTAs] -t [THREADS] \n");
-                goto finalize;
-        }
-    }
-
-    array_size = floor(std::log2((float)MAX_MSG_SIZE)) + 1;
+    array_size = max_size_log;
     alloc_tables(&h_tables, 2, array_size);
     h_size_arr = (uint64_t *)h_tables[0];
     h_bw = (double *)h_tables[1];
@@ -140,8 +111,8 @@ int main(int argc, char *argv[]) {
         CUDA_CHECK(cudaMalloc((void **)&d_bw_sum, sizeof(double)));
     }
 
-    data_d = (double *)nvshmem_malloc(MAX_MSG_SIZE);
-    CUDA_CHECK(cudaMemset(data_d, 0, MAX_MSG_SIZE));
+    data_d = (double *)nvshmem_malloc(max_size);
+    CUDA_CHECK(cudaMemset(data_d, 0, max_size));
 
     CUDA_CHECK(cudaMalloc((void **)&counter_d, sizeof(unsigned int) * 2));
     CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
@@ -150,7 +121,7 @@ int main(int argc, char *argv[]) {
 
     if (bidirectional || mype == 0) {
         i = 0;
-        for (int size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
+        for (size_t size = min_size; size <= max_size; size *= step_factor) {
             h_size_arr[i] = size;
             CUDA_CHECK(cudaMemset(counter_d, 0, sizeof(unsigned int) * 2));
             bw<<<max_blocks, max_threads>>>(data_d, counter_d, size / sizeof(double), mype, skip);
@@ -180,7 +151,7 @@ int main(int argc, char *argv[]) {
             i++;
         }
     } else {
-        for (int size = 1024; size <= MAX_MSG_SIZE; size *= 2) {
+        for (int size = min_size; size <= max_size; size *= step_factor) {
             nvshmem_barrier_all();
         }
     }
@@ -188,8 +159,8 @@ int main(int argc, char *argv[]) {
     if (mype == 0) {
         double *p_h_bw_tmp = bidirectional ? h_bw_total : h_bw;
         const char *const test_name = bidirectional ? "shmem_put_bw_bidi" : "shmem_put_bw_uni";
-        print_table_v1(test_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr,
-                       p_h_bw_tmp, i);
+        print_table_basic(test_name, "None", "size (Bytes)", "BW", "GB/sec", '+', h_size_arr,
+                          p_h_bw_tmp, i);
     }
 
 finalize:

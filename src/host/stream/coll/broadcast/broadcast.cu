@@ -12,15 +12,13 @@
 #include "internal/host/util.h"
 #include "internal/non_abi/nvshmemi_h_to_d_coll_defs.cuh"
 
-using namespace std;
-
-map<string, size_t> nvshmemi_broadcast_maxblocksize;
+std::map<std::string, size_t> nvshmemi_broadcast_maxblocksize;
 
 template <typename T>
 void nvshmemi_call_broadcast_on_stream_kernel(nvshmem_team_t team, T *dest, const T *source,
                                               size_t nelems, int PE_root, cudaStream_t stream) {
     int tmp;
-    string type_str(typeid(T).name());
+    std::string type_str(typeid(T).name());
     if (nvshmemi_broadcast_maxblocksize.find(type_str) == nvshmemi_broadcast_maxblocksize.end()) {
         CUDA_RUNTIME_CHECK(cudaOccupancyMaxPotentialBlockSize(
             &tmp, (int *)&nvshmemi_broadcast_maxblocksize[type_str],

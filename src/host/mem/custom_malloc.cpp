@@ -18,8 +18,6 @@
 #include "internal/host/custom_malloc.h"  // for mspace, NVSHMEMI_MALLOC_ALI...
 #include "internal/host/util.h"           // for CUDA_RUNTIME_CHECK
 
-using namespace std;
-
 #define SIZE_T_ONE ((size_t)1)
 #define CHUNK_ALIGN_MASK (NVSHMEMI_MALLOC_ALIGNMENT - SIZE_T_ONE)
 
@@ -33,7 +31,7 @@ using namespace std;
 #ifdef _NVSHMEM_DEBUG
 static size_t get_total_size(std::map<void *, size_t> chunk_map) {
     size_t sum = 0;
-    for (map<void *, size_t>::iterator it = chunk_map.begin(); it != chunk_map.end(); it++) {
+    for (std::map<void *, size_t>::iterator it = chunk_map.begin(); it != chunk_map.end(); it++) {
         sum += it->second;
     }
     return sum;
@@ -52,21 +50,22 @@ static size_t get_total_size(std::map<void *, size_t> chunk_map) {
 
 void mspace::print() {
     printf("free_chunks_start: ");
-    for (map<void *, size_t>::iterator it = free_chunks_start.begin();
+    for (std::map<void *, size_t>::iterator it = free_chunks_start.begin();
          it != free_chunks_start.end(); it++) {
         printf("(%p, %zu) ", it->first, it->second);
     }
     printf("\n");
 
     printf("free_chunks_end: ");
-    for (map<void *, size_t>::iterator it = free_chunks_end.begin(); it != free_chunks_end.end();
-         it++) {
+    for (std::map<void *, size_t>::iterator it = free_chunks_end.begin();
+         it != free_chunks_end.end(); it++) {
         printf("(%p, %zu) ", it->first, it->second);
     }
     printf("\n");
 
     printf("inuse_chunks: ");
-    for (map<void *, size_t>::iterator it = inuse_chunks.begin(); it != inuse_chunks.end(); it++) {
+    for (std::map<void *, size_t>::iterator it = inuse_chunks.begin(); it != inuse_chunks.end();
+         it++) {
         printf("(%p, %zu) ", it->first, it->second);
     }
     printf("\n");
@@ -128,7 +127,7 @@ void *mspace::allocate(size_t bytes) {
     INFO(NVSHMEM_MEM, "mspace_malloc called with %zu bytes", bytes);
     if (bytes == 0) return NULL;
     bytes = align_request(bytes);
-    for (map<void *, size_t>::iterator it = free_chunks_start.begin();
+    for (std::map<void *, size_t>::iterator it = free_chunks_start.begin();
          it != free_chunks_start.end(); it++) {
         if (it->second >= bytes) {
             INFO(NVSHMEM_MEM, "free chunk with size = %zu bytes found", it->second);

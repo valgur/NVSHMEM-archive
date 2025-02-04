@@ -13,7 +13,7 @@
 #ifndef _NVSHMEM_CONSTANTS_H_
 #define _NVSHMEM_CONSTANTS_H_
 
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <limits.h>
 #else
 #include <cuda/std/climits>

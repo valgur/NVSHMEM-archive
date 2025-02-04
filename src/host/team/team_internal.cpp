@@ -43,6 +43,7 @@ using namespace nvls;
 
 #define NVSHMEMI_DIAG_STRLEN 1024
 #define NVSHMEMI_SYNC_VALUE 0
+#define NVSHMEMI_REDUCE_MAX_CTA_COUNT 64
 
 /* 0th entry in team duplicate resources is same team as the encapsulating team. This allows
  * for reuse of the same business logic for nCTA == 1 and nCTA > 1 and minimizes if/else
@@ -519,6 +520,7 @@ void nvshmemi_team_init_nccl_comm(nvshmemi_team_t *teami) {
             nvshmemx_char_put_nbi_on_stream((char *)pWrk, (const char *)pWrk, sizeof(ncclUniqueId),
                                             start + i * stride, (cudaStream_t)0);
         }
+        CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
         nvshmemi_barrier(teami->team_idx);
     } else {
         nvshmemi_barrier(teami->team_idx);
@@ -667,6 +669,12 @@ cleanup:
 int nvshmemi_set_max_teams(void) {
     nvshmemi_max_teams = nvshmemi_options.MAX_TEAMS;
     if (nvshmemi_max_teams < NVSHMEM_TEAMS_MIN) nvshmemi_max_teams = NVSHMEM_TEAMS_MIN;
+    /* On NVLS sharp enabled platforms increase default max teams to 64 */
+    if (nvshmemi_state->is_platform_nvls) {
+        nvshmemi_max_teams = (nvshmemi_max_teams > NVSHMEMI_REDUCE_MAX_CTA_COUNT)
+                                 ? nvshmemi_max_teams
+                                 : NVSHMEMI_REDUCE_MAX_CTA_COUNT;
+    }
 
     if (nvshmemi_max_teams > N_PSYNC_BYTES * CHAR_BIT) {
         NVSHMEMI_ERROR_EXIT("Requested %ld teams, but only %d are supported\n", nvshmemi_max_teams,

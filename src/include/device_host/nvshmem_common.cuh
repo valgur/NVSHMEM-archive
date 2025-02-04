@@ -13,14 +13,14 @@
 #ifndef _NVSHMEM_COMMON_H_
 #define _NVSHMEM_COMMON_H_
 
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stdint.h>
 #include <limits.h>
 #else
 #include "cuda/std/cstdint"
 #include <cuda/std/climits>
 #include <cuda/std/cstddef>
-#if not defined SIZE_MAX
+#if !defined SIZE_MAX
 #define SIZE_MAX (1ULL << 63)
 #endif
 #endif
@@ -34,6 +34,15 @@
 #include "device_host_transport/nvshmem_common_transport.h"
 #include "device_host/nvshmem_types.h"
 #include "device_host_transport/nvshmem_constants.h"
+
+#ifdef __clang_llvm_bitcode_lib__
+#define NVSHMEMI_DEVICE_PREFIX __device__
+extern "C" {
+__device__ int __nvvm_reflect(const char *s);
+}
+#else
+#define NVSHMEMI_DEVICE_PREFIX __device__
+#endif
 
 /* Note: The "long double" type is not supported */
 #define NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES(NVSHMEMI_FN_TEMPLATE) \
@@ -420,7 +429,7 @@ enum {
 #define NVSHMEMI_DECL_THREAD_IDX_warp() \
     ;                                   \
     int myIdx;                          \
-    asm volatile("mov.u32  %0, %laneid;" : "=r"(myIdx));
+    asm volatile("mov.u32  %0,  %%laneid;" : "=r"(myIdx));
 
 #define NVSHMEMI_DECL_THREADGROUP_SIZE_warp()                           \
     ;                                                                   \
@@ -489,7 +498,7 @@ typedef struct {
 
 typedef void (*nvshmemx_device_lib_init_cb)(void **dev_state_ptr, void **transport_dev_state_ptr);
 
-#ifdef __cplusplus
+#if defined __cplusplus
 extern "C" {
 #endif
 int nvshmemid_hostlib_init_attr(int requested, int *provided, unsigned int bootstrap_flags,
@@ -499,7 +508,7 @@ int nvshmemid_hostlib_init_attr(int requested, int *provided, unsigned int boots
 void nvshmemid_hostlib_finalize(void *device_ctx, void *transport_device_ctx);
 
 int nvshmemid_init_status();
-#ifdef __cplusplus
+#if defined __cplusplus
 }
 #endif
 

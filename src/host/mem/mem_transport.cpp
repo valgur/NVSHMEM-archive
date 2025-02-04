@@ -255,6 +255,10 @@ out:
     NVSHMEMU_HOST_PTR_FREE(peer_error_status);
 }
 
+int nvshmemi_mem_p2p_transport::get_num_p2p_connected_pes(nvshmemi_symmetric_heap &obj) {
+    return std::max(obj.get_state()->npes_node, (int)nvshmemi_nvl_connected_pes_.size());
+}
+
 nvshmemi_mem_p2p_transport::~nvshmemi_mem_p2p_transport() {
     int nvml_status = 0;
     if (nvml_handle_) {

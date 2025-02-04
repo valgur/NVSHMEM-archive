@@ -29,8 +29,8 @@ int nvshmemi_reducescatter_on_stream(nvshmem_team_t team, TYPE *dest, const TYPE
                                      size_t nreduce, cudaStream_t stream) {
 #ifdef NVSHMEM_USE_NCCL
     nvshmemi_team_t *teami = nvshmemi_team_pool[team];
-    if (nvshmemi_use_nccl && nvshmemi_get_nccl_op<OP>() != ncclNumOps &&
-        nvshmemi_get_nccl_dt<TYPE>() != ncclNumTypes) {
+    if (teami->nvls_rsc_base_ptr == NULL && nvshmemi_use_nccl &&
+        nvshmemi_get_nccl_op<OP>() != ncclNumOps && nvshmemi_get_nccl_dt<TYPE>() != ncclNumTypes) {
         NCCL_CHECK(nccl_ftable.ReduceScatter(source, dest, nreduce, nvshmemi_get_nccl_dt<TYPE>(),
                                              nvshmemi_get_nccl_op<OP>(),
                                              (ncclComm_t)teami->nccl_comm, stream));

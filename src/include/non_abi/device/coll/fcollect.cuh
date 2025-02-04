@@ -6,7 +6,7 @@
 #ifndef FCOLLECT_DEVICE_CUH
 #define FCOLLECT_DEVICE_CUH
 
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stdint.h>
 #include <limits.h>
 #else
@@ -35,9 +35,34 @@ typedef enum { LL8 = 0, LL128 } ll_version_t;
 #ifdef __CUDA_ARCH__
 
 template <typename T, threadgroup_t SCOPE>
-__device__ __forceinline__ void nvshmemi_fcollect_nvls_ll_threadgroup(nvshmem_team_t team, T *dest,
-                                                                      const T *source,
-                                                                      size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE void nvshmemi_fcollect_nvls_ll_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems) {
+#if defined __clang_llvm_bitcode_lib__
+    if (__nvvm_reflect("__CUDA_ARCH") >= 900) {
+        nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
+        const size_t fcollect_ll_threshold =
+            nvshmemi_device_state_d.gpu_coll_env_params_var.fcollect_ll_threshold;
+        const size_t fcollect_count = teami->fcollect_count;
+        const uint32_t ll_flag = teami->fcollect_count;
+        char *pWrk = (char *)nvshmemi_team_get_psync(teami, FCOLLECT) +
+                     (2 * teami->size * fcollect_ll_threshold *
+                      (fcollect_count % 2)); /* same for NVLS in terms of size */
+        const size_t pack_offset = nvshmemi_team_my_pe(team) * nelems *
+                                   (sizeof(T) / sizeof(uint32_t)); /* offset in pSync space */
+        /* Find the multicast ptr for pWrk + pack_offset and do a store to remote pSync */
+        void *mcast_pWrk = nvshmemi_mc_ptr(teami, (void *)((uint64_t *)pWrk + pack_offset));
+        nvshmemi_mcast_packLL<T, SCOPE>((uint64_t *)mcast_pWrk, source, nelems, ll_flag);
+        for (int ii = 0; ii < teami->size; ii += 1) {
+            size_t prev_offset = nelems * ii * (sizeof(T) / sizeof(uint32_t));
+            nvshmemi_mcast_recvLL<T, SCOPE>(dest + (ii * nelems), (uint64_t *)pWrk + prev_offset,
+                                            nelems, ll_flag);
+        }
+
+        nvshmemi_threadgroup_sync<SCOPE>();
+    } else {
+        assert(0 && "NVLink SHARP is not supported on this platform");
+    }
+#else
 #if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     const size_t fcollect_ll_threshold =
@@ -62,12 +87,12 @@ __device__ __forceinline__ void nvshmemi_fcollect_nvls_ll_threadgroup(nvshmem_te
 #else
     assert(0 && "NVLink SHARP is not supported on this platform");
 #endif
+#endif
 }
 
 template <typename T, threadgroup_t SCOPE, ll_version_t LL_VERSION, bool NODE_SAFE>
-__device__ __forceinline__ void nvshmemi_fcollect_allpush_ll_threadgroup(nvshmem_team_t team,
-                                                                         T *dest, const T *source,
-                                                                         size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE void nvshmemi_fcollect_allpush_ll_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, size_t nelems) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     nvshmemi_team_t *teami_node = NULL;
     const size_t fcollect_count = teami->fcollect_count;
@@ -285,9 +310,8 @@ out:
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_fcollect_allpush_threadgroup(nvshmem_team_t team, T *dest,
-                                                             const T *source, int dest_offset,
-                                                             size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_fcollect_allpush_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, int dest_offset, size_t nelems) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int PE_start = teami->start;
     int PE_stride = teami->stride;
@@ -307,9 +331,8 @@ __device__ inline void nvshmemi_fcollect_allpush_threadgroup(nvshmem_team_t team
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_fcollect_p2p_allpush_threadgroup(nvshmem_team_t team, T *dest,
-                                                                 const T *source, int dest_offset,
-                                                                 size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_fcollect_p2p_allpush_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, int dest_offset, size_t nelems) {
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     int PE_start = teami->start;
     int PE_stride = teami->stride;
@@ -329,9 +352,19 @@ __device__ inline void nvshmemi_fcollect_p2p_allpush_threadgroup(nvshmem_team_t 
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ inline void nvshmemi_fcollect_nvls_allpush_threadgroup(nvshmem_team_t team, T *dest,
-                                                                  const T *source, int dest_offset,
-                                                                  size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_fcollect_nvls_allpush_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, int dest_offset, size_t nelems) {
+#if defined __clang_llvm_bitcode_lib__
+    if (__nvvm_reflect("__CUDA_ARCH") >= 900) {
+        nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
+        nvshmemi_threadgroup_sync<SCOPE>();
+        T *dst_ptr = (T *)nvshmemi_mc_ptr(teami, (void *)(dest + dest_offset));
+        nvshmemi_mcast_memcpy_threadgroup<T, SCOPE>(dst_ptr, source, nelems * sizeof(T));
+        nvshmemi_barrier_threadgroup<SCOPE>(team);
+    } else {
+        assert(0 && "NVLS is not supported on this platform");
+    }
+#else
 #if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     nvshmemi_threadgroup_sync<SCOPE>();
@@ -341,12 +374,12 @@ __device__ inline void nvshmemi_fcollect_nvls_allpush_threadgroup(nvshmem_team_t
 #else
     assert(0 && "NVLS is not supported on this platform");
 #endif
+#endif
 }
 
 template <typename T, threadgroup_t SCOPE>
-__device__ __forceinline__ void nvshmemi_fcollect_threadgroup(nvshmem_team_t team, T *dest,
-                                                              const T *source, int dest_offset,
-                                                              size_t nelems) {
+__device__ NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE void nvshmemi_fcollect_threadgroup(
+    nvshmem_team_t team, T *dest, const T *source, int dest_offset, size_t nelems) {
     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
     int nthreads = nvshmemi_threadgroup_size<SCOPE>();
     if (!myIdx) /* Only one thread should increment fcollect_count */

@@ -14,11 +14,13 @@
 #define _NVSHMEMX_H_
 
 /* NVRTC only compiles device code. Leave out host headers */
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__ && !defined __clang_llvm_bitcode_lib__
 #include "host/nvshmemx_api.h"
 #include "device/nvshmemx_collective_launch_apis.h"
 #endif
+#if !defined NVSHMEM_BITCODE_APPLICATION
 #include "device/nvshmemx_defines.h"
 #include "device/nvshmemx_coll_defines.cuh"
+#endif
 
 #endif

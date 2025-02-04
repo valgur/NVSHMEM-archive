@@ -7,7 +7,7 @@
 #ifndef _NVSHMEM_PROXY_CHANNEL_H_
 #define _NVSHMEM_PROXY_CHANNEL_H_
 
-#if not defined __CUDACC_RTC__
+#if !defined __CUDACC_RTC__
 #include <stdint.h>
 #else
 #include <cuda/std/cstdint>

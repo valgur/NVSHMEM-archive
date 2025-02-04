@@ -50,18 +50,16 @@ int nvshmemx_init_status();
 
 static inline void nvshmem_init() {
     int status = 0, requested = NVSHMEM_THREAD_SERIALIZED, provided;
-    nvshmemi_version_t app_nvshmem_version = {NVSHMEM_INTERLIB_MAJOR_VERSION,
-                                              NVSHMEM_INTERLIB_MINOR_VERSION,
-                                              NVSHMEM_INTERLIB_PATCH_VERSION};
+    nvshmemi_version_t app_nvshmem_version = {
+        NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
     status = nvshmemi_init_thread(requested, &provided, 0, NULL, app_nvshmem_version);
     NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
 }
 
 static inline int nvshmem_init_thread(int requested, int *provided) {
     int status = 0;
-    nvshmemi_version_t app_nvshmem_version = {NVSHMEM_INTERLIB_MAJOR_VERSION,
-                                              NVSHMEM_INTERLIB_MINOR_VERSION,
-                                              NVSHMEM_INTERLIB_PATCH_VERSION};
+    nvshmemi_version_t app_nvshmem_version = {
+        NVSHMEM_VENDOR_MAJOR_VERSION, NVSHMEM_VENDOR_MINOR_VERSION, NVSHMEM_VENDOR_PATCH_VERSION};
     status = nvshmemi_init_thread(requested, provided, 0, NULL, app_nvshmem_version);
     NONZERO_EXIT(status, "aborting due to error in nvshmemi_init_thread \n");
     return status;

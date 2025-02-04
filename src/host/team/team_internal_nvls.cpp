@@ -103,7 +103,7 @@ int nvshmemi_nvls_rsc::export_group(uint64_t mem_size, char *shareable_handle) {
         cuMulticastGetGranularity(&mc_granularity_, &prop_, CU_MULTICAST_GRANULARITY_RECOMMENDED));
 
     INFO(NVSHMEM_TEAM,
-         "GPU [%d] mem_granularity: %zu mem_handle_type: %d n_devices: %zu "
+         "GPU [%d] mem_granularity: %zu mem_handle_type: %d n_devices: %d "
          "mc_granularity: %zu virtual_alloc_size: %ld\n",
          current_dev_, alloc_granularity_, alloc_mem_handle_type_, n_devices_, mc_granularity_,
          virt_alloc_size_);

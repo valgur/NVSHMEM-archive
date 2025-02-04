@@ -23,7 +23,7 @@
  * will be given a clean boolean value for the comparison. */
 #define nvshmemxi_error_unlikely(x) __builtin_expect(!!(x), 0)
 
-#ifdef __cplusplus
+#if defined __cplusplus || defined __clang_llvm_bitcode_lib__
 extern "C" {
 #endif
 
@@ -147,7 +147,7 @@ enum nvshmemx_status {
         }                                                                                      \
     } while (0)
 
-#ifdef __cplusplus
+#if defined __cplusplus || defined __clang_llvm_bitcode_lib__
 }
 #endif
 

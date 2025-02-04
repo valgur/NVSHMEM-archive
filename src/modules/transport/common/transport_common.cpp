@@ -5,11 +5,9 @@
  */
 
 #include "transport_common.h"
-#include <dlfcn.h>
-#include <stdint.h>
-#include <stdlib.h>
-
-#include "non_abi/nvshmemx_error.h"
+#include <stdint.h>                  // for uint64_t, uintptr_t
+#include <stdlib.h>                  // for atoi, calloc, free, realloc
+#include "non_abi/nvshmemx_error.h"  // for NVSHMEMI_ERROR_PRINT, NVSHMEMX_E...
 
 struct transport_mem_handle_info_cache {
     void **cache;
@@ -79,70 +77,6 @@ int nvshmemt_parse_hca_list(const char *string, struct nvshmemt_hca_info *hca_li
     INFO(log_level, "End - Parsed HCA list provided by user");
 
     return if_num;
-}
-
-int nvshmemt_ib_iface_get_mlx_path(const char *ib_name, char **path) {
-    int status;
-
-    char device_path[MAXPATHSIZE];
-    status = snprintf(device_path, MAXPATHSIZE, "/sys/class/infiniband/%s/device", ib_name);
-    if (status < 0 || status >= MAXPATHSIZE) {
-        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                           "Unable to fill in device name.\n");
-    } else {
-        status = NVSHMEMX_SUCCESS;
-    }
-
-    *path = realpath(device_path, NULL);
-    NVSHMEMI_NULL_ERROR_JMP(*path, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out, "realpath failed \n");
-
-out:
-    return status;
-}
-
-int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable,
-                             int log_level) {
-    *ibv_handle = dlopen("libibverbs.so.1", RTLD_LAZY);
-    if (*ibv_handle == NULL) {
-        INFO(log_level, "libibverbs not found on the system.");
-        return -1;
-    }
-
-    LOAD_SYM(*ibv_handle, "ibv_fork_init", ftable->fork_init);
-    LOAD_SYM(*ibv_handle, "ibv_create_ah", ftable->create_ah);
-    LOAD_SYM(*ibv_handle, "ibv_get_device_list", ftable->get_device_list);
-    LOAD_SYM(*ibv_handle, "ibv_get_device_name", ftable->get_device_name);
-    LOAD_SYM(*ibv_handle, "ibv_open_device", ftable->open_device);
-    LOAD_SYM(*ibv_handle, "ibv_close_device", ftable->close_device);
-    LOAD_SYM(*ibv_handle, "ibv_query_port", ftable->query_port);
-    LOAD_SYM(*ibv_handle, "ibv_query_device", ftable->query_device);
-    LOAD_SYM(*ibv_handle, "ibv_alloc_pd", ftable->alloc_pd);
-    LOAD_SYM(*ibv_handle, "ibv_reg_mr", ftable->reg_mr);
-    LOAD_SYM(*ibv_handle, "ibv_reg_dmabuf_mr", ftable->reg_dmabuf_mr);
-    LOAD_SYM(*ibv_handle, "ibv_dereg_mr", ftable->dereg_mr);
-    LOAD_SYM(*ibv_handle, "ibv_create_cq", ftable->create_cq);
-    LOAD_SYM(*ibv_handle, "ibv_create_qp", ftable->create_qp);
-    LOAD_SYM(*ibv_handle, "ibv_create_srq", ftable->create_srq);
-    LOAD_SYM(*ibv_handle, "ibv_modify_qp", ftable->modify_qp);
-    LOAD_SYM(*ibv_handle, "ibv_query_gid", ftable->query_gid);
-    LOAD_SYM(*ibv_handle, "ibv_dealloc_pd", ftable->dealloc_pd);
-    LOAD_SYM(*ibv_handle, "ibv_destroy_qp", ftable->destroy_qp);
-    LOAD_SYM(*ibv_handle, "ibv_destroy_cq", ftable->destroy_cq);
-    LOAD_SYM(*ibv_handle, "ibv_destroy_srq", ftable->destroy_srq);
-    LOAD_SYM(*ibv_handle, "ibv_destroy_ah", ftable->destroy_ah);
-
-    return 0;
-}
-
-void nvshmemt_ibv_ftable_fini(void **ibv_handle) {
-    int status;
-
-    if (ibv_handle) {
-        status = dlclose(*ibv_handle);
-        if (status) {
-            NVSHMEMI_ERROR_PRINT("Unable to close libibverbs handle.");
-        }
-    }
 }
 
 int nvshmemt_mem_handle_cache_init(nvshmem_transport_t t,
