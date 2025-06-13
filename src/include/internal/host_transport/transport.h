@@ -10,6 +10,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <unordered_map>
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -127,9 +128,8 @@ struct nvshmem_transport_host_ops {
                           struct nvshmem_transport *transport);
     int (*connect_endpoints)(struct nvshmem_transport *tcurr, int *selected_dev_ids,
                              int num_selected_devs);
-    int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, nvshmem_mem_handle_t *mem_handle_in,
-                          void *buf, size_t size, struct nvshmem_transport *transport,
-                          bool local_only);
+    int (*get_mem_handle)(nvshmem_mem_handle_t *mem_handle, void *buf, size_t size,
+                          struct nvshmem_transport *transport, bool local_only);
     int (*release_mem_handle)(nvshmem_mem_handle_t *mem_handle,
                               struct nvshmem_transport *transport);
     int (*finalize)(struct nvshmem_transport *transport);
@@ -174,6 +174,8 @@ typedef struct nvshmem_transport {
     int index;
     int my_pe;
     int n_pes;
+    std::unordered_map<void *, void *> *alias_va_map;
+    std::unordered_map<void *, size_t> *egm_map;
 } nvshmem_transport_v1;
 
 typedef nvshmem_transport_v1 *nvshmem_transport_t;

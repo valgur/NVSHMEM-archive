@@ -18,6 +18,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <mutex>
+#include <unordered_map>
 #include <errno.h>
 #ifdef NVSHMEM_X86_64
 #include <immintrin.h>  // IWYU pragma: keep
@@ -805,6 +806,7 @@ static int nvshmemt_libfabric_release_mem_handle(nvshmem_mem_handle_t *mem_handl
                                                  nvshmem_transport_t t) {
     nvshmemt_libfabric_state_t *libfabric_state = (nvshmemt_libfabric_state_t *)t->state;
     nvshmemt_libfabric_mem_handle_t *fabric_handle;
+    void *curr_ptr;
     int max_reg, status = 0;
 
     assert(mem_handle != NULL);
@@ -825,8 +827,13 @@ static int nvshmemt_libfabric_release_mem_handle(nvshmem_mem_handle_t *mem_handl
                 NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "gdr_unpin failed\n");
             }
 #endif
-            if (libfabric_state->cache != NULL)
-                nvshmemt_mem_handle_cache_remove(t, libfabric_state->cache, handle_info->ptr);
+            if (libfabric_state->cache != NULL) {
+                curr_ptr = handle_info->ptr;
+                do {
+                    nvshmemt_mem_handle_cache_remove(t, libfabric_state->cache, curr_ptr);
+                    curr_ptr = (char *)curr_ptr + (1ULL << t->log2_cumem_granularity);
+                } while (curr_ptr < (char *)handle_info->ptr + handle_info->gdr_mapping_size);
+            }
         }
     }
 
@@ -850,8 +857,7 @@ out:
     return status;
 }
 
-static int nvshmemt_libfabric_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
-                                             nvshmem_mem_handle_t *mem_handle_in, void *buf,
+static int nvshmemt_libfabric_get_mem_handle(nvshmem_mem_handle_t *mem_handle, void *buf,
                                              size_t length, nvshmem_transport_t t,
                                              bool local_only) {
     nvshmemt_libfabric_mem_handle_t *fabric_handle;
@@ -861,11 +867,22 @@ static int nvshmemt_libfabric_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     struct iovec mr_iovec;
     int status;
     bool is_host = true;
+    void *curr_ptr;
     CUdevice gpu_device_id;
     nvshmemt_libfabric_memhandle_info_t *handle_info = NULL;
 #ifdef NVSHMEM_USE_GDRCOPY
     gdr_info_t info;
 #endif
+
+    // for now, error out if mmap is used with libfabric
+    // TODO : Add workaround for mmap with libfabric
+    status = (t->alias_va_map != NULL && t->alias_va_map->count(buf));
+    if (status) {
+        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                           "mmap symmetric buf %p not supported with libfabric currently. Please "
+                           "use nvshmem_malloc to allocate symmetric buf\n",
+                           buf);
+    }
 
     status = CUPFN(libfabric_state->table, cuCtxGetDevice(&gpu_device_id));
     if (status != CUDA_SUCCESS) {
@@ -977,10 +994,14 @@ static int nvshmemt_libfabric_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
 
                 handle_info->gdr_mapping_size = length;
                 handle_info->ptr = buf;
-                status = nvshmemt_mem_handle_cache_add(t, libfabric_state->cache, buf,
-                                                       (void *)handle_info);
-                NVSHMEMI_NZ_ERROR_JMP(status, status, out,
-                                      "Unable to add key to mem handle info cache");
+                curr_ptr = buf;
+                do {
+                    status = nvshmemt_mem_handle_cache_add(t, libfabric_state->cache, curr_ptr,
+                                                           (void *)handle_info);
+                    NVSHMEMI_NZ_ERROR_JMP(status, status, out,
+                                          "Unable to add key to mem handle info cache");
+                    curr_ptr = (char *)curr_ptr + (1ULL << t->log2_cumem_granularity);
+                } while (curr_ptr < (char *)buf + length);
             } else
 #endif
             {
@@ -994,8 +1015,14 @@ static int nvshmemt_libfabric_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
             handle_info->cpu_ptr = buf;
             handle_info->gdr_mapping_size = 0;
         }
-        status = nvshmemt_mem_handle_cache_add(t, libfabric_state->cache, buf, (void *)handle_info);
-        NVSHMEMI_NZ_ERROR_JMP(status, status, out, "Unable to add key to mem handle info cache");
+        curr_ptr = buf;
+        do {
+            status = nvshmemt_mem_handle_cache_add(t, libfabric_state->cache, curr_ptr,
+                                                   (void *)handle_info);
+            NVSHMEMI_NZ_ERROR_JMP(status, status, out,
+                                  "Unable to add key to mem handle info cache");
+            curr_ptr = (char *)curr_ptr + (1ULL << t->log2_cumem_granularity);
+        } while (curr_ptr < (char *)buf + length);
     }
 
     if (libfabric_state->local_mr[0] == NULL && !local_only) {
@@ -1388,7 +1415,7 @@ static int nvshmemt_libfabric_finalize(nvshmem_transport_t transport) {
     }
 
     size_t mem_handle_cache_size;
-    nvshmemt_libfabric_memhandle_info_t *handle_info = NULL;
+    nvshmemt_libfabric_memhandle_info_t *handle_info = NULL, *previous_handle_info = NULL;
 
     if (libfabric_state->provider == NVSHMEMT_LIBFABRIC_PROVIDER_EFA) {
         mem_handle_cache_size = nvshmemt_mem_handle_cache_get_size(libfabric_state->cache);
@@ -1396,9 +1423,10 @@ static int nvshmemt_libfabric_finalize(nvshmem_transport_t transport) {
             handle_info =
                 (nvshmemt_libfabric_memhandle_info_t *)nvshmemt_mem_handle_cache_get_by_idx(
                     libfabric_state->cache, i);
-            if (handle_info) {
+            if (handle_info && handle_info != previous_handle_info) {
                 free(handle_info);
             }
+            previous_handle_info = handle_info;
         }
 
         nvshmemt_mem_handle_cache_fini(libfabric_state->cache);

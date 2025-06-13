@@ -5,8 +5,9 @@
  */
 
 #include "transport_common.h"
-#include <stdint.h>                  // for uint64_t, uintptr_t
-#include <stdlib.h>                  // for atoi, calloc, free, realloc
+#include <stdint.h>  // for uint64_t, uintptr_t
+#include <stdlib.h>  // for atoi, calloc, free, realloc
+#include <utility>
 #include "non_abi/nvshmemx_error.h"  // for NVSHMEMI_ERROR_PRINT, NVSHMEMX_E...
 
 struct transport_mem_handle_info_cache {
@@ -218,4 +219,20 @@ int nvshmemt_mem_handle_cache_fini(struct transport_mem_handle_info_cache *cache
     free(cache);
 
     return NVSHMEMX_SUCCESS;
+}
+
+bool check_egm(void *addr, std::unordered_map<void *, size_t> *egm_map) {
+    if (egm_map == NULL) {
+        return false;
+    }
+    if (egm_map->count(addr)) {
+        return true;
+    }
+
+    for (auto iter = egm_map->begin(); iter != egm_map->end(); ++iter) {
+        if ((addr >= iter->first) && ((char *)addr < ((char *)iter->first + iter->second))) {
+            return true;
+        }
+    }
+    return false;
 }

@@ -115,7 +115,7 @@ int nvshmemi_proxy_setup_device_channels(proxy_state_t *state) {
     nvshmemi_device_state.proxy_channels_cst_issue = temp_cst_issue_dptr;
     nvshmemi_device_state.proxy_channels_cst_ack = temp_cst_ack_dptr;
 
-    proxy_channel_g_buf_size = NUM_G_BUF_ELEMENTS * sizeof(g_elem_t);
+    proxy_channel_g_buf_size = G_BUF_SIZE;
     proxy_channel_g_buf_log_size = (uint64_t)log2((double)proxy_channel_g_buf_size);
     uint64_t *proxy_channel_g_buf_head_ptr;
     CUDA_RUNTIME_CHECK(cudaMalloc((void **)&proxy_channel_g_buf_head_ptr, sizeof(uint64_t)));
@@ -650,6 +650,7 @@ void enforce_cst(proxy_state_t *proxy_state) {
 #endif
 
     int status = 0;
+
     if (nvshmemi_options.BYPASS_FLUSH) return;
 
     if (proxy_state->is_consistency_api_supported) {
@@ -662,6 +663,9 @@ void enforce_cst(proxy_state_t *proxy_state) {
             /** We would want to use cudaFlushGPUDirectRDMAWritesToAllDevices when we enable
                 consistent access of data on any GPU (and not just self GPU) with
                wait_until, quiet, barrier, etc. **/
+            if (status != CUDA_SUCCESS) {
+                NVSHMEMI_ERROR_EXIT("cuFlushGPUDirectRDMAWrites() failed in the proxy thread \n");
+            }
         }
         return;
     }
