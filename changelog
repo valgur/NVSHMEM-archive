@@ -1,5 +1,5 @@
 ===============================================================================
-                               Changes in 3.3.0
+                               Changes in 3.3.9
 ===============================================================================
 # Enabled GA platform support for Blackwell B200/GB200NVL72-based systems. Additionally, enabled SASS support for Ada architecture.
 # Added support for official python language bindings (`nvshmem4py`) enabling symmetric memory management, on-stream RMA and collective APIs

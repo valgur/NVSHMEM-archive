@@ -70,7 +70,7 @@ if(NVSHMEM_BUILD_BITCODE_LIBRARY)
   # we will have to remove optimizations to enable more flexible builds.
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libnvshmem_device.bc
                     COMMAND clang -c -emit-llvm -O1 -std=${BITCODE_CXX_STD} -x cuda --cuda-path=${CUDA_HOME} --cuda-device-only
-                    --cuda-gpu-arch=${BITCODE_LIB_ARCH} -I ${CMAKE_CURRENT_SOURCE_DIR}/include
+                    --cuda-gpu-arch=${BITCODE_LIB_ARCH} -I ${CMAKE_CURRENT_SOURCE_DIR}/include -I ${CUDA_HOME}/include/cccl
                     -I ${CMAKE_CURRENT_BINARY_DIR}/llvm_lib
                     -D__clang_llvm_bitcode_lib__ ${CMAKE_CURRENT_SOURCE_DIR}/device/init/init_device.cu -o libnvshmem_device.bc.unoptimized
                     COMMAND opt --passes='internalize,inline,globaldce'
@@ -377,14 +377,12 @@ target_include_directories(
             $<INSTALL_INTERFACE:include>
 )
 
-  # from cuda 13.0, some headers have been moved to include/cccl
-if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 13)
-  target_include_directories(nvshmem_host PUBLIC ${CUDA_HOME}/include/cccl)
-  target_include_directories(nvshmem PUBLIC ${CUDA_HOME}/include/cccl)
-endif()
-
 target_link_libraries(nvshmem PRIVATE CUDA::cudart_static)
 target_link_libraries(nvshmem_host PRIVATE CUDA::cudart_static)
+if (CCCL_FOUND AND CUDAToolkit_VERSION_MAJOR GREATER 12)
+  target_link_libraries(nvshmem PUBLIC CCCL::CCCL)
+  target_link_libraries(nvshmem_host PUBLIC CCCL::CCCL)
+endif()
 nvshmem_library_set_base_config(nvshmem)
 nvshmem_library_set_base_config(nvshmem_host)
 ## End generic variable configuration
